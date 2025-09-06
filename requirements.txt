@@ -1,0 +1,18 @@
+python-dotenv>=1.0.1
+
+# --- OCR core ---
+paddleocr==2.7.0
+paddlepaddle==2.6.1     # CPU build; good on macOS
+
+# --- Image & data ---
+pillow>=10.0.0
+pillow-heif>=0.16.0     # HEIC/HEIF support for iPhone photos
+pandas>=2.2.0
+openpyxl>=3.1.2
+
+# --- Fuzzy matching (used by your code) ---
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.21.0   # optional speed-up for fuzzywuzzy
+
+# --- OpenAI client ---
+openai>=1.36.0

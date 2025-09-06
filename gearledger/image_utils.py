@@ -1,3 +1,4 @@
+# gearledger/image_utils.py
 # -*- coding: utf-8 -*-
 import tempfile
 from PIL import Image, ImageOps
@@ -12,11 +13,23 @@ except Exception:
     pass
 
 
-def prepare_image_safe(path: str, max_side: int = 1280) -> str:
+def _coerce_max_side(x, default=1280) -> int:
+    """Ensure max_side is an int even if a list/tuple/string sneaks in."""
+    if isinstance(x, (list, tuple)):
+        x = x[0] if x else default
+    try:
+        return int(x)
+    except Exception:
+        return int(default)
+
+
+def prepare_image_safe(path: str, max_side=1280) -> str:
     """
     EXIF-rotate + optional downscale + save to temp JPEG.
     Returns path to temp file (must be cleaned by caller if desired).
     """
+    max_side = _coerce_max_side(max_side)
+
     with Image.open(path) as im:
         im = ImageOps.exif_transpose(im)
         w, h = im.size

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gearledger"
+version = "0.1.0"
+requires-python = ">=3.9"
+description = "OCR + GPT car part picker with Excel matching"
+readme = "README.md"
+
+[tool.setuptools.package-dir]
+"" = "."                     # root layout
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gearledger", "gearledger.*"]   # ONLY this package
+exclude = ["tests*", "venv*", "images*", "desktop*"]  # non-packages

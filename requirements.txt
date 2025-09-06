@@ -1,18 +1,28 @@
-python-dotenv>=1.0.1
+# Core OCR
+paddleocr>=2.7.0
+# macOS wheels for Paddle can be finicky; keep this version unless you know you need newer
+paddlepaddle>=2.6.0
 
-# --- OCR core ---
-paddleocr==2.7.0
-paddlepaddle==2.6.1     # CPU build; good on macOS
-
-# --- Image & data ---
+# Image & data
 pillow>=10.0.0
-pillow-heif>=0.16.0     # HEIC/HEIF support for iPhone photos
+pillow-heif>=0.16.0      # HEIC/HEIF support (optional but useful)
 pandas>=2.2.0
 openpyxl>=3.1.2
 
-# --- Fuzzy matching (used by your code) ---
+# Fuzzy matching
 fuzzywuzzy>=0.18.0
-python-Levenshtein>=0.21.0   # optional speed-up for fuzzywuzzy
+python-Levenshtein>=0.21.0
 
-# --- OpenAI client ---
-openai>=1.36.0
+# OpenAI
+openai>=1.30.0
+python-dotenv>=1.0.1
+
+# Camera & scale (keep if you’ll use them)
+opencv-python>=4.9.0
+pyserial>=3.5
+
+# PaddleOCR extra deps that sometimes don’t auto-install (safe to include)
+scikit-image>=0.21.0
+shapely>=2.0.0
+pyclipper>=1.3.0.post5
+PyQt6>=6.6.0

@@ -24,11 +24,12 @@ from .heuristics import (
     normalize_code,
     looks_like_part,
     score_candidate,
-    is_vendor_like,
     is_oem_like,
+    is_vendor_like,
 )
 
 
+# ---------------- Pipeline ----------------
 def process_image(
     image_path: str,
     excel_path: str,
@@ -39,9 +40,9 @@ def process_image(
     max_items: int = DEFAULT_MAX_ITEMS,
     max_side: int = DEFAULT_MAX_SIDE,
     target: str = DEFAULT_TARGET,
+    top_k: int = 5,  # <— how many GPT suggestions to try in Excel
     api_key: Optional[str] = OPENAI_API_KEY,
 ) -> Dict[str, Any]:
-    """Run the full pipeline and return a result dict for UI/CLI."""
     logs: List[str] = []
 
     def log(fn, msg):
@@ -54,6 +55,7 @@ def process_image(
     log(step, f"Languages: {langs}")
     log(step, f"Target: {target}")
 
+    # OCR
     engines = init_ocr_engines(langs)
     if not engines:
         log(err, "No OCR engines initialized.")
@@ -67,86 +69,122 @@ def process_image(
     pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)[:max_items]
     log(step, f"Merged top {len(pairs_sorted)} texts (raw):")
     for t, s in pairs_sorted:
-        logs.append(f"  - {t}  (conf {s:.2f})")
+        log(info, f"  - {t}  (conf {s:.2f})")
 
-    # simple filter (no context used here)
+    # Pre-filter for plausible part tokens
     filtered = [(t, s) for (t, s) in pairs_sorted if looks_like_part(t, target, set())]
     log(step, f"Filtered for GPT ({len(filtered)}):")
+
     for t, s in filtered:
-        logs.append(f"  - {t}  (conf {s:.2f})")
+        log(info, f"  - {t}  (conf {s:.2f})")
     if not filtered:
         filtered = pairs_sorted[:]
 
-    # GPT (if key present)
+    # GPT ranking (if available)
     client = get_openai_client(api_key)
+    gpt_raw = ""
+    gpt_cost: Optional[float] = None
     best_visible = ""
     best_norm = ""
     reason = ""
-    gpt_raw = ""
-    gpt_cost = None
+
+    gpt_ranked: List[Tuple[str, str]] = []  # (original, normalized)
     if client:
-        raw, tin, tout = rank_with_gpt(client, model, filtered, target)
+        raw, tin, tout = rank_with_gpt(client, model, pairs_sorted, target, top_k=top_k)
         gpt_raw = raw
         try:
             g = parse_compact_json(raw)
+            # primary pick
             best_visible = (g.get("best") or "").strip()
             best_norm = normalize_code(g.get("normalized") or "")
             reason = g.get("reason", "")
+            # ranked list
+            ranked = g.get("ranked") or []
+            for item in ranked:
+                txt = (item.get("text") or "").strip()
+                norm = normalize_code(item.get("normalized") or txt)
+                if txt:
+                    gpt_ranked.append((txt, norm))
         except Exception as e:
             log(warn, f"Failed to parse GPT JSON: {e}")
+
         gpt_cost = estimate_cost(model, tin, tout)
         if gpt_cost is not None:
             log(info, f"Approx GPT cost: ${gpt_cost:.6f}")
 
-    # --- Auto-mode vendor override if GPT chose OEM ---
-    if target == "auto" and best_visible:
-        if is_oem_like(best_visible):
-            vendor_cands = [(t, s) for (t, s) in filtered if is_vendor_like(t)]
-            if vendor_cands:
-                scored = [
-                    (t, s, score_candidate(t, s, "auto", set()))
-                    for (t, s) in vendor_cands
-                ]
-                scored.sort(
-                    key=lambda x: (x[2], x[1], len(normalize_code(x[0]))), reverse=True
-                )
-                top_vendor = scored[0][0]
-                if top_vendor and normalize_code(top_vendor) != best_norm:
-                    log(
-                        info,
-                        f"Auto-mode: overriding OEM '{best_visible}' with vendor '{top_vendor}'.",
-                    )
-                    best_visible = top_vendor
-                    best_norm = normalize_code(top_vendor)
-                    reason = "vendor_override_auto"
+    # -------- Try Excel in GPT rank order (shortlist) --------
+    # Build candidate order: GPT ranked → GPT best (if not already) → rest by local score
+    seen = set()
+    cand_order: List[Tuple[str, str]] = []
 
-    # Local fallback if still nothing
-    if not best_norm:
-        log(info, "Local scoring fallback.")
-        scored = [(t, s, score_candidate(t, s, target, set())) for (t, s) in filtered]
-        scored.sort(key=lambda x: (x[2], x[1], len(normalize_code(x[0]))), reverse=True)
-        best_visible = scored[0][0]
-        best_norm = normalize_code(scored[0][0])
-        reason = "local_scoring_fallback"
+    for txt, norm in gpt_ranked:
+        key = norm or normalize_code(txt)
+        if key and key not in seen:
+            cand_order.append((txt, key))
+            seen.add(key)
 
-    log(step, f"BEST (visible): {best_visible}")
-    log(step, f"BEST (normalized): {best_norm}")
+    if best_visible:
+        key = best_norm or normalize_code(best_visible)
+        if key and key not in seen:
+            cand_order.append((best_visible, key))
+            seen.add(key)
 
-    # Excel match
-    log(step, "Matching in Excel using selected artikul ...")
-    client_found, artikul_display, dbg = try_match_in_excel(
-        excel_path, best_norm, min_fuzzy
-    )
-    logs.append("[MATCH DEBUG] ------------------")
-    logs.append(dbg)
-    logs.append("---------- end MATCH DEBUG -----")
-    if client_found:
-        log(step, f"MATCH FOUND → Артикул: {artikul_display}  | Клиент: {client_found}")
-    else:
+    # add locally-scored remainder to give Excel more chances
+    remainder = []
+    for t, s in filtered:
+        key = normalize_code(t)
+        if key and key not in seen:
+            remainder.append((t, s, score_candidate(t, s, target, set())))
+    remainder.sort(key=lambda x: (x[2], x[1], len(normalize_code(x[0]))), reverse=True)
+    cand_order.extend([(t, normalize_code(t)) for (t, _, _) in remainder])
+
+    # Excel loop
+    match_client = None
+    match_artikul = None
+    dbg_all = []
+    log(info, f"Cand order: {cand_order}")
+    for visible, norm in cand_order:
+        log(info, f"Excel lookup try: {visible}  (→ {norm})")
+        client_found, artikul_display, dbg = try_match_in_excel(
+            excel_path, norm, min_fuzzy
+        )
+        dbg_all.append(dbg)
+        if client_found:
+            match_client, match_artikul = client_found, artikul_display
+            # lock the chosen code to the one that matched in Excel
+            best_visible = visible
+            best_norm = norm
+            reason = reason or "excel_first_match_in_rank_order"
+            log(step, f"Excel MATCH → {artikul_display}  | Клиент: {client_found}")
+            break
+
+    # If nothing matched Excel, keep a best guess
+    if not match_client:
+        # If GPT gave nothing, fall back to local pick
+        if not best_norm:
+            log(info, "Local scoring fallback.")
+            scored = [
+                (t, s, score_candidate(t, s, target, set())) for (t, s) in filtered
+            ]
+            scored.sort(
+                key=lambda x: (x[2], x[1], len(normalize_code(x[0]))), reverse=True
+            )
+            best_visible = scored[0][0]
+            best_norm = normalize_code(scored[0][0])
+            reason = "local_scoring_fallback"
         log(
             warn,
             "No acceptable match found in Excel. Consider lowering --min_fuzzy or adding the part.",
         )
+
+    # Summary
+    log(step, f"BEST (visible): {best_visible}")
+    log(step, f"BEST (normalized): {best_norm}")
+    logs.append("[MATCH DEBUG] ------------------")
+    for chunk in dbg_all:
+        if chunk:
+            logs.append(chunk)
+    logs.append("---------- end MATCH DEBUG -----")
 
     return {
         "ok": True,
@@ -160,8 +198,8 @@ def process_image(
         "reason": reason,
         "gpt_raw": gpt_raw,
         "gpt_cost": gpt_cost,
-        "match_client": client_found,
-        "match_artikul": artikul_display,
-        "match_debug": dbg,
+        "match_client": match_client,
+        "match_artikul": match_artikul,
+        "match_debug": "\n\n".join(dbg_all),
         "logs": logs,
     }

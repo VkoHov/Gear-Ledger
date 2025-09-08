@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-from __future__ import annotations
 import json
 from typing import List, Tuple, Optional
 
-from openai import OpenAI
+try:
+    from openai import OpenAI  # type: ignore
+except Exception:  # pragma: no cover
+    OpenAI = None  # type: ignore
 
+
+# ---------- Pricing (USD per 1K tokens) ----------
 PRICES = {
-    # $ per 1K tokens
     "gpt-4o-mini": {"input": 0.000150, "output": 0.000600},
     "gpt-4o": {"input": 0.005000, "output": 0.015000},
 }
@@ -19,8 +22,9 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
     ]
 
 
-def get_openai_client(api_key: Optional[str]) -> Optional[OpenAI]:
-    if not api_key:
+# ---------- Client ----------
+def get_openai_client(api_key: Optional[str]):
+    if not api_key or OpenAI is None:
         return None
     try:
         return OpenAI(api_key=api_key)
@@ -28,68 +32,84 @@ def get_openai_client(api_key: Optional[str]) -> Optional[OpenAI]:
         return None
 
 
-def build_prompt(candidates: List[Tuple[str, float]], target: str = "auto"):
-    payload = [{"text": t, "confidence": round(float(c), 4)} for (t, c) in candidates]
+# ---------- Prompting ----------
+def build_prompt(
+    candidates: List[Tuple[str, float]], target: str = "auto", top_k: int = 5
+) -> Tuple[str, str]:
+    """
+    Ask the model for a top-K ranking and include *normalized* form for each pick.
+    """
+    payload = [{"text": t, "confidence": float(c)} for (t, c) in candidates]
 
     if target == "vendor":
         goal = (
-            "Choose the VENDOR article number (e.g., 'PK-5396'). "
-            "Ignore OEM cross-references near words like 'REF' or 'OEM'. "
-            "Vendor codes are often: short letters+digits or numeric groups like '8 807 02961 02'."
+            "Select vendor article numbers (e.g., 'PK-5396', 'O-450'). "
+            "Ignore long OEM cross-refs often near 'REF', 'OEM', or 'OE'. "
+            "Vendor codes are usually short: 1–4 letters + 3–6 digits, optional dash/space."
         )
     elif target == "oem":
         goal = (
-            "Choose the OEM/part number (e.g., 'A 221 501 26 91' or '5K6 807 393 C'). "
+            "Select OEM/part numbers (e.g., 'A 221 501 26 91'). "
             "Normalize by removing spaces/dashes. Ignore short vendor catalog codes."
         )
     else:
         goal = (
-            "Choose the single best car-part identifier.\n"
-            "WHEN BOTH AN OEM-LIKE CODE (e.g., '5K6 807 393 C') AND A VENDOR-LIKE CODE "
-            "(including numeric vendor formats like '8 807 02961 02') APPEAR, "
-            "YOU MUST PREFER THE VENDOR CODE."
+            "Select the best car-part identifier(s). If both vendor and OEM appear, "
+            "prefer the vendor code."
         )
 
     sys = (
-        "You select a car-part identifier from OCR text.\n"
+        "You extract car-part identifiers from noisy OCR.\n"
         f"{goal}\n"
-        "Ignore dates, quantities, barcodes, and generic words. "
-        "If a token is near words like 'REF' or 'OEM', treat that as an OEM code.\n"
-        "Return ONLY compact JSON (no code fences): "
-        '{"best":"<original>","normalized":"<uppercase_no_spaces_dashes>",'
-        '"reason":"<short>","ranked":[{"text":"...","score":...}]}\n\n'
-        "Normalization removes spaces and dashes only."
+        "Ignore dates, quantities, barcodes, and generic words.\n"
+        "Return ONLY compact JSON (no code fences) with this schema:\n"
+        "{"
+        '"best":"<original>",'
+        '"normalized":"<uppercase_no_spaces_dashes>",'
+        '"reason":"<short>",'
+        '"ranked":['
+        '{"text":"...","normalized":"...","why":"..."},'
+        " ... up to TOP_K ..."
+        "]"
+        "}\n"
+        f"TOP_K={top_k}"
     )
-    usr = "Candidates (JSON array):\n" + json.dumps(payload, ensure_ascii=False)
-
+    usr = (
+        "Candidates (JSON array):\n"
+        + json.dumps(payload, ensure_ascii=False)
+        + "\n\nRank up to TOP_K most plausible part codes. Fill 'ranked' with your top picks in order."
+    )
     return sys, usr
 
 
 def rank_with_gpt(
-    client: OpenAI, model: str, candidates: List[Tuple[str, float]], target: str
+    client,
+    model: str,
+    candidates: List[Tuple[str, float]],
+    target: str = "auto",
+    top_k: int = 5,
 ):
-    sys, usr = build_prompt(candidates, target)
+    """
+    Call chat.completions and return (raw_text, prompt_tokens, completion_tokens).
+    """
+    sys, usr = build_prompt(candidates, target=target, top_k=top_k)
+    print(usr)
     resp = client.chat.completions.create(
         model=model,
         temperature=0.0,
         messages=[{"role": "system", "content": sys}, {"role": "user", "content": usr}],
     )
     raw = (resp.choices[0].message.content or "").strip()
-    tin = (
-        getattr(resp, "usage", None).prompt_tokens
-        if getattr(resp, "usage", None)
-        else 0
-    )
-    tout = (
-        getattr(resp, "usage", None).completion_tokens
-        if getattr(resp, "usage", None)
-        else 0
-    )
-    return raw, int(tin or 0), int(tout or 0)
+    print(raw)
+    usage = getattr(resp, "usage", None)
+    tin = getattr(usage, "prompt_tokens", 0) if usage else 0
+    tout = getattr(usage, "completion_tokens", 0) if usage else 0
+    return raw, tin, tout
 
 
+# ---------- Robust JSON parse ----------
 def parse_compact_json(s: str):
-    s = s.strip()
+    s = (s or "").strip()
     if s.startswith("```"):
         s = s.strip("`")
     start = s.find("{")

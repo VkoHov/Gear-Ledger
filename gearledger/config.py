@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Central config & sane defaults for GearLedger.
-Pulled in by pipeline/app to avoid hardcoding in multiple places.
 """
 import os
 from dotenv import load_dotenv
@@ -17,13 +16,17 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # ---- OCR / GPT defaults (used by pipeline & UI) ----
-DEFAULT_LANGS = ["en", "ru"]  # PaddleOCR languages to try
-DEFAULT_MAX_SIDE = 1280  # max image side before OCR (downscale if larger)
-DEFAULT_MODEL = "gpt-4o-mini"  # OpenAI model for ranking candidates
+DEFAULT_LANGS = ["en", "ru"]  # used only if you switch to Paddle
+DEFAULT_MAX_SIDE = 1280  # max image side before OCR/Vision (downscale if larger)
+DEFAULT_MODEL = "gpt-4o-mini"  # OpenAI model for ranking/extraction
 DEFAULT_TARGET = "auto"  # 'auto' | 'vendor' | 'oem'
 DEFAULT_MIN_FUZZY = 70  # minimal fuzzy score to accept Excel match
-DEFAULT_MAX_ITEMS = 30  # max OCR items to consider/send to GPT
+DEFAULT_MAX_ITEMS = 30  # max OCR items to consider (Paddle path)
 
-# (Optional) tweakables
-# DEFAULT_EXCEL_SHEET = None         # e.g., sheet name if you need one
-# DEFAULT_TIME_LIMIT_S = 30          # any timeouts you want to enforce
+# ---- Vision backend selection ----
+# "openai" → use GPT-4o/4o-mini Vision (no Paddle)
+# "paddle" → use your existing PaddleOCR → GPT ranking flow
+DEFAULT_VISION_BACKEND = os.getenv("VISION_BACKEND", "openai").strip().lower()
+
+# Optional: max tokens for vision response (keep small; we only want compact JSON)
+OPENAI_VISION_MAX_TOKENS = int(os.getenv("OPENAI_VISION_MAX_TOKENS", "300"))

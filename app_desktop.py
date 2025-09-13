@@ -1,7 +1,7 @@
 # app_pyqt.py
 from __future__ import annotations
 import os, sys, tempfile
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Tuple
 
 # Make local package importable when running from repo root
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
@@ -25,9 +25,12 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QMessageBox,
     QButtonGroup,
+    QListWidget,
+    QListWidgetItem,
+    QCheckBox,
 )
 
-from gearledger.pipeline import process_image
+from gearledger.pipeline import process_image, run_fuzzy_match
 from gearledger.config import (
     DEFAULT_LANGS,
     DEFAULT_MODEL,
@@ -36,14 +39,50 @@ from gearledger.config import (
     DEFAULT_MAX_SIDE,
     DEFAULT_TARGET,
 )
-from gearledger import camera as cam
-from gearledger.speech import speak, speak_match
+
+# Optional speech helpers (guarded import)
+try:
+    from gearledger.speech import speak, speak_match, _spell_code
+except Exception:  # safe fallbacks if speech isn't available
+
+    def speak(*a, **k):
+        pass
+
+    def speak_match(*a, **k):
+        pass
+
+    def _spell_code(x):
+        return x
+
 
 MODELS = ["gpt-4o-mini", "gpt-4o"]
 
+# Camera defaults via env
 CAM_INDEX = int(os.getenv("CAM_INDEX", "0"))
 CAM_W = int(os.getenv("CAM_WIDTH", "1280"))
 CAM_H = int(os.getenv("CAM_HEIGHT", "720"))
+
+
+# ---------------- Camera helpers (tiny wrapper over OpenCV) ----------------
+def open_camera(index: int, w: int, h: int):
+    cap = cv2.VideoCapture(index)
+    if not cap or not cap.isOpened():
+        return None
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+    return cap
+
+
+def read_frame(cap) -> np.ndarray | None:
+    ok, frame = cap.read()
+    return frame if ok else None
+
+
+def release_camera(cap):
+    try:
+        cap.release()
+    except Exception:
+        pass
 
 
 # ---------------- Worker (runs pipeline off the UI thread) ----------------
@@ -74,69 +113,53 @@ class Worker(QObject):
         self.finished.emit(res)
 
 
-# ---------------- Main Window ----------------
+class FuzzyWorker(QObject):
+    finished = pyqtSignal(dict)
+
+    def __init__(self, excel: str, cand_order: List[Tuple[str, str]], min_fuzzy: int):
+        super().__init__()
+        self.excel = excel
+        self.cand_order = cand_order
+        self.min_fuzzy = min_fuzzy
+
+    def run(self):
+        try:
+            res = run_fuzzy_match(self.excel, self.cand_order, self.min_fuzzy)
+        except Exception as e:
+            res = {"ok": False, "error": str(e), "logs": [f"[ERROR] {e}"]}
+        self.finished.emit(res)
+
+
+# ---------------- Main Window (Camera-only UI) ----------------
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GearLedger — desktop")
+        self.setWindowTitle("GearLedger — desktop (camera)")
         self.resize(1100, 760)
         try:
             self.setWindowIcon(QIcon.fromTheme("applications-graphics"))
         except Exception:
             pass
 
-        self._thread: Optional[QThread] = None
-        self._worker: Optional[Worker] = None
+        self._thread: QThread | None = None
+        self._worker: Worker | None = None
+        self._fthread: QThread | None = None
+        self._fworker: FuzzyWorker | None = None
 
-        # -------- Camera area --------
-        cam_group = QGroupBox("Camera")
-        self.preview = QLabel()
-        self.preview.setFixedHeight(480)
-        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setStyleSheet(
-            "QLabel { background:#111; color:#bbb; border:1px solid #333; }"
-        )
-        self.preview.setText("Camera preview")
-
-        self.btn_start = QPushButton("Start camera")
-        self.btn_capture = QPushButton("Capture & Run")
-        self.btn_stop = QPushButton("Stop camera")
-        for b in (self.btn_capture, self.btn_stop):
-            b.setEnabled(False)
-
-        self.btn_start.clicked.connect(self.on_cam_start)
-        self.btn_capture.clicked.connect(self.on_cam_capture_and_run)
-        self.btn_stop.clicked.connect(self.on_cam_stop)
-
-        row_btn = QHBoxLayout()
-        row_btn.addWidget(self.btn_start)
-        row_btn.addWidget(self.btn_capture)
-        row_btn.addWidget(self.btn_stop)
-        row_btn.addStretch(1)
-
-        cam_layout = QVBoxLayout()
-        cam_layout.addWidget(self.preview)
-        cam_layout.addLayout(row_btn)
-        cam_group.setLayout(cam_layout)
-
-        # -------- Options (Excel / Target / Model) --------
-        opt_group = QGroupBox("Options")
-
-        # Excel
-        xls_label = QLabel("Excel:")
+        # --- Controls: Excel + Target + Model ---
+        inputs = QGroupBox("Settings")
+        lbl_x = QLabel("Excel:")
         self.xls_edit = QLineEdit()
-        self.btn_browse_xls = QPushButton("Browse…")
-        self.btn_browse_xls.clicked.connect(self.pick_excel)
+        btn_x = QPushButton("Browse…")
+        btn_x.clicked.connect(self.pick_excel)
 
-        # Target radios
-        target_label = QLabel("Target:")
+        lbl_t = QLabel("Target:")
         self.rb_auto = QRadioButton("auto")
         self.rb_vendor = QRadioButton("vendor")
         self.rb_oem = QRadioButton("oem")
         self.tgroup = QButtonGroup(self)
         for rb in (self.rb_auto, self.rb_vendor, self.rb_oem):
             self.tgroup.addButton(rb)
-        # set default
         if DEFAULT_TARGET == "vendor":
             self.rb_vendor.setChecked(True)
         elif DEFAULT_TARGET == "oem":
@@ -144,37 +167,63 @@ class MainWindow(QWidget):
         else:
             self.rb_auto.setChecked(True)
 
-        # Model
-        model_label = QLabel("Model:")
+        lbl_m = QLabel("Model:")
         self.model_combo = QComboBox()
         self.model_combo.addItems(MODELS)
-        if DEFAULT_MODEL in MODELS:
-            self.model_combo.setCurrentText(DEFAULT_MODEL)
+        self.model_combo.setCurrentText(
+            DEFAULT_MODEL if DEFAULT_MODEL in MODELS else MODELS[0]
+        )
 
-        opt_layout = QVBoxLayout()
+        g = QVBoxLayout()
         r1 = QHBoxLayout()
-        r1.addWidget(xls_label)
+        r1.addWidget(lbl_x)
         r1.addWidget(self.xls_edit, 1)
-        r1.addWidget(self.btn_browse_xls)
-        opt_layout.addLayout(r1)
-
+        r1.addWidget(btn_x)
+        g.addLayout(r1)
         r2 = QHBoxLayout()
-        r2.addWidget(target_label)
+        r2.addWidget(lbl_t)
         r2.addWidget(self.rb_auto)
         r2.addWidget(self.rb_vendor)
         r2.addWidget(self.rb_oem)
         r2.addStretch(1)
-        opt_layout.addLayout(r2)
-
+        g.addLayout(r2)
         r3 = QHBoxLayout()
-        r3.addWidget(model_label)
+        r3.addWidget(lbl_m)
         r3.addWidget(self.model_combo)
         r3.addStretch(1)
-        opt_layout.addLayout(r3)
+        g.addLayout(r3)
+        inputs.setLayout(g)
 
-        opt_group.setLayout(opt_layout)
+        # --- Camera preview + buttons ---
+        cam_box = QGroupBox("Camera")
+        self.preview = QLabel("Camera preview")
+        self.preview.setFixedHeight(420)
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setStyleSheet(
+            "QLabel { background:#111; color:#bbb; border:1px solid #333; }"
+        )
 
-        # -------- Results --------
+        self.btn_start = QPushButton("Start camera")
+        self.btn_capture = QPushButton("Capture & Run")
+        self.btn_stop = QPushButton("Stop")
+        self.btn_capture.setEnabled(False)
+        self.btn_stop.setEnabled(False)
+
+        self.btn_start.clicked.connect(self.on_cam_start)
+        self.btn_capture.clicked.connect(self.on_cam_capture_and_run)
+        self.btn_stop.clicked.connect(self.on_cam_stop)
+
+        c = QVBoxLayout()
+        c.addWidget(self.preview)
+        cr = QHBoxLayout()
+        cr.addWidget(self.btn_start)
+        cr.addWidget(self.btn_capture)
+        cr.addWidget(self.btn_stop)
+        cr.addStretch(1)
+        c.addLayout(cr)
+        cam_box.setLayout(c)
+
+        # --- Results ---
         results = QGroupBox("Result")
         self.best_vis = QLineEdit()
         self.best_vis.setReadOnly(True)
@@ -202,9 +251,28 @@ class MainWindow(QWidget):
         r4.addWidget(QLabel("Est. GPT cost:"))
         r4.addWidget(self.cost_line, 1)
         rg.addLayout(r4)
+
+        # --- Fuzzy UI (appears when no exact/variant match) ---
+        self.fuzzy_box = QGroupBox("No exact match — try fuzzy?")
+        self.fuzzy_box.setVisible(False)
+        self.cand_list = QListWidget()
+        self.cand_list.setMinimumHeight(100)
+        self.chk_use_shown = QCheckBox("Limit fuzzy to shown candidates")
+        self.chk_use_shown.setChecked(True)
+        self.btn_run_fuzzy = QPushButton("Run fuzzy match")
+        self.btn_run_fuzzy.clicked.connect(self.on_run_fuzzy_clicked)
+
+        fg = QVBoxLayout()
+        fg.addWidget(QLabel("Likely candidates (from GPT/local ranking):"))
+        fg.addWidget(self.cand_list)
+        fg.addWidget(self.chk_use_shown)
+        fg.addWidget(self.btn_run_fuzzy, alignment=Qt.AlignmentFlag.AlignRight)
+        self.fuzzy_box.setLayout(fg)
+
+        rg.addWidget(self.fuzzy_box)
         results.setLayout(rg)
 
-        # -------- Logs --------
+        # --- Logs ---
         logs = QGroupBox("Logs")
         self.log_txt = QTextEdit()
         self.log_txt.setReadOnly(True)
@@ -215,10 +283,10 @@ class MainWindow(QWidget):
         lg.addWidget(self.log_txt)
         logs.setLayout(lg)
 
-        # -------- Root layout --------
+        # Root layout
         root = QVBoxLayout()
-        root.addWidget(cam_group)
-        root.addWidget(opt_group)
+        root.addWidget(inputs)
+        root.addWidget(cam_box)
         root.addWidget(results)
         root.addWidget(logs, 1)
         self.setLayout(root)
@@ -227,8 +295,11 @@ class MainWindow(QWidget):
 
         # camera state
         self.cap = None
-        self.timer: Optional[QTimer] = None
-        self._last_frame: Optional[np.ndarray] = None
+        self.timer: QTimer | None = None
+        self._last_frame: np.ndarray | None = None
+
+        # store last cand_order for fuzzy
+        self._last_cand_order: List[Tuple[str, str]] = []
 
     # ---------- Helpers ----------
     def append_logs(self, lines: List[str]):
@@ -254,35 +325,11 @@ class MainWindow(QWidget):
     def _current_model(self) -> str:
         return self.model_combo.currentText()
 
-    def _start_threaded_run(
-        self, image_path: str, excel_path: str, target: str, model: str
-    ):
-        # reset UI
-        self.best_vis.clear()
-        self.best_norm.clear()
-        self.match_line.clear()
-        self.cost_line.clear()
-        self.log_txt.clear()
-        self.append_logs(["Running…"])
-
-        # avoid double clicks
-        self.btn_capture.setEnabled(False)
-
-        self._thread = QThread()
-        self._worker = Worker(image_path, excel_path, target, model)
-        self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
-        self._worker.finished.connect(self.on_finished)
-        self._worker.finished.connect(self._thread.quit)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.start()
-
     # ---------- Camera flow ----------
     def on_cam_start(self):
         if self.cap:
             return
-        self.cap = cam.open_camera(CAM_INDEX, CAM_W, CAM_H)
+        self.cap = open_camera(CAM_INDEX, CAM_W, CAM_H)
         if not self.cap:
             QMessageBox.critical(
                 self,
@@ -298,11 +345,10 @@ class MainWindow(QWidget):
         self.timer.start(30)  # ~33fps
 
     def _grab_and_show(self):
-        frame = cam.read_frame(self.cap)
+        frame = read_frame(self.cap)
         if frame is None:
             return
         self._last_frame = frame
-        # BGR->RGB
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         qimg = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
@@ -323,38 +369,51 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Error", "Please choose a valid Excel file.")
             return
 
-        # save to temp
+        # save frame to temp jpg
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
         try:
-            # BGR -> write JPG
             cv2.imwrite(tmp.name, self._last_frame)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save capture: {e}")
             return
 
-        # run pipeline with captured image
-        self._start_threaded_run(
+        # reset UI
+        self.best_vis.clear()
+        self.best_norm.clear()
+        self.match_line.clear()
+        self.cost_line.clear()
+        self.log_txt.clear()
+        self.fuzzy_box.setVisible(False)
+        self.cand_list.clear()
+        self.append_logs(["Running…"])
+
+        # start worker
+        self._thread = QThread()
+        self._worker = Worker(
             tmp.name, excel, self._current_target(), self._current_model()
         )
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self.on_finished_main)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.start()
 
     def on_cam_stop(self):
         if self.timer:
             self.timer.stop()
             self.timer = None
         if self.cap:
-            cam.release_camera(self.cap)
+            release_camera(self.cap)
             self.cap = None
         self.preview.setText("Camera preview")
         self.btn_start.setEnabled(True)
         self.btn_capture.setEnabled(False)
         self.btn_stop.setEnabled(False)
 
-    # ---------- Results ----------
-    def on_finished(self, res: Dict[str, Any]):
-        # re-enable capture after run
-        self.btn_capture.setEnabled(True)
-
-        # logs
+    # ---------- Results (main pass) ----------
+    def on_finished_main(self, res: Dict[str, Any]):
         self.append_logs(res.get("logs"))
 
         if not res.get("ok"):
@@ -367,16 +426,14 @@ class MainWindow(QWidget):
         client = res.get("match_client")
         artikul = res.get("match_artikul")
 
+        # Speak + show match
         if client and artikul:
             self.match_line.setText(f"{artikul} → {client}")
             speak_match(artikul, client)
         else:
             self.match_line.setText("not found")
-            # Speak a best guess if we have one
             best = res.get("best_visible") or res.get("best_normalized")
             if best:
-                from gearledger.speech import _spell_code
-
                 speak(f"No match found. Best guess code: {_spell_code(best)}.")
             else:
                 speak("No match found.")
@@ -385,6 +442,99 @@ class MainWindow(QWidget):
         self.cost_line.setText(
             f"${cost:.6f}" if isinstance(cost, (int, float)) else "— (no API key)"
         )
+
+        # If no match and pipeline suggests fuzzy, populate candidates and ASK
+        self._last_cand_order = res.get("cand_order") or []
+        if not client and res.get("prompt_fuzzy") and self._last_cand_order:
+            # Fill the embedded list
+            self.cand_list.clear()
+            for vis, _norm in self._last_cand_order[:10]:
+                QListWidgetItem(vis, self.cand_list)
+            self.chk_use_shown.setChecked(True)
+            self.fuzzy_box.setVisible(True)
+
+            # Build a short preview and ask to start fuzzy now
+            preview = "\n".join(f"• {v}" for v, _ in self._last_cand_order[:5]) or "—"
+            choice = QMessageBox.question(
+                self,
+                "Start fuzzy matching?",
+                "No exact match found.\n\n"
+                "Top candidates to try with fuzzy matching:\n"
+                f"{preview}\n\n"
+                "Start fuzzy matching now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if choice == QMessageBox.StandardButton.Yes:
+                self.on_run_fuzzy_clicked()
+            else:
+                # Keep the group visible so you can run it later if you change your mind
+                pass
+
+    # ---------- Fuzzy pass ----------
+    def on_run_fuzzy_clicked(self):
+        excel = self.xls_edit.text().strip()
+        if not os.path.exists(excel):
+            QMessageBox.critical(self, "Error", "Please choose a valid Excel file.")
+            return
+        if not self._last_cand_order:
+            QMessageBox.information(self, "Fuzzy", "No candidates available.")
+            return
+
+        # Avoid starting a second fuzzy run while one is running
+        if getattr(self, "_fthread", None) and self._fthread.isRunning():
+            self.append_logs(["Fuzzy already running…"])
+            return
+
+        # Optionally limit to shown candidates
+        cand = self._last_cand_order
+        if self.chk_use_shown.isChecked():
+            shown_texts = set(
+                self.cand_list.item(i).text() for i in range(self.cand_list.count())
+            )
+            cand = [
+                (vis, norm)
+                for (vis, norm) in self._last_cand_order
+                if vis in shown_texts
+            ]
+
+        self.append_logs(["Starting fuzzy…"])
+        self.btn_run_fuzzy.setEnabled(False)
+
+        # Create a new thread owned by the window (ties lifetime to self)
+        self._fthread = QThread(self)
+        self._fworker = FuzzyWorker(excel, cand, DEFAULT_MIN_FUZZY)
+        self._fworker.moveToThread(self._fthread)
+
+        self._fthread.started.connect(self._fworker.run)
+        self._fworker.finished.connect(self.on_finished_fuzzy)
+        self._fworker.finished.connect(self._fthread.quit)
+        self._fworker.finished.connect(self._fworker.deleteLater)
+        # When the thread finishes, clean up our refs and re-enable the button
+        self._fthread.finished.connect(lambda: setattr(self, "_fthread", None))
+        self._fthread.finished.connect(lambda: setattr(self, "_fworker", None))
+        self._fthread.finished.connect(lambda: self.btn_run_fuzzy.setEnabled(True))
+        self._fthread.finished.connect(self._fthread.deleteLater)
+
+        self._fthread.start()
+
+    def on_finished_fuzzy(self, res: Dict[str, Any]):
+        self.append_logs(res.get("logs"))
+
+        if not res.get("ok"):
+            QMessageBox.critical(self, "Fuzzy failed", str(res.get("error")))
+            return
+
+        c = res.get("match_client")
+        a = res.get("match_artikul")
+        if c and a:
+            self.match_line.setText(f"{a} → {c}")
+            try:
+                speak_match(a, c)
+            except Exception:
+                pass
+            self.fuzzy_box.setVisible(False)
+        else:
+            QMessageBox.information(self, "Fuzzy", "No fuzzy match found.")
 
     # ---------- Cleanup ----------
     def closeEvent(self, event):

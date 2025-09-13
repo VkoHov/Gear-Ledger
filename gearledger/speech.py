@@ -62,7 +62,6 @@ def speak_match(artikul: str, client: str):
     """
     Say: 'Match found. Code: A 2 1 0 dash 1 0 5. Client: ACME.'
     """
-    print("aaaqaaaaaaa")
     code_spelled = _spell_code(artikul)
     if client:
         speak(f"Match found. Code: {code_spelled}. Client: {client}.")

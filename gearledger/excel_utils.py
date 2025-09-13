@@ -1,67 +1,71 @@
 # -*- coding: utf-8 -*-
 import os
 import pandas as pd
-from fuzzywuzzy import fuzz
 
 
-def try_match_in_excel(excel_path: str, clean_artikul: str, min_score: int = 70):
+def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
+    """
+    Space-stripped, UPPERCASE, EXACT equality only.
+    Returns (client, artikul_display, debug).
+    """
     debug = []
     if not os.path.exists(excel_path):
         debug.append(f"Excel not found: {excel_path}")
         return (None, None, "\n".join(debug))
 
-    df = pd.read_excel(excel_path)
-    if "Артикул" not in df.columns or "Клиент" not in df.columns:
-        debug.append("Excel must have columns 'Артикул' and 'Клиент'.")
+    try:
+        df = pd.read_excel(excel_path)
+    except Exception as e:
+        debug.append(f"Failed to read Excel: {e}")
         return (None, None, "\n".join(debug))
 
-    df["Артикул_Очистка"] = (
-        df["Артикул"]
-        .astype(str)
-        .str.replace(" ", "", regex=False)
-        .str.replace("-", "", regex=False)
-        .str.replace(".", "", regex=False)
-        .str.upper()
-    )
+    # Try to locate columns
+    artikul_col = None
+    client_col = None
+    for c in df.columns:
+        lc = str(c).strip().lower()
+        if artikul_col is None and any(
+            k in lc for k in ["арт", "artikul", "article", "part", "sku", "code"]
+        ):
+            artikul_col = c
+        if client_col is None and any(
+            k in lc for k in ["клиент", "client", "name", "buyer", "vendor", "customer"]
+        ):
+            client_col = c
 
+    # Fallback to exact names if present
+    if "Артикул" in df.columns:
+        artikul_col = "Артикул"
+    if "Клиент" in df.columns:
+        client_col = "Клиент"
+
+    if not artikul_col:
+        debug.append("Could not locate an artikul/part-code column.")
+        return (None, None, "\n".join(debug))
+    if not client_col:
+        # allow missing client; we’ll return None for client if not found
+        client_col = artikul_col
+
+    def space_norm(s: str) -> str:
+        return (str(s or "")).replace(" ", "").upper()
+
+    q = space_norm(query_raw)
     debug.append(f"Excel rows: {len(df)}")
-    debug.append(f"Looking for exact match of: {clean_artikul}")
+    debug.append(f"Looking for space-exact: {q}")
 
-    exact = df[df["Артикул_Очистка"] == clean_artikul]
+    # Build normalized column (space stripped, uppercase)
+    norm_col = "_GL_SPACE_NORM_"
+    df[norm_col] = df[artikul_col].astype(str).map(space_norm)
+
+    exact = df[df[norm_col] == q]
     if not exact.empty:
         row = exact.iloc[0]
-        debug.append("Exact match found.")
-        return (str(row["Клиент"]), str(row["Артикул"]), "\n".join(debug))
+        debug.append("Exact (space-stripped) match found.")
+        return (
+            str(row.get(client_col, "")),
+            str(row.get(artikul_col, "")),
+            "\n".join(debug),
+        )
 
-    variants = {clean_artikul}
-    swaps = [
-        ("O", "0"),
-        ("0", "O"),
-        ("I", "1"),
-        ("1", "I"),
-        ("S", "5"),
-        ("5", "S"),
-        ("B", "8"),
-        ("8", "B"),
-    ]
-    for a, b in swaps:
-        variants.add(clean_artikul.replace(a, b))
-    for v in list(variants):
-        exact_v = df[df["Артикул_Очистка"] == v]
-        if not exact_v.empty:
-            row = exact_v.iloc[0]
-            debug.append(f"Exact match via variant: {v}")
-            return (str(row["Клиент"]), str(row["Артикул"]), "\n".join(debug))
-
-    debug.append("No exact match. Trying fuzzy ...")
-    df["Сходство"] = df["Артикул_Очистка"].apply(
-        lambda x: fuzz.partial_ratio(x, clean_artikul)
-    )
-    best = df.loc[df["Сходство"].idxmax()]
-    debug.append(
-        f"Best fuzzy: {best['Артикул']} → {best['Клиент']} (score {best['Сходство']})"
-    )
-    if best["Сходство"] >= min_score:
-        return (str(best["Клиент"]), str(best["Артикул"]), "\n".join(debug))
-    else:
-        return (None, None, "\n".join(debug))
+    debug.append("No exact (space-stripped) match.")
+    return (None, None, "\n".join(debug))

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 from typing import Dict, Any, List, Tuple, Optional, Set
+import re
 
 from .logging_utils import step, info, warn, err
 from .config import (
@@ -36,6 +37,10 @@ try:
 except Exception:
     init_ocr_engines = None
     ocr_extract_pairs_multi = None
+
+
+def _space_norm(s: str) -> str:
+    return re.sub(r"\s+", "", s or "").upper()
 
 
 def process_image(
@@ -109,34 +114,46 @@ def process_image(
         except Exception as e:
             log(warn, f"Failed to parse GPT vision JSON: {e}")
 
-        # Excel lookup in rank order (first hit wins)
+        to_try = ranked_norms or []
+        if best_visible:
+            to_try = to_try + [(best_visible, best_norm)]
+
         match_client = None
         match_artikul = None
         dbg_all = []
 
-        for vis, norm in ranked_norms or (
-            [(best_visible, best_norm)] if best_visible else []
-        ):
-            if not norm:
+        for vis, _norm_ignored in to_try:
+            q = _space_norm(vis)  # <- space-only normalization of the *visible* token
+            if not q:
                 continue
-            log(info, f"Excel lookup try: {vis}  (→ {norm})")
-            client_found, artikul_display, dbg = try_match_in_excel(
-                excel_path, norm, min_fuzzy
-            )
+            log(info, f"Excel exact (space) try: {vis}  (→ {q})")
+            client_found, artikul_display, dbg = try_match_in_excel(excel_path, q)
             dbg_all.append(dbg or "")
             if client_found:
                 match_client, match_artikul = client_found, artikul_display
-                # lock to matched values
-                best_visible = vis or best_visible
-                best_norm = norm or best_norm
-                reason = reason or "excel_first_match_in_rank_order"
+                best_visible = vis
+                best_norm = q  # keep what we actually matched against
+                reason = reason or "excel_space_exact"
                 log(step, f"Excel MATCH → {artikul_display}  | Клиент: {client_found}")
                 break
 
+        prompt_fuzzy = False
+        cand_order: List[Tuple[str, str]] = []
+
         if not match_client:
+            prompt_fuzzy = True
+            # Prefer the model-ranked (visible, normalized) list
+            if ranked_norms:
+                cand_order = ranked_norms[:10]
+            else:
+                # fall back to the visible strings we showed in "filtered"
+                # (re-normalize to something stable)
+                cand_order = [
+                    (vis, normalize_code(vis)) for (vis, _c) in ranked_pairs[:10]
+                ]
             log(
                 warn,
-                "No acceptable match found in Excel. Consider lowering --min_fuzzy or adding the part.",
+                "No exact (space-only) match. Ready to start fuzzy if user confirms.",
             )
 
         # Final log lines
@@ -164,6 +181,8 @@ def process_image(
             "match_artikul": match_artikul,
             "match_debug": "\n\n".join(dbg_all),
             "logs": logs,
+            "prompt_fuzzy": prompt_fuzzy,
+            "cand_order": cand_order,
         }
 
     # ------------------- PADDLE → GPT PATH (unchanged) -------------------
@@ -256,5 +275,70 @@ def process_image(
         "match_client": match_client,
         "match_artikul": match_artikul,
         "match_debug": dbg,
+        "logs": logs,
+    }
+
+
+# ---- FUZZY PASS -------------------------------------------------------------
+def run_fuzzy_match(
+    excel_path: str,
+    cand_order: List[Tuple[str, str]],
+    min_fuzzy: int = DEFAULT_MIN_FUZZY,
+) -> Dict[str, Any]:
+    """
+    Second pass: try fuzzy matching across the provided (visible, normalized) candidates.
+    Returns a dict with ok, match_client, match_artikul, logs.
+    """
+    logs: List[str] = []
+
+    def log(fn, msg: str):
+        fn(msg)
+        logs.append(msg)
+
+    log(step, "Starting FUZZY pass on candidate list …")
+
+    dbg_all: List[str] = []
+
+    for visible, normalized in cand_order or []:
+        if not normalized:
+            continue
+        log(info, f"Fuzzy Excel try: {visible}  (→ {normalized})")
+
+        # Call excel matcher; support both signatures:
+        #   try_match_in_excel(excel, norm, min_fuzzy, allow_fuzzy=True)
+        #   try_match_in_excel(excel, norm, min_fuzzy)
+        try:
+            match_client, match_artikul, dbg = try_match_in_excel(
+                excel_path, normalized, min_fuzzy, allow_fuzzy=True
+            )
+        except TypeError:
+            # Older excel_utils without allow_fuzzy flag
+            match_client, match_artikul, dbg = try_match_in_excel(
+                excel_path, normalized, min_fuzzy
+            )
+
+        if dbg:
+            dbg_all.append(dbg)
+
+        if match_client:
+            log(step, f"FUZZY MATCH → {match_artikul}  | Клиент: {match_client}")
+            logs.append("[FUZZY DEBUG] ------------------")
+            logs.extend(dbg_all)
+            logs.append("---------- end FUZZY DEBUG -----")
+            return {
+                "ok": True,
+                "match_client": match_client,
+                "match_artikul": match_artikul,
+                "logs": logs,
+            }
+
+    log(warn, "Fuzzy pass did not find a match.")
+    logs.append("[FUZZY DEBUG] ------------------")
+    logs.extend(dbg_all)
+    logs.append("---------- end FUZZY DEBUG -----")
+    return {
+        "ok": True,
+        "match_client": None,
+        "match_artikul": None,
         "logs": logs,
     }

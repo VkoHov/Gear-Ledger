@@ -145,6 +145,7 @@ class MainWindow(QWidget):
         self._worker: Worker | None = None
         self._fthread: QThread | None = None
         self._fworker: FuzzyWorker | None = None
+        self._main_running: bool = False
 
         # --- Controls: Excel + Target + Model ---
         inputs = QGroupBox("Settings")
@@ -361,6 +362,10 @@ class MainWindow(QWidget):
         self.preview.setPixmap(pix)
 
     def on_cam_capture_and_run(self):
+        # prevent double start
+        if self._main_running:
+            return
+
         if self._last_frame is None:
             QMessageBox.information(self, "Camera", "No frame yet. Try again.")
             return
@@ -369,11 +374,16 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Error", "Please choose a valid Excel file.")
             return
 
+        # disable capture immediately to block double-clicks
+        self.btn_capture.setEnabled(False)
+
         # save frame to temp jpg
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
         try:
             cv2.imwrite(tmp.name, self._last_frame)
         except Exception as e:
+            # re-enable since we failed
+            self.btn_capture.setEnabled(True)
             QMessageBox.critical(self, "Error", f"Failed to save capture: {e}")
             return
 
@@ -386,6 +396,13 @@ class MainWindow(QWidget):
         self.fuzzy_box.setVisible(False)
         self.cand_list.clear()
         self.append_logs(["Running…"])
+
+        # mark running + (optionally) lock settings while running
+        self._main_running = True
+        self.model_combo.setEnabled(False)
+        self.rb_auto.setEnabled(False)
+        self.rb_vendor.setEnabled(False)
+        self.rb_oem.setEnabled(False)
 
         # start worker
         self._thread = QThread()
@@ -411,6 +428,7 @@ class MainWindow(QWidget):
         self.btn_start.setEnabled(True)
         self.btn_capture.setEnabled(False)
         self.btn_stop.setEnabled(False)
+        self.btn_capture.setEnabled(False)
 
     # ---------- Results (main pass) ----------
     def on_finished_main(self, res: Dict[str, Any]):
@@ -469,6 +487,16 @@ class MainWindow(QWidget):
             else:
                 # Keep the group visible so you can run it later if you change your mind
                 pass
+
+        # re-enable after run finishes
+        self._main_running = False
+        # Only allow capture if camera is open
+        self.btn_capture.setEnabled(self.cap is not None)
+        # Let user tweak settings again
+        self.model_combo.setEnabled(True)
+        self.rb_auto.setEnabled(True)
+        self.rb_vendor.setEnabled(True)
+        self.rb_oem.setEnabled(True)
 
     # ---------- Fuzzy pass ----------
     def on_run_fuzzy_clicked(self):

@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from gearledger.pipeline import process_image, run_fuzzy_match
+from gearledger.result_ledger import record_match
 from gearledger.config import (
     DEFAULT_LANGS,
     DEFAULT_MODEL,
@@ -62,6 +63,7 @@ MODELS = ["gpt-4o-mini", "gpt-4o"]
 CAM_INDEX = int(os.getenv("CAM_INDEX", "0"))
 CAM_W = int(os.getenv("CAM_WIDTH", "1280"))
 CAM_H = int(os.getenv("CAM_HEIGHT", "720"))
+RESULT_SHEET = os.getenv("RESULT_SHEET", "result.xlsx")
 
 
 # ---------------- Camera helpers ----------------
@@ -472,6 +474,11 @@ class MainWindow(QWidget):
         if client and artikul:
             self.match_line.setText(f"{artikul} → {client}")
             speak_match(artikul, client)
+            rec = record_match(RESULT_SHEET, artikul, client, qty_inc=1, weight_inc=1)
+            if rec["ok"]:
+                self.append_logs([f"[INFO] Logged to results: {rec['action']} → {rec['path']}"])
+            else:
+                self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
         else:
             self.match_line.setText("not found")
             best = res.get("best_visible") or res.get("best_normalized")
@@ -624,6 +631,11 @@ class MainWindow(QWidget):
             self.match_line.setText(f"{a} → {c}")
             speak_match(a, c)
             self.fuzzy_box.setVisible(False)
+            rec = record_match(RESULT_SHEET, a, c, qty_inc=1, weight_inc=1)
+            if rec["ok"]:
+                self.append_logs([f"[INFO] Logged to results: {rec['action']} → {rec['path']}"])
+            else:
+                self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
         else:
             QMessageBox.information(self, "Fuzzy", "No fuzzy match found.")
 

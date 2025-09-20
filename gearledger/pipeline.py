@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Dict, Any, List, Tuple, Optional, Set
+from typing import Dict, Any, List, Tuple, Optional
 import re
 
 from .logging_utils import step, info, warn, err
@@ -31,7 +31,7 @@ from .heuristics import (
     is_vendor_like,
 )
 
-# Optional Paddle imports only if you pick that backend
+# Optional Paddle imports (used only if backend == "paddle")
 try:
     from .ocr_utils import init_ocr_engines, ocr_extract_pairs_multi
 except Exception:
@@ -39,8 +39,15 @@ except Exception:
     ocr_extract_pairs_multi = None
 
 
+# ---------------------------------------------------------------------------
+
+
 def _space_norm(s: str) -> str:
+    """Uppercase and remove only whitespace (keep hyphens/dots untouched)."""
     return re.sub(r"\s+", "", s or "").upper()
+
+
+# ---------------------------------------------------------------------------
 
 
 def process_image(
@@ -58,7 +65,7 @@ def process_image(
 ) -> Dict[str, Any]:
     logs: List[str] = []
 
-    def log(fn, msg):
+    def log(fn, msg: str):
         fn(msg)
         logs.append(msg)
 
@@ -75,24 +82,26 @@ def process_image(
             log(err, "Missing OPENAI_API_KEY for vision.")
             return {"ok": False, "error": "no_api_key", "logs": logs}
 
+        # Ask GPT-4o-mini (or chosen model) to read codes from the image
         raw, tin, tout = rank_with_gpt_vision(
             client,
             model,
             image_path,
             target=target,
             top_k=top_k,
-            max_side=max_side,
             max_tokens=OPENAI_VISION_MAX_TOKENS,
         )
         gpt_cost = estimate_cost(model, tin, tout)
         if gpt_cost is not None:
             log(info, f"Approx GPT cost: ${gpt_cost:.6f}")
 
-        # Parse JSON
+        # Parse JSON from model
         best_visible = ""
         best_norm = ""
         reason = ""
-        ranked_pairs: List[Tuple[str, float]] = []  # for UI: (text, pseudo-conf)
+        ranked_pairs: List[Tuple[str, float]] = (
+            []
+        )  # for UI display: (text, pseudo-conf)
         ranked_norms: List[Tuple[str, str]] = (
             []
         )  # for Excel sweep: (visible, normalized)
@@ -103,7 +112,6 @@ def process_image(
             best_norm = normalize_code(g.get("normalized") or best_visible)
             reason = g.get("reason", "")
             ranked = g.get("ranked") or []
-            # collect a small list for UI and Excel attempts
             for item in ranked[: max(top_k, 5)]:
                 vis = (item.get("text") or "").strip()
                 norm = normalize_code(item.get("normalized") or vis)
@@ -114,21 +122,26 @@ def process_image(
         except Exception as e:
             log(warn, f"Failed to parse GPT vision JSON: {e}")
 
-        to_try = ranked_norms or []
+        # Main pass: exact Excel lookup with *space-only* normalization of the *visible* token
+        to_try: List[Tuple[str, str]] = ranked_norms[:] if ranked_norms else []
         if best_visible:
-            to_try = to_try + [(best_visible, best_norm)]
+            to_try.append((best_visible, best_norm))  # ensure best is in the list
 
         match_client = None
         match_artikul = None
-        dbg_all = []
+        dbg_all: List[str] = []
 
         for vis, _norm_ignored in to_try:
-            q = _space_norm(vis)  # <- space-only normalization of the *visible* token
+            q = _space_norm(vis)  # exact compare after removing spaces
             if not q:
                 continue
             log(info, f"Excel exact (space) try: {vis}  (→ {q})")
+
+            # Expect simple exact-compare helper (no fuzzy)
             client_found, artikul_display, dbg = try_match_in_excel(excel_path, q)
-            dbg_all.append(dbg or "")
+            if dbg:
+                dbg_all.append(dbg)
+
             if client_found:
                 match_client, match_artikul = client_found, artikul_display
                 best_visible = vis
@@ -137,17 +150,16 @@ def process_image(
                 log(step, f"Excel MATCH → {artikul_display}  | Клиент: {client_found}")
                 break
 
+        # Prepare fuzzy prompt/candidates for the UI if no match
         prompt_fuzzy = False
         cand_order: List[Tuple[str, str]] = []
-
         if not match_client:
             prompt_fuzzy = True
-            # Prefer the model-ranked (visible, normalized) list
             if ranked_norms:
+                # Use (visible, normalized) from model
                 cand_order = ranked_norms[:10]
             else:
-                # fall back to the visible strings we showed in "filtered"
-                # (re-normalize to something stable)
+                # Fallback to visible list
                 cand_order = [
                     (vis, normalize_code(vis)) for (vis, _c) in ranked_pairs[:10]
                 ]
@@ -156,7 +168,7 @@ def process_image(
                 "No exact (space-only) match. Ready to start fuzzy if user confirms.",
             )
 
-        # Final log lines
+        # Final logs
         log(step, f"BEST (visible): {best_visible}")
         log(step, f"BEST (normalized): {best_norm}")
         logs.append("[MATCH DEBUG] ------------------")
@@ -171,7 +183,7 @@ def process_image(
             "excel": excel_path,
             "target": target,
             "pairs_sorted": [],  # not used in vision path
-            "filtered": ranked_pairs,  # show what the model proposed
+            "filtered": ranked_pairs,  # what the model proposed (for UI)
             "best_visible": best_visible,
             "best_normalized": best_norm,
             "reason": reason,
@@ -185,9 +197,9 @@ def process_image(
             "cand_order": cand_order,
         }
 
-    # ------------------- PADDLE → GPT PATH (unchanged) -------------------
-    # Kept for easy fallback
-    langs = langs or ["en", "ru"]
+    # ------------------- PADDLE → GPT PATH -------------------
+    # Kept for fallback or experimentation
+    langs = langs or DEFAULT_LANGS or ["en", "ru"]
     log(step, f"Languages: {langs}")
     if not init_ocr_engines or not ocr_extract_pairs_multi:
         log(err, "PaddleOCR not available in this environment.")
@@ -219,7 +231,7 @@ def process_image(
         log(err, "Missing OPENAI_API_KEY.")
         return {"ok": False, "error": "no_api_key", "logs": logs}
 
-    raw, tin, tout = rank_with_gpt(client, model, filtered, target, top_k=5)
+    raw, tin, tout = rank_with_gpt(client, model, filtered, target, top_k=top_k)
     gpt_cost = estimate_cost(model, tin, tout)
     if gpt_cost is not None:
         log(info, f"Approx GPT cost: ${gpt_cost:.6f}")
@@ -276,10 +288,14 @@ def process_image(
         "match_artikul": match_artikul,
         "match_debug": dbg,
         "logs": logs,
+        "prompt_fuzzy": not bool(match_client),
+        "cand_order": [(t, normalize_code(t)) for (t, _s) in filtered[:10]],
     }
 
 
-# ---- FUZZY PASS -------------------------------------------------------------
+# ------------------- FUZZY PASS ---------------------------------------------
+
+
 def run_fuzzy_match(
     excel_path: str,
     cand_order: List[Tuple[str, str]],
@@ -304,31 +320,28 @@ def run_fuzzy_match(
             continue
         log(info, f"Fuzzy Excel try: {visible}  (→ {normalized})")
 
-        # Call excel matcher; support both signatures:
-        #   try_match_in_excel(excel, norm, min_fuzzy, allow_fuzzy=True)
-        #   try_match_in_excel(excel, norm, min_fuzzy)
+        # Support both versions of try_match_in_excel:
+        #   (excel_path, normalized, min_fuzzy, allow_fuzzy=True)
+        #   (excel_path, normalized, min_fuzzy)
         try:
-            match_client, match_artikul, dbg = try_match_in_excel(
+            c, a, dbg = try_match_in_excel(
                 excel_path, normalized, min_fuzzy, allow_fuzzy=True
             )
         except TypeError:
-            # Older excel_utils without allow_fuzzy flag
-            match_client, match_artikul, dbg = try_match_in_excel(
-                excel_path, normalized, min_fuzzy
-            )
+            c, a, dbg = try_match_in_excel(excel_path, normalized, min_fuzzy)
 
         if dbg:
             dbg_all.append(dbg)
 
-        if match_client:
-            log(step, f"FUZZY MATCH → {match_artikul}  | Клиент: {match_client}")
+        if c:
+            log(step, f"FUZZY MATCH → {a}  | Клиент: {c}")
             logs.append("[FUZZY DEBUG] ------------------")
             logs.extend(dbg_all)
             logs.append("---------- end FUZZY DEBUG -----")
             return {
                 "ok": True,
-                "match_client": match_client,
-                "match_artikul": match_artikul,
+                "match_client": c,
+                "match_artikul": a,
                 "logs": logs,
             }
 

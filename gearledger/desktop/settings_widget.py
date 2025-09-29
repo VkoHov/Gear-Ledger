@@ -32,6 +32,7 @@ class SettingsWidget(QGroupBox):
         # Callbacks
         self.on_catalog_changed: Callable[[str], None] | None = None
         self.on_results_changed: Callable[[str], None] | None = None
+        self.on_manual_entry_requested: Callable[[str, float], None] | None = None
 
         self._setup_ui()
         self._setup_connections()
@@ -97,11 +98,38 @@ class SettingsWidget(QGroupBox):
         model_layout.addStretch(1)
         layout.addLayout(model_layout)
 
+        # Manual entry section
+        manual_entry_box = QGroupBox("Manual Entry (without scanning)")
+        manual_entry_layout = QVBoxLayout(manual_entry_box)
+
+        # Part code input
+        code_layout = QHBoxLayout()
+        code_layout.addWidget(QLabel("Part Code:"))
+        self.manual_part_code = QLineEdit()
+        self.manual_part_code.setPlaceholderText("Enter part code (e.g., PK-5396)")
+        code_layout.addWidget(self.manual_part_code, 1)
+        manual_entry_layout.addLayout(code_layout)
+
+        # Weight input
+        weight_layout = QHBoxLayout()
+        weight_layout.addWidget(QLabel("Weight (kg):"))
+        self.manual_weight = QLineEdit()
+        self.manual_weight.setPlaceholderText("Enter weight")
+        weight_layout.addWidget(self.manual_weight, 1)
+        manual_entry_layout.addLayout(weight_layout)
+
+        # Add button
+        self.btn_add_manual = QPushButton("Add to Results")
+        manual_entry_layout.addWidget(self.btn_add_manual)
+
+        layout.addWidget(manual_entry_box)
+
     def _setup_connections(self):
         """Set up signal connections."""
         self.btn_catalog.clicked.connect(self.pick_catalog_excel)
         self.btn_results.clicked.connect(self.pick_results_excel)
         self.btn_download.clicked.connect(self.download_results_excel)
+        self.btn_add_manual.clicked.connect(self.add_manual_entry)
 
     def set_catalog_changed_callback(self, callback: Callable[[str], None]):
         """Set callback for when catalog file changes."""
@@ -110,6 +138,12 @@ class SettingsWidget(QGroupBox):
     def set_results_changed_callback(self, callback: Callable[[str], None]):
         """Set callback for when results file changes."""
         self.on_results_changed = callback
+
+    def set_manual_entry_requested_callback(
+        self, callback: Callable[[str, float], None]
+    ):
+        """Set callback for when manual entry is requested."""
+        self.on_manual_entry_requested = callback
 
     def pick_catalog_excel(self):
         """Open file dialog to select catalog Excel file."""
@@ -182,6 +216,49 @@ class SettingsWidget(QGroupBox):
                     f"Failed to save results file:\n{str(e)}",
                 )
 
+    def add_manual_entry(self):
+        """Handle manual entry request."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        part_code = self.manual_part_code.text().strip()
+        weight_text = self.manual_weight.text().strip()
+
+        if not part_code:
+            QMessageBox.warning(
+                self,
+                "Manual Entry",
+                "Please enter a part code.",
+            )
+            return
+
+        if not weight_text:
+            QMessageBox.warning(
+                self,
+                "Manual Entry",
+                "Please enter the weight.",
+            )
+            return
+
+        try:
+            weight = float(weight_text)
+            if weight <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Manual Entry",
+                    "Weight must be greater than 0.",
+                )
+                return
+        except ValueError:
+            QMessageBox.warning(
+                self,
+                "Manual Entry",
+                "Please enter a valid weight number.",
+            )
+            return
+
+        if self.on_manual_entry_requested:
+            self.on_manual_entry_requested(part_code, weight)
+
     def get_catalog_path(self) -> str:
         """Get the current catalog file path."""
         return self.catalog_edit.text().strip()
@@ -214,6 +291,9 @@ class SettingsWidget(QGroupBox):
             self.btn_catalog,
             self.btn_results,
             self.btn_download,
+            self.manual_part_code,
+            self.manual_weight,
+            self.btn_add_manual,
         ):
             widget.setEnabled(enabled)
 
@@ -221,3 +301,8 @@ class SettingsWidget(QGroupBox):
         """Validate that catalog file exists."""
         catalog = self.get_catalog_path()
         return bool(catalog and os.path.exists(catalog))
+
+    def clear_manual_entry(self):
+        """Clear manual entry fields."""
+        self.manual_part_code.clear()
+        self.manual_weight.clear()

@@ -310,6 +310,9 @@ class MainWindow(QWidget):
 
         # Settings callbacks
         self.settings_widget.set_results_changed_callback(self._on_results_path_changed)
+        self.settings_widget.set_manual_entry_requested_callback(
+            self._on_manual_entry_requested
+        )
 
         # Results widget callbacks
         self.results_widget.set_fuzzy_requested_callback(self._on_fuzzy_requested)
@@ -578,6 +581,106 @@ class MainWindow(QWidget):
         except Exception as e:
             self.append_logs([f"[ERROR] Manual search error: {str(e)}"])
             self.results_widget.update_manual_result("", "")
+
+    def _on_manual_entry_requested(self, part_code: str, weight: float):
+        """Handle manual entry request."""
+        from gearledger.pipeline import run_fuzzy_match
+        from gearledger.config import DEFAULT_MIN_FUZZY
+
+        catalog = self.settings_widget.get_catalog_path()
+        if not catalog or not os.path.exists(catalog):
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(
+                self, "Error", "Please choose a valid Catalog Excel file."
+            )
+            return
+
+        self.append_logs([f"Manual entry: {part_code} (weight: {weight} kg)"])
+
+        try:
+            # Create a single candidate with the manual code
+            cand_order = [(part_code, part_code)]  # (visible, normalized)
+
+            # Run fuzzy match with the manual code
+            result = run_fuzzy_match(catalog, cand_order, DEFAULT_MIN_FUZZY)
+
+            if result.get("ok"):
+                client = result.get("match_client")
+                artikul = result.get("match_artikul")
+                ledger_path = self.settings_widget.get_results_path()
+
+                if client and artikul:
+                    # Record the match with the specified weight
+                    from gearledger.result_ledger import record_match
+
+                    rec = record_match(
+                        ledger_path, artikul, client, qty_inc=1, weight_inc=weight
+                    )
+                    if rec["ok"]:
+                        self.append_logs(
+                            [
+                                f"[INFO] Manual entry logged: {artikul} → {client} (weight: {weight} kg)"
+                            ]
+                        )
+                        self.results_pane.refresh()
+
+                        # Clear the manual entry fields
+                        self.settings_widget.clear_manual_entry()
+
+                        # Show success message
+                        from PyQt6.QtWidgets import QMessageBox
+
+                        QMessageBox.information(
+                            self,
+                            "Manual Entry Success",
+                            f"Successfully added:\n{artikul} → {client}\nWeight: {weight} kg",
+                        )
+                    else:
+                        self.append_logs(
+                            [f"[WARN] Manual entry log failed: {rec['error']}"]
+                        )
+                        from PyQt6.QtWidgets import QMessageBox
+
+                        QMessageBox.warning(
+                            self,
+                            "Manual Entry Failed",
+                            f"Failed to log entry: {rec['error']}",
+                        )
+                else:
+                    self.append_logs(
+                        [f"[INFO] No match found for manual code: {part_code}"]
+                    )
+                    from PyQt6.QtWidgets import QMessageBox
+
+                    QMessageBox.information(
+                        self,
+                        "No Match Found",
+                        f"No match found for part code: {part_code}\n\nYou can still add it manually to your inventory.",
+                    )
+            else:
+                self.append_logs(
+                    [
+                        f"[ERROR] Manual entry search failed: {result.get('error', 'Unknown error')}"
+                    ]
+                )
+                from PyQt6.QtWidgets import QMessageBox
+
+                QMessageBox.critical(
+                    self,
+                    "Search Failed",
+                    f"Failed to search for part code: {result.get('error', 'Unknown error')}",
+                )
+
+        except Exception as e:
+            self.append_logs([f"[ERROR] Manual entry error: {str(e)}"])
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(
+                self,
+                "Manual Entry Error",
+                f"An error occurred: {str(e)}",
+            )
 
     def append_logs(self, lines):
         """Append log lines."""

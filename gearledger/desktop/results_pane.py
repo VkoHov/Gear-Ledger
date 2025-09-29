@@ -11,7 +11,8 @@ from PyQt6.QtCore import (
     QModelIndex,
     pyqtSignal,
 )
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QLabel, QHeaderView
+from PyQt6.QtGui import QFont, QPalette
 
 COLUMNS = ["Артикул", "Клиент", "Количество", "Вес", "Последнее обновление"]
 
@@ -100,19 +101,98 @@ class ResultsPane(QWidget):
         super().__init__(parent)
         self.ledger_path = ledger_path
 
+        # Create styled label
         self.label = QLabel("Results (Excel):")
+        self.label.setStyleSheet(
+            """
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: #2c3e50;
+                padding: 8px 0px;
+                border-bottom: 2px solid #3498db;
+                margin-bottom: 8px;
+            }
+        """
+        )
+
+        # Create styled table
         self.table = QTableView(self)
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
 
+        # Apply table styling
+        self.table.setStyleSheet(
+            """
+            QTableView {
+                gridline-color: #bdc3c7;
+                background-color: #ffffff;
+                alternate-background-color: #f8f9fa;
+                selection-background-color: #3498db;
+                selection-color: white;
+                border: 1px solid #bdc3c7;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            
+            QTableView::item {
+                padding: 8px;
+                border-bottom: 1px solid #ecf0f1;
+            }
+            
+            QTableView::item:selected {
+                background-color: #3498db;
+                color: white;
+            }
+            
+            QTableView::item:hover {
+                background-color: #e8f4fd;
+            }
+            
+            QHeaderView::section {
+                background-color: #34495e;
+                color: white;
+                padding: 10px;
+                border: none;
+                border-right: 1px solid #2c3e50;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            
+            QHeaderView::section:first {
+                border-top-left-radius: 6px;
+            }
+            
+            QHeaderView::section:last {
+                border-top-right-radius: 6px;
+                border-right: none;
+            }
+            
+            QHeaderView::section:hover {
+                background-color: #2c3e50;
+            }
+        """
+        )
+
+        # Set header properties
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setDefaultSectionSize(120)
+        header.setMinimumSectionSize(80)
+
+        # Set row height
+        self.table.verticalHeader().setDefaultSectionSize(35)
+
         df = self._read_df_safe(ledger_path)
         self.model = PandasModel(df, self)
         self.table.setModel(self.model)
 
+        # Create main layout with styling
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(8)
         lay.addWidget(self.label)
         lay.addWidget(self.table)
 

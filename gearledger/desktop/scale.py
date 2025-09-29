@@ -1,11 +1,12 @@
 import re, time
 import serial
+from typing import Optional
 
 # very generic line parser: "1.234 kg" or "1234 g" or just "1.234"
 PAT = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*(kg|g|lb|oz)?", re.I)
 
 
-def parse_weight(line: str) -> str | None:
+def parse_weight(line: str) -> Optional[str]:
     m = PAT.search(line)
     if not m:
         return None
@@ -14,7 +15,7 @@ def parse_weight(line: str) -> str | None:
     return f"{val} {unit}".strip()
 
 
-def read_weight_once(port: str, baudrate=9600, timeout=2.0) -> str | None:
+def read_weight_once(port: str, baudrate=9600, timeout=2.0) -> Optional[str]:
     """
     Opens the serial port, reads for up to `timeout` seconds,
     returns the last parsed weight line.

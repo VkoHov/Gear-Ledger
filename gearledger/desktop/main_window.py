@@ -16,6 +16,7 @@ from .results_widget import ResultsWidget
 from .logs_widget import LogsWidget
 from .results_pane import ResultsPane
 from .process_helpers import ProcessManager
+from .scale_widget import ScaleWidget
 
 # Optional speech helpers (guarded)
 try:
@@ -300,6 +301,9 @@ class MainWindow(QWidget):
         # Logs widget
         self.logs_widget = LogsWidget()
 
+        # Scale widget
+        self.scale_widget = ScaleWidget()
+
         # Results pane (Excel table)
         self.results_pane = ResultsPane(self.settings_widget.get_results_path())
 
@@ -320,12 +324,17 @@ class MainWindow(QWidget):
             self._on_manual_search_requested
         )
 
+        # Scale widget callbacks
+        self.scale_widget.set_weight_ready_callback(self._on_weight_ready)
+        self.scale_widget.set_log_callback(self.append_logs)
+
     def _setup_layout(self):
         """Set up the main layout."""
         # Top container with scrollable content
         top_container = QWidget()
         top_layout = QVBoxLayout(top_container)
         top_layout.addWidget(self.settings_widget)
+        top_layout.addWidget(self.scale_widget)
         top_layout.addWidget(self.camera_widget)
         top_layout.addWidget(self.results_widget)
         top_layout.addWidget(self.logs_widget, 1)
@@ -365,6 +374,7 @@ class MainWindow(QWidget):
         self.settings_widget.set_controls_enabled(not busy)
         self.camera_widget.set_controls_enabled(not busy)
         self.results_widget.set_controls_enabled(not busy)
+        self.scale_widget.set_controls_enabled(not busy)
 
     def _on_camera_capture(self, image_path: str):
         """Handle camera capture and start processing."""
@@ -381,6 +391,11 @@ class MainWindow(QWidget):
         self.logs_widget.clear_logs()
         self.append_logs(["Running…"])
 
+        # Get current weight from scale if available
+        current_weight = self.scale_widget.get_current_weight()
+        if current_weight > 0:
+            self.append_logs([f"Using scale weight: {current_weight:.3f} kg"])
+
         # Start main processing job
         if self.process_manager.start_main_job(
             image_path,
@@ -390,6 +405,27 @@ class MainWindow(QWidget):
         ):
             self.poll_main_timer.start(100)  # Poll every 100ms
             self._update_controls()
+
+    def _on_weight_ready(self, weight: float):
+        """Handle weight ready from scale - automatically trigger camera capture."""
+        if not self.settings_widget.validate_catalog():
+            self.append_logs(
+                [f"[INFO] Weight ready: {weight:.3f} kg, but no catalog file selected"]
+            )
+            return
+
+        if not self.camera_widget.cap:
+            self.append_logs(
+                [f"[INFO] Weight ready: {weight:.3f} kg, but camera not started"]
+            )
+            return
+
+        self.append_logs(
+            [f"[INFO] Weight stabilized: {weight:.3f} kg - triggering OCR"]
+        )
+
+        # Automatically capture and process
+        self.camera_widget.capture_and_run()
 
     def _on_results_path_changed(self, path: str):
         """Handle results path change."""
@@ -449,10 +485,16 @@ class MainWindow(QWidget):
             self.results_widget.set_match_result(f"{artikul} → {client}")
             speak_match(artikul, client)
 
-            # Record the match
+            # Record the match with scale weight
             from gearledger.result_ledger import record_match
 
-            rec = record_match(ledger_path, artikul, client, qty_inc=1, weight_inc=1)
+            # Use scale weight if available, otherwise default to 1
+            scale_weight = self.scale_widget.get_current_weight()
+            weight_to_use = scale_weight if scale_weight > 0 else 1.0
+
+            rec = record_match(
+                ledger_path, artikul, client, qty_inc=1, weight_inc=weight_to_use
+            )
             if rec["ok"]:
                 self.append_logs(
                     [f"[INFO] Logged to results: {rec['action']} → {rec['path']}"]
@@ -507,10 +549,14 @@ class MainWindow(QWidget):
             self.results_widget.update_fuzzy_result(c, a)
             speak_match(a, c)
 
-            # Record the match
+            # Record the match with scale weight
             from gearledger.result_ledger import record_match
 
-            rec = record_match(ledger_path, a, c, qty_inc=1, weight_inc=1)
+            # Use scale weight if available, otherwise default to 1
+            scale_weight = self.scale_widget.get_current_weight()
+            weight_to_use = scale_weight if scale_weight > 0 else 1.0
+
+            rec = record_match(ledger_path, a, c, qty_inc=1, weight_inc=weight_to_use)
             if rec["ok"]:
                 self.append_logs(
                     [f"[INFO] Logged to results: {rec['action']} → {rec['path']}"]
@@ -693,6 +739,9 @@ class MainWindow(QWidget):
 
         # Clean up camera
         self.camera_widget.cleanup()
+
+        # Clean up scale
+        self.scale_widget.cleanup()
 
         # Stop timers
         if hasattr(self, "poll_main_timer"):

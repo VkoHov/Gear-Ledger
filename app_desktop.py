@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 import cv2
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QIcon, QPixmap, QImage
+from PyQt6.QtGui import QIcon, QPixmap, QImage, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
@@ -29,10 +29,14 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QCheckBox,
+    QSplitter,
+    QScrollArea,
 )
 
+# --- project imports ---
 from gearledger.pipeline import process_image, run_fuzzy_match
 from gearledger.result_ledger import record_match
+from gearledger.desktop.results_pane import ResultsPane
 from gearledger.config import (
     DEFAULT_LANGS,
     DEFAULT_MODEL,
@@ -63,6 +67,8 @@ MODELS = ["gpt-4o-mini", "gpt-4o"]
 CAM_INDEX = int(os.getenv("CAM_INDEX", "0"))
 CAM_W = int(os.getenv("CAM_WIDTH", "1280"))
 CAM_H = int(os.getenv("CAM_HEIGHT", "720"))
+
+# Results ledger default path (env or repo root file name)
 RESULT_SHEET = os.getenv("RESULT_SHEET", "result.xlsx")
 
 
@@ -89,12 +95,12 @@ def release_camera(cap):
 
 
 # ---------------- Process job functions (must be top-level!) ----------------
-def _main_job(image: str, excel: str, target: str, model: str, out_q: mp.Queue):
+def _main_job(image: str, excel_catalog: str, target: str, model: str, out_q: mp.Queue):
     """Runs the main pipeline in a separate process and puts result dict on out_q."""
     try:
         res = process_image(
             image,
-            excel,
+            excel_catalog,  # lookup file
             langs=DEFAULT_LANGS,
             model=model,
             min_fuzzy=DEFAULT_MIN_FUZZY,
@@ -108,22 +114,25 @@ def _main_job(image: str, excel: str, target: str, model: str, out_q: mp.Queue):
 
 
 def _fuzzy_job(
-    excel: str, cand_order: List[Tuple[str, str]], min_fuzzy: int, out_q: mp.Queue
+    excel_catalog: str,
+    cand_order: List[Tuple[str, str]],
+    min_fuzzy: int,
+    out_q: mp.Queue,
 ):
     """Runs fuzzy-matching in a separate process and puts result dict on out_q."""
     try:
-        res = run_fuzzy_match(excel, cand_order, min_fuzzy)
+        res = run_fuzzy_match(excel_catalog, cand_order, min_fuzzy)
     except Exception as e:
         res = {"ok": False, "error": str(e), "logs": [f"[ERROR] {e}"]}
     out_q.put(res)
 
 
-# ---------------- Main Window (Camera-only UI) ----------------
+# ---------------- Main Window (Camera UI + Bottom Excel table) ----------------
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GearLedger — desktop (camera)")
-        self.resize(1100, 780)
+        self.resize(1100, 820)
         try:
             self.setWindowIcon(QIcon.fromTheme("applications-graphics"))
         except Exception:
@@ -138,12 +147,19 @@ class MainWindow(QWidget):
         self._job_running = False
         self._fuzzy_running = False
 
-        # --- Controls: Excel + Target + Model ---
+        # --- Controls: Catalog Excel + Results Excel + Target + Model ---
         inputs = QGroupBox("Settings")
-        lbl_x = QLabel("Excel:")
-        self.xls_edit = QLineEdit()
-        btn_x = QPushButton("Browse…")
-        btn_x.clicked.connect(self.pick_excel)
+
+        lbl_catalog = QLabel("Catalog Excel (lookup):")
+        self.catalog_edit = QLineEdit()
+        btn_catalog = QPushButton("Browse…")
+        btn_catalog.clicked.connect(self.pick_catalog_excel)
+
+        lbl_results = QLabel("Results Excel (ledger):")
+        self.results_edit = QLineEdit()
+        self.results_edit.setText(RESULT_SHEET if RESULT_SHEET else "")
+        btn_results = QPushButton("Browse…")
+        btn_results.clicked.connect(self.pick_results_excel)
 
         lbl_t = QLabel("Target:")
         self.rb_auto = QRadioButton("auto")
@@ -168,10 +184,15 @@ class MainWindow(QWidget):
 
         g = QVBoxLayout()
         r1 = QHBoxLayout()
-        r1.addWidget(lbl_x)
-        r1.addWidget(self.xls_edit, 1)
-        r1.addWidget(btn_x)
+        r1.addWidget(lbl_catalog)
+        r1.addWidget(self.catalog_edit, 1)
+        r1.addWidget(btn_catalog)
         g.addLayout(r1)
+        r1b = QHBoxLayout()
+        r1b.addWidget(lbl_results)
+        r1b.addWidget(self.results_edit, 1)
+        r1b.addWidget(btn_results)
+        g.addLayout(r1b)
         r2 = QHBoxLayout()
         r2.addWidget(lbl_t)
         r2.addWidget(self.rb_auto)
@@ -215,8 +236,8 @@ class MainWindow(QWidget):
         c.addLayout(cr)
         cam_box.setLayout(c)
 
-        # --- Results ---
-        results = QGroupBox("Result")
+        # --- Result summary (top) ---
+        results = QGroupBox("Result summary")
         self.best_vis = QLineEdit()
         self.best_vis.setReadOnly(True)
         self.best_norm = QLineEdit()
@@ -261,7 +282,7 @@ class MainWindow(QWidget):
         rg.addWidget(self.fuzzy_box)
         results.setLayout(rg)
 
-        # --- Logs ---
+        # --- Logs (top) ---
         logs = QGroupBox("Logs")
         self.log_txt = QTextEdit()
         self.log_txt.setReadOnly(True)
@@ -272,13 +293,37 @@ class MainWindow(QWidget):
         lg.addWidget(self.log_txt)
         logs.setLayout(lg)
 
+        # --- TOP container holding original UI ---
+        top_container = QWidget()
+        top_layout = QVBoxLayout(top_container)
+        top_layout.addWidget(inputs)
+        top_layout.addWidget(cam_box)
+        top_layout.addWidget(results)
+        top_layout.addWidget(logs, 1)
+
+        # make the entire top part scrollable
+        top_scroll = QScrollArea()
+        top_scroll.setWidgetResizable(True)
+        top_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        top_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        top_scroll.setWidget(top_container)
+
+        # --- BOTTOM: Excel results table (shows ledger) ---
+        self.results_pane = ResultsPane(
+            self.results_edit.text().strip() or RESULT_SHEET
+        )
+
+        # --- Splitter so the bottom table is resizable ---
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(top_scroll)  # use the scroll area
+        splitter.addWidget(self.results_pane)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+
         # Root layout
-        root = QVBoxLayout()
-        root.addWidget(inputs)
-        root.addWidget(cam_box)
-        root.addWidget(results)
-        root.addWidget(logs, 1)
-        self.setLayout(root)
+        outer = QVBoxLayout()
+        outer.addWidget(splitter)
+        self.setLayout(outer)
 
         self.append_logs(["Ready."])
 
@@ -303,16 +348,23 @@ class MainWindow(QWidget):
         busy = self._job_running or self._fuzzy_running
         cam_open = self.cap is not None
 
-        self.xls_edit.setEnabled(not busy)
-        self.rb_auto.setEnabled(not busy)
-        self.rb_vendor.setEnabled(not busy)
-        self.rb_oem.setEnabled(not busy)
-        self.model_combo.setEnabled(not busy)
+        # settings area
+        for w in (
+            self.catalog_edit,
+            self.results_edit,
+            self.rb_auto,
+            self.rb_vendor,
+            self.rb_oem,
+            self.model_combo,
+        ):
+            w.setEnabled(not busy)
 
+        # camera buttons
         self.btn_start.setEnabled((not busy) and (not cam_open))
         self.btn_capture.setEnabled((not busy) and cam_open)
         self.btn_stop_cancel.setEnabled(cam_open or busy)
 
+        # fuzzy controls
         self.cand_list.setEnabled(not busy)
         self.chk_use_shown.setEnabled(not busy)
         self.btn_run_fuzzy.setEnabled((not busy) and self.fuzzy_box.isVisible())
@@ -329,17 +381,34 @@ class MainWindow(QWidget):
     def append_logs(self, lines: List[str]):
         for ln in lines or []:
             self.log_txt.append(ln)
+        # auto-scroll to bottom
+        self.log_txt.moveCursor(QTextCursor.MoveOperation.End)
 
-    def pick_excel(self):
+    def pick_catalog_excel(self):
         if self._job_running or self._fuzzy_running:
             return
         fn, _ = QFileDialog.getOpenFileName(
             self,
-            "Choose Excel file",
+            "Choose Catalog Excel (lookup)",
             filter="Excel (*.xlsx *.xlsm *.xls);;All files (*)",
         )
         if fn:
-            self.xls_edit.setText(fn)
+            self.catalog_edit.setText(fn)
+
+    def pick_results_excel(self):
+        if self._job_running or self._fuzzy_running:
+            return
+        fn, _ = QFileDialog.getSaveFileName(
+            self,
+            "Choose Results Excel (ledger)",
+            filter="Excel (*.xlsx);;All files (*)",
+            selectedFilter="Excel (*.xlsx)",
+        )
+        if fn:
+            if not os.path.splitext(fn)[1]:
+                fn = fn + ".xlsx"
+            self.results_edit.setText(fn)
+            self.results_pane.set_ledger_path(fn)  # bottom table now watches this file
 
     def _current_target(self) -> str:
         if self.rb_vendor.isChecked():
@@ -393,9 +462,12 @@ class MainWindow(QWidget):
         if self._last_frame is None:
             QMessageBox.information(self, "Camera", "No frame yet. Try again.")
             return
-        excel = self.xls_edit.text().strip()
-        if not os.path.exists(excel):
-            QMessageBox.critical(self, "Error", "Please choose a valid Excel file.")
+
+        catalog = self.catalog_edit.text().strip()
+        if not os.path.exists(catalog):
+            QMessageBox.critical(
+                self, "Error", "Please choose a valid Catalog Excel file."
+            )
             return
 
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
@@ -422,7 +494,7 @@ class MainWindow(QWidget):
             target=_main_job,
             args=(
                 tmp.name,
-                excel,
+                catalog,
                 self._current_target(),
                 self._current_model(),
                 self.q_main,
@@ -438,9 +510,7 @@ class MainWindow(QWidget):
         try:
             res = self.q_main.get_nowait()
         except queue.Empty:
-            # also detect if process died without result
             if self.proc_main and (not self.proc_main.is_alive()):
-                # no result, but process ended—treat as canceled/failure
                 self._finish_main_process(None)
             return
         self._finish_main_process(res)
@@ -471,12 +541,17 @@ class MainWindow(QWidget):
 
         client = res.get("match_client")
         artikul = res.get("match_artikul")
+        ledger_path = self.results_edit.text().strip() or RESULT_SHEET
+
         if client and artikul:
             self.match_line.setText(f"{artikul} → {client}")
             speak_match(artikul, client)
-            rec = record_match(RESULT_SHEET, artikul, client, qty_inc=1, weight_inc=1)
+            rec = record_match(ledger_path, artikul, client, qty_inc=1, weight_inc=1)
             if rec["ok"]:
-                self.append_logs([f"[INFO] Logged to results: {rec['action']} → {rec['path']}"])
+                self.append_logs(
+                    [f"[INFO] Logged to results: {rec['action']} → {rec['path']}"]
+                )
+                self.results_pane.refresh()  # update bottom table
             else:
                 self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
         else:
@@ -518,11 +593,6 @@ class MainWindow(QWidget):
 
     # ---------- Stop / Cancel ----------
     def on_stop_or_cancel(self):
-        """
-        Unified Stop/Cancel button:
-        - If a job (main or fuzzy) is running, terminate its process immediately.
-        - Always stop the camera if open.
-        """
         # Cancel main process
         if self.proc_main and self.proc_main.is_alive():
             self.proc_main.terminate()
@@ -564,9 +634,12 @@ class MainWindow(QWidget):
     def on_run_fuzzy_clicked(self):
         if self._job_running or self._fuzzy_running:
             return
-        excel = self.xls_edit.text().strip()
-        if not os.path.exists(excel):
-            QMessageBox.critical(self, "Error", "Please choose a valid Excel file.")
+
+        catalog = self.catalog_edit.text().strip()
+        if not os.path.exists(catalog):
+            QMessageBox.critical(
+                self, "Error", "Please choose a valid Catalog Excel file."
+            )
             return
         if not self._last_cand_order:
             QMessageBox.information(self, "Fuzzy", "No candidates available.")
@@ -589,7 +662,7 @@ class MainWindow(QWidget):
         self.q_fuzzy = mp.Queue()
         self.proc_fuzzy = mp.Process(
             target=_fuzzy_job,
-            args=(excel, cand, DEFAULT_MIN_FUZZY, self.q_fuzzy),
+            args=(catalog, cand, DEFAULT_MIN_FUZZY, self.q_fuzzy),
             daemon=True,
         )
         self.proc_fuzzy.start()
@@ -627,13 +700,18 @@ class MainWindow(QWidget):
 
         c = res.get("match_client")
         a = res.get("match_artikul")
+        ledger_path = self.results_edit.text().strip() or RESULT_SHEET
+
         if c and a:
             self.match_line.setText(f"{a} → {c}")
             speak_match(a, c)
             self.fuzzy_box.setVisible(False)
-            rec = record_match(RESULT_SHEET, a, c, qty_inc=1, weight_inc=1)
+            rec = record_match(ledger_path, a, c, qty_inc=1, weight_inc=1)
             if rec["ok"]:
-                self.append_logs([f"[INFO] Logged to results: {rec['action']} → {rec['path']}"])
+                self.append_logs(
+                    [f"[INFO] Logged to results: {rec['action']} → {rec['path']}"]
+                )
+                self.results_pane.refresh()
             else:
                 self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
         else:

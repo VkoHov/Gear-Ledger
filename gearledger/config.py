@@ -4,6 +4,7 @@ Central config & sane defaults for GearLedger.
 """
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Prevent some macOS/BLAS issues (MPS/Accelerate)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -30,3 +31,7 @@ DEFAULT_VISION_BACKEND = os.getenv("VISION_BACKEND", "openai").strip().lower()
 
 # Optional: max tokens for vision response (keep small; we only want compact JSON)
 OPENAI_VISION_MAX_TOKENS = int(os.getenv("OPENAI_VISION_MAX_TOKENS", "300"))
+
+
+ROOT_DIR = Path(__file__).resolve().parents[2]  # .../GEAR-LEDGER
+LEDGER_PATH = str(ROOT_DIR / "result.xlsx")  # your existing file at repo root

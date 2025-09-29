@@ -29,6 +29,7 @@ class ResultsWidget(QGroupBox):
 
         # Callbacks
         self.on_fuzzy_requested: Callable[[List[Tuple[str, str]]], None] | None = None
+        self.on_manual_search_requested: Callable[[str], None] | None = None
 
         # State
         self._last_cand_order: List[Tuple[str, str]] = []
@@ -94,15 +95,41 @@ class ResultsWidget(QGroupBox):
 
         layout.addWidget(self.fuzzy_box)
 
+        # Manual code input section
+        self.manual_box = QGroupBox("No match found — enter code manually?")
+        self.manual_box.setVisible(False)
+
+        manual_layout = QVBoxLayout(self.manual_box)
+        manual_layout.addWidget(QLabel("Enter part code to search in invoice:"))
+
+        # Manual input layout
+        manual_input_layout = QHBoxLayout()
+        self.manual_code_input = QLineEdit()
+        self.manual_code_input.setPlaceholderText(
+            "Enter part code (e.g., PK-5396, A 221 501 26 91)"
+        )
+        self.btn_search_manual = QPushButton("Search")
+        manual_input_layout.addWidget(self.manual_code_input, 1)
+        manual_input_layout.addWidget(self.btn_search_manual)
+        manual_layout.addLayout(manual_input_layout)
+
+        layout.addWidget(self.manual_box)
+
     def _setup_connections(self):
         """Set up signal connections."""
         self.btn_run_fuzzy.clicked.connect(self._on_run_fuzzy_clicked)
+        self.btn_search_manual.clicked.connect(self._on_manual_search_clicked)
+        self.manual_code_input.returnPressed.connect(self._on_manual_search_clicked)
 
     def set_fuzzy_requested_callback(
         self, callback: Callable[[List[Tuple[str, str]]], None]
     ):
         """Set callback for when fuzzy matching is requested."""
         self.on_fuzzy_requested = callback
+
+    def set_manual_search_requested_callback(self, callback: Callable[[str], None]):
+        """Set callback for when manual search is requested."""
+        self.on_manual_search_requested = callback
 
     def clear_results(self):
         """Clear all result fields."""
@@ -111,7 +138,9 @@ class ResultsWidget(QGroupBox):
         self.match_line.clear()
         self.cost_line.clear()
         self.fuzzy_box.setVisible(False)
+        self.manual_box.setVisible(False)
         self.cand_list.clear()
+        self.manual_code_input.clear()
 
     def set_best_visible(self, text: str):
         """Set the best visible result."""
@@ -168,6 +197,14 @@ class ResultsWidget(QGroupBox):
         """Hide fuzzy matching options."""
         self.fuzzy_box.setVisible(False)
 
+    def show_manual_input(self):
+        """Show manual code input option."""
+        self.manual_box.setVisible(True)
+
+    def hide_manual_input(self):
+        """Hide manual code input option."""
+        self.manual_box.setVisible(False)
+
     def _on_run_fuzzy_clicked(self):
         """Handle fuzzy matching button click."""
         if not self.on_fuzzy_requested or not self._last_cand_order:
@@ -187,16 +224,47 @@ class ResultsWidget(QGroupBox):
 
         self.on_fuzzy_requested(cand)
 
+    def _on_manual_search_clicked(self):
+        """Handle manual search button click."""
+        if not self.on_manual_search_requested:
+            return
+
+        code = self.manual_code_input.text().strip()
+        if not code:
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(
+                self,
+                "Manual Search",
+                "Please enter a part code to search.",
+            )
+            return
+
+        self.on_manual_search_requested(code)
+
     def set_controls_enabled(self, enabled: bool):
         """Enable/disable controls."""
         self.cand_list.setEnabled(enabled)
         self.chk_use_shown.setEnabled(enabled)
         self.btn_run_fuzzy.setEnabled(enabled and self.fuzzy_box.isVisible())
+        self.manual_code_input.setEnabled(enabled)
+        self.btn_search_manual.setEnabled(enabled and self.manual_box.isVisible())
 
     def update_fuzzy_result(self, client: str, artikul: str):
         """Update result with fuzzy match."""
         if client and artikul:
             self.match_line.setText(f"{artikul} → {client}")
             self.hide_fuzzy_options()
+            self.hide_manual_input()
         else:
             QMessageBox.information(self, "Fuzzy", "No fuzzy match found.")
+
+    def update_manual_result(self, client: str, artikul: str):
+        """Update result with manual search match."""
+        if client and artikul:
+            self.match_line.setText(f"{artikul} → {client}")
+            self.hide_manual_input()
+        else:
+            QMessageBox.information(
+                self, "Manual Search", "No match found for the entered code."
+            )

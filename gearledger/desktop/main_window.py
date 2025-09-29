@@ -313,6 +313,9 @@ class MainWindow(QWidget):
 
         # Results widget callbacks
         self.results_widget.set_fuzzy_requested_callback(self._on_fuzzy_requested)
+        self.results_widget.set_manual_search_requested_callback(
+            self._on_manual_search_requested
+        )
 
     def _setup_layout(self):
         """Set up the main layout."""
@@ -470,6 +473,9 @@ class MainWindow(QWidget):
         cand_order = res.get("cand_order") or []
         if not client and res.get("prompt_fuzzy") and cand_order:
             self.results_widget.show_fuzzy_options(cand_order, True)
+        elif not client:
+            # Show manual input option if no fuzzy candidates
+            self.results_widget.show_manual_input()
 
         self._update_controls()
 
@@ -511,6 +517,67 @@ class MainWindow(QWidget):
                 self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
 
         self._update_controls()
+
+    def _on_manual_search_requested(self, code: str):
+        """Handle manual search request."""
+        from gearledger.pipeline import run_fuzzy_match
+        from gearledger.config import DEFAULT_MIN_FUZZY
+
+        catalog = self.settings_widget.get_catalog_path()
+        if not catalog or not os.path.exists(catalog):
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(
+                self, "Error", "Please choose a valid Catalog Excel file."
+            )
+            return
+
+        self.append_logs([f"Searching for manual code: {code}"])
+
+        try:
+            # Create a single candidate with the manual code
+            cand_order = [(code, code)]  # (visible, normalized)
+
+            # Run fuzzy match with the manual code
+            result = run_fuzzy_match(catalog, cand_order, DEFAULT_MIN_FUZZY)
+
+            if result.get("ok"):
+                client = result.get("match_client")
+                artikul = result.get("match_artikul")
+                ledger_path = self.settings_widget.get_results_path()
+
+                if client and artikul:
+                    self.results_widget.update_manual_result(client, artikul)
+                    speak_match(artikul, client)
+
+                    # Record the match
+                    from gearledger.result_ledger import record_match
+
+                    rec = record_match(
+                        ledger_path, artikul, client, qty_inc=1, weight_inc=1
+                    )
+                    if rec["ok"]:
+                        self.append_logs(
+                            [
+                                f"[INFO] Logged to results: {rec['action']} → {rec['path']}"
+                            ]
+                        )
+                        self.results_pane.refresh()
+                    else:
+                        self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
+                else:
+                    self.results_widget.update_manual_result("", "")
+            else:
+                self.append_logs(
+                    [
+                        f"[ERROR] Manual search failed: {result.get('error', 'Unknown error')}"
+                    ]
+                )
+                self.results_widget.update_manual_result("", "")
+
+        except Exception as e:
+            self.append_logs([f"[ERROR] Manual search error: {str(e)}"])
+            self.results_widget.update_manual_result("", "")
 
     def append_logs(self, lines):
         """Append log lines."""

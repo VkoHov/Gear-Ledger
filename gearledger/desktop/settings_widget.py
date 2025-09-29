@@ -55,8 +55,10 @@ class SettingsWidget(QGroupBox):
         self.results_edit = QLineEdit()
         self.results_edit.setText(RESULT_SHEET if RESULT_SHEET else "")
         self.btn_results = QPushButton("Browse…")
+        self.btn_download = QPushButton("Download")
         results_layout.addWidget(self.results_edit, 1)
         results_layout.addWidget(self.btn_results)
+        results_layout.addWidget(self.btn_download)
         layout.addLayout(results_layout)
 
         # Target selection
@@ -99,6 +101,7 @@ class SettingsWidget(QGroupBox):
         """Set up signal connections."""
         self.btn_catalog.clicked.connect(self.pick_catalog_excel)
         self.btn_results.clicked.connect(self.pick_results_excel)
+        self.btn_download.clicked.connect(self.download_results_excel)
 
     def set_catalog_changed_callback(self, callback: Callable[[str], None]):
         """Set callback for when catalog file changes."""
@@ -136,6 +139,49 @@ class SettingsWidget(QGroupBox):
             if self.on_results_changed:
                 self.on_results_changed(fn)
 
+    def download_results_excel(self):
+        """Save results Excel file to a chosen location."""
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        import shutil
+
+        current_path = self.get_results_path()
+        if not current_path or not os.path.exists(current_path):
+            QMessageBox.warning(
+                self,
+                "Download Results",
+                "No results file found. Please run some OCR operations first to generate results.",
+            )
+            return
+
+        # Get save location
+        fn, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Results Excel File",
+            filter="Excel (*.xlsx);;All files (*)",
+            initialFilter="Excel (*.xlsx)",
+        )
+
+        if fn:
+            try:
+                # Ensure .xlsx extension
+                if not fn.endswith(".xlsx"):
+                    fn += ".xlsx"
+
+                # Copy the file
+                shutil.copy2(current_path, fn)
+
+                QMessageBox.information(
+                    self,
+                    "Download Complete",
+                    f"Results file saved successfully to:\n{fn}",
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Download Failed",
+                    f"Failed to save results file:\n{str(e)}",
+                )
+
     def get_catalog_path(self) -> str:
         """Get the current catalog file path."""
         return self.catalog_edit.text().strip()
@@ -167,6 +213,7 @@ class SettingsWidget(QGroupBox):
             self.model_combo,
             self.btn_catalog,
             self.btn_results,
+            self.btn_download,
         ):
             widget.setEnabled(enabled)
 

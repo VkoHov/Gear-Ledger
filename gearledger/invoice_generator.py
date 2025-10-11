@@ -217,6 +217,7 @@ def _write_client_section(
     # Write item rows
     item_num = 1
     total_sum = 0
+    total_weight = 0
 
     for _, result_row in items.iterrows():
         artikul = str(result_row.get("Артикул", ""))
@@ -243,6 +244,7 @@ def _write_client_section(
 
             total = price * quantity
             total_sum += total
+            total_weight += weight
 
             # Write row
             ws[f"A{current_row}"] = item_num
@@ -280,7 +282,10 @@ def _write_client_section(
     ws[f"E{current_row}"].font = Font(bold=True)
     ws[f"E{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # Skip weight column (F) in total row
+    ws[f"F{current_row}"] = f"{total_weight:.3f}"
+    ws[f"F{current_row}"].font = Font(bold=True)
+    ws[f"F{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
+
     ws[f"G{current_row}"] = f"{total_sum:.2f}"
     ws[f"G{current_row}"].font = Font(bold=True)
     ws[f"G{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
@@ -290,7 +295,7 @@ def _write_client_section(
     ws[f"H{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
     # Add borders to total row
-    for col in ["D", "E", "G", "H"]:
+    for col in ["D", "E", "F", "G", "H"]:
         ws[f"{col}{current_row}"].border = Border(
             left=Side(style="thin"),
             right=Side(style="thin"),

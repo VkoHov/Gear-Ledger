@@ -187,10 +187,11 @@ def _write_client_section(
         "Номер",
         "Описание",
         "Кол.",
+        "Вес",
         "Цена продажи",
         "Сумма продажи",
     ]
-    header_cols = ["A", "B", "C", "D", "E", "F", "G"]
+    header_cols = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
     for col, header in zip(header_cols, headers):
         cell = ws[f"{col}{current_row}"]
@@ -220,6 +221,7 @@ def _write_client_section(
     for _, result_row in items.iterrows():
         artikul = str(result_row.get("Артикул", ""))
         quantity = result_row.get("Количество", 1)
+        weight = result_row.get("Вес", 0)
 
         # Look up in catalog
         item_data = _lookup_in_catalog(artikul, catalog_df, col_mapping)
@@ -233,9 +235,11 @@ def _write_client_section(
             try:
                 price = float(price) if price else 0
                 quantity = int(quantity) if quantity else 1
+                weight = float(weight) if weight else 0
             except:
                 price = 0
                 quantity = 1
+                weight = 0
 
             total = price * quantity
             total_sum += total
@@ -246,14 +250,15 @@ def _write_client_section(
             ws[f"C{current_row}"] = number
             ws[f"D{current_row}"] = description
             ws[f"E{current_row}"] = quantity
-            ws[f"F{current_row}"] = f"{price:.2f}"
-            ws[f"G{current_row}"] = f"{total:.2f}"
+            ws[f"F{current_row}"] = f"{weight:.3f}"
+            ws[f"G{current_row}"] = f"{price:.2f}"
+            ws[f"H{current_row}"] = f"{total:.2f}"
 
             # Format cells
             for col in header_cols:
                 cell = ws[f"{col}{current_row}"]
                 cell.alignment = Alignment(
-                    horizontal="center" if col in ["A", "E"] else "left",
+                    horizontal="center" if col in ["A", "E", "F"] else "left",
                     vertical="center",
                 )
                 cell.border = Border(
@@ -275,16 +280,17 @@ def _write_client_section(
     ws[f"E{current_row}"].font = Font(bold=True)
     ws[f"E{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
-    ws[f"F{current_row}"] = f"{total_sum:.2f}"
-    ws[f"F{current_row}"].font = Font(bold=True)
-    ws[f"F{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
-
+    # Skip weight column (F) in total row
     ws[f"G{current_row}"] = f"{total_sum:.2f}"
     ws[f"G{current_row}"].font = Font(bold=True)
     ws[f"G{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
+    ws[f"H{current_row}"] = f"{total_sum:.2f}"
+    ws[f"H{current_row}"].font = Font(bold=True)
+    ws[f"H{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
+
     # Add borders to total row
-    for col in ["D", "E", "F", "G"]:
+    for col in ["D", "E", "G", "H"]:
         ws[f"{col}{current_row}"].border = Border(
             left=Side(style="thin"),
             right=Side(style="thin"),
@@ -303,8 +309,9 @@ def _write_client_section(
     ws.column_dimensions["C"].width = 15
     ws.column_dimensions["D"].width = 50
     ws.column_dimensions["E"].width = 8
-    ws.column_dimensions["F"].width = 15
+    ws.column_dimensions["F"].width = 10  # Weight column
     ws.column_dimensions["G"].width = 15
+    ws.column_dimensions["H"].width = 15
 
     return current_row
 

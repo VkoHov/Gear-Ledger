@@ -33,5 +33,5 @@ DEFAULT_VISION_BACKEND = os.getenv("VISION_BACKEND", "openai").strip().lower()
 OPENAI_VISION_MAX_TOKENS = int(os.getenv("OPENAI_VISION_MAX_TOKENS", "300"))
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]  # .../GEAR-LEDGER
+ROOT_DIR = Path(__file__).resolve().parents[1]  # .../Gear-Ledger
 LEDGER_PATH = str(ROOT_DIR / "result.xlsx")  # your existing file at repo root

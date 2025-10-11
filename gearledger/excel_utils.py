@@ -25,7 +25,17 @@ def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
     for c in df.columns:
         lc = str(c).strip().lower()
         if artikul_col is None and any(
-            k in lc for k in ["арт", "artikul", "article", "part", "sku", "code"]
+            k in lc
+            for k in [
+                "номер",
+                "арт",
+                "artikul",
+                "article",
+                "part",
+                "sku",
+                "code",
+                "number",
+            ]
         ):
             artikul_col = c
         if client_col is None and any(
@@ -33,8 +43,10 @@ def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
         ):
             client_col = c
 
-    # Fallback to exact names if present
-    if "Артикул" in df.columns:
+    # Fallback to exact names if present (prioritize Номер over Артикул for new format)
+    if "Номер" in df.columns:
+        artikul_col = "Номер"
+    elif "Артикул" in df.columns:
         artikul_col = "Артикул"
     if "Клиент" in df.columns:
         client_col = "Клиент"

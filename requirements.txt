@@ -8,6 +8,7 @@ pillow>=10.0.0
 pillow-heif>=0.16.0      # HEIC/HEIF support (optional but useful)
 pandas>=2.2.0
 openpyxl>=3.1.2
+xlrd>=2.0.1              # For reading .xls files
 
 # Fuzzy matching
 fuzzywuzzy>=0.18.0

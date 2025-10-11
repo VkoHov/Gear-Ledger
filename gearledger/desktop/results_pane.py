@@ -14,7 +14,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QLabel, QHeaderView
 from PyQt6.QtGui import QFont, QPalette
 
-COLUMNS = ["Артикул", "Клиент", "Количество", "Вес", "Последнее обновление"]
+from gearledger.result_ledger import COLUMNS
 
 
 class PandasModel(QAbstractTableModel):

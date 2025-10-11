@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
 from gearledger.config import DEFAULT_MODEL, DEFAULT_TARGET
 
 MODELS = ["gpt-4o-mini", "gpt-4o"]
-RESULT_SHEET = os.getenv("RESULT_SHEET", "result.xlsx")
 
 
 class SettingsWidget(QGroupBox):
@@ -33,6 +32,7 @@ class SettingsWidget(QGroupBox):
         self.on_catalog_changed: Callable[[str], None] | None = None
         self.on_results_changed: Callable[[str], None] | None = None
         self.on_manual_entry_requested: Callable[[str, float], None] | None = None
+        self.on_generate_invoice_requested: Callable[[], None] | None = None
 
         self._setup_ui()
         self._setup_connections()
@@ -54,12 +54,15 @@ class SettingsWidget(QGroupBox):
         results_layout = QHBoxLayout()
         results_layout.addWidget(QLabel("Results Excel (ledger):"))
         self.results_edit = QLineEdit()
-        self.results_edit.setText(RESULT_SHEET if RESULT_SHEET else "")
+        # Leave empty initially - will auto-generate on first use
         self.btn_results = QPushButton("Browse…")
         self.btn_download = QPushButton("Download")
+        self.btn_generate_invoice = QPushButton("Generate Invoice")
+        self.btn_generate_invoice.setStyleSheet("background-color: #27ae60;")
         results_layout.addWidget(self.results_edit, 1)
         results_layout.addWidget(self.btn_results)
         results_layout.addWidget(self.btn_download)
+        results_layout.addWidget(self.btn_generate_invoice)
         layout.addLayout(results_layout)
 
         # Target selection
@@ -129,6 +132,7 @@ class SettingsWidget(QGroupBox):
         self.btn_catalog.clicked.connect(self.pick_catalog_excel)
         self.btn_results.clicked.connect(self.pick_results_excel)
         self.btn_download.clicked.connect(self.download_results_excel)
+        self.btn_generate_invoice.clicked.connect(self.generate_invoice)
         self.btn_add_manual.clicked.connect(self.add_manual_entry)
 
     def set_catalog_changed_callback(self, callback: Callable[[str], None]):
@@ -144,6 +148,10 @@ class SettingsWidget(QGroupBox):
     ):
         """Set callback for when manual entry is requested."""
         self.on_manual_entry_requested = callback
+
+    def set_generate_invoice_requested_callback(self, callback: Callable[[], None]):
+        """Set callback for when invoice generation is requested."""
+        self.on_generate_invoice_requested = callback
 
     def pick_catalog_excel(self):
         """Open file dialog to select catalog Excel file."""
@@ -216,6 +224,11 @@ class SettingsWidget(QGroupBox):
                     f"Failed to save results file:\n{str(e)}",
                 )
 
+    def generate_invoice(self):
+        """Generate invoice from results file."""
+        if self.on_generate_invoice_requested:
+            self.on_generate_invoice_requested()
+
     def add_manual_entry(self):
         """Handle manual entry request."""
         from PyQt6.QtWidgets import QMessageBox
@@ -264,8 +277,27 @@ class SettingsWidget(QGroupBox):
         return self.catalog_edit.text().strip()
 
     def get_results_path(self) -> str:
-        """Get the current results file path."""
-        return self.results_edit.text().strip() or RESULT_SHEET
+        """Get the current results file path. Creates default if not set."""
+        path = self.results_edit.text().strip()
+
+        # If no path is set, create a default one with timestamp
+        if not path:
+            import datetime
+            from gearledger.config import ROOT_DIR
+
+            default_filename = (
+                f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            )
+            path = str(ROOT_DIR / default_filename)
+
+            # Update the UI with the new path (so it persists for this session)
+            self.results_edit.setText(path)
+
+            # Notify that the results path has changed
+            if self.on_results_changed:
+                self.on_results_changed(path)
+
+        return path
 
     def get_target(self) -> str:
         """Get the current target selection."""
@@ -291,6 +323,7 @@ class SettingsWidget(QGroupBox):
             self.btn_catalog,
             self.btn_results,
             self.btn_download,
+            self.btn_generate_invoice,
             self.manual_part_code,
             self.manual_weight,
             self.btn_add_manual,

@@ -33,10 +33,6 @@ except Exception:
         return x
 
 
-# Results ledger default path (env or repo root file name)
-RESULT_SHEET = os.getenv("RESULT_SHEET", "result.xlsx")
-
-
 class MainWindow(QWidget):
     """Main application window."""
 
@@ -317,6 +313,9 @@ class MainWindow(QWidget):
         self.settings_widget.set_manual_entry_requested_callback(
             self._on_manual_entry_requested
         )
+        self.settings_widget.set_generate_invoice_requested_callback(
+            self._on_generate_invoice_requested
+        )
 
         # Results widget callbacks
         self.results_widget.set_fuzzy_requested_callback(self._on_fuzzy_requested)
@@ -493,7 +492,12 @@ class MainWindow(QWidget):
             weight_to_use = scale_weight if scale_weight > 0 else 1.0
 
             rec = record_match(
-                ledger_path, artikul, client, qty_inc=1, weight_inc=weight_to_use
+                ledger_path,
+                artikul,
+                client,
+                qty_inc=1,
+                weight_inc=weight_to_use,
+                catalog_path=self.settings_widget.get_catalog_path(),
             )
             if rec["ok"]:
                 self.append_logs(
@@ -556,7 +560,14 @@ class MainWindow(QWidget):
             scale_weight = self.scale_widget.get_current_weight()
             weight_to_use = scale_weight if scale_weight > 0 else 1.0
 
-            rec = record_match(ledger_path, a, c, qty_inc=1, weight_inc=weight_to_use)
+            rec = record_match(
+                ledger_path,
+                a,
+                c,
+                qty_inc=1,
+                weight_inc=weight_to_use,
+                catalog_path=self.settings_widget.get_catalog_path(),
+            )
             if rec["ok"]:
                 self.append_logs(
                     [f"[INFO] Logged to results: {rec['action']} → {rec['path']}"]
@@ -603,7 +614,12 @@ class MainWindow(QWidget):
                     from gearledger.result_ledger import record_match
 
                     rec = record_match(
-                        ledger_path, artikul, client, qty_inc=1, weight_inc=1
+                        ledger_path,
+                        artikul,
+                        client,
+                        qty_inc=1,
+                        weight_inc=1,
+                        catalog_path=self.settings_widget.get_catalog_path(),
                     )
                     if rec["ok"]:
                         self.append_logs(
@@ -661,7 +677,12 @@ class MainWindow(QWidget):
                     from gearledger.result_ledger import record_match
 
                     rec = record_match(
-                        ledger_path, artikul, client, qty_inc=1, weight_inc=weight
+                        ledger_path,
+                        artikul,
+                        client,
+                        qty_inc=1,
+                        weight_inc=weight,
+                        catalog_path=self.settings_widget.get_catalog_path(),
                     )
                     if rec["ok"]:
                         self.append_logs(
@@ -726,6 +747,78 @@ class MainWindow(QWidget):
                 self,
                 "Manual Entry Error",
                 f"An error occurred: {str(e)}",
+            )
+
+    def _on_generate_invoice_requested(self):
+        """Handle invoice generation request."""
+        from PyQt6.QtWidgets import QMessageBox, QFileDialog
+        from gearledger.invoice_generator import generate_invoice_from_results
+
+        # Validate files exist
+        results_path = self.settings_widget.get_results_path()
+        catalog_path = self.settings_widget.get_catalog_path()
+
+        if not results_path or not os.path.exists(results_path):
+            QMessageBox.warning(
+                self,
+                "Generate Invoice",
+                "No results file found. Please run some OCR operations first to generate results.",
+            )
+            return
+
+        if not catalog_path or not os.path.exists(catalog_path):
+            QMessageBox.critical(
+                self,
+                "Generate Invoice",
+                "Please choose a valid Catalog Excel file first.",
+            )
+            return
+
+        # Ask user where to save the invoice
+        default_name = f"invoice_{os.path.basename(results_path)}"
+        output_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Invoice As",
+            default_name,
+            filter="Excel (*.xlsx);;All files (*)",
+            initialFilter="Excel (*.xlsx)",
+        )
+
+        if not output_path:
+            return  # User cancelled
+
+        # Ensure .xlsx extension
+        if not output_path.endswith(".xlsx"):
+            output_path += ".xlsx"
+
+        self.append_logs(["[INFO] Generating invoice..."])
+
+        # Generate invoice
+        result = generate_invoice_from_results(results_path, catalog_path, output_path)
+
+        if result.get("ok"):
+            self.append_logs(
+                [
+                    f"[INFO] Invoice generated successfully!",
+                    f"[INFO] Output: {result['path']}",
+                    f"[INFO] Clients processed: {result.get('clients', 0)}",
+                ]
+            )
+
+            QMessageBox.information(
+                self,
+                "Invoice Generated",
+                f"Invoice generated successfully!\n\nFile: {result['path']}\nClients: {result.get('clients', 0)}",
+            )
+        else:
+            self.append_logs(
+                [f"[ERROR] Invoice generation failed: {result.get('error')}"]
+            )
+
+            QMessageBox.critical(
+                self,
+                "Invoice Generation Failed",
+                f"Failed to generate invoice:\n\n{result.get('error')}",
             )
 
     def append_logs(self, lines):

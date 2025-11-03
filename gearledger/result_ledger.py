@@ -13,6 +13,7 @@ COLUMNS = [
     "Брэнд",
     "Описание",
     "Цена продажи",
+    "Сумма продажи",
 ]
 
 
@@ -60,37 +61,31 @@ def record_match(
     # Look up additional fields from catalog if provided
     brand = ""
     description = ""
-    price = 0
+    catalog_price = 0  # Store catalog price separately from calculated price
 
     if catalog_path and os.path.exists(catalog_path):
         catalog_data = _lookup_catalog_data(artikul, catalog_path)
         if catalog_data:
             brand = catalog_data.get("бренд", "")
             description = catalog_data.get("описание", "")
-            price = catalog_data.get("цена", 0)
+            catalog_price = catalog_data.get("цена", 0)
             # Info: print what we found
             print(
-                f"[INFO] Found catalog data for {artikul}: brand={brand}, price={price}"
+                f"[INFO] Found catalog data for {artikul}: brand={brand}, catalog_price={catalog_price}"
             )
         else:
             print(f"[INFO] No catalog data found for {artikul}")
     else:
         print(f"[INFO] No catalog file selected")
 
-    # Add weight price to catalog price if weight_price is provided
-    if weight_price > 0:
-        weight_based_price = weight_inc * weight_price
-        if price > 0:  # Add weight price to existing catalog price
-            original_price = price
-            price = price + weight_based_price
-            print(
-                f"[INFO] Adding weight price to catalog price for {artikul}: {original_price} + {weight_based_price} = {price}"
-            )
-        else:  # Use only weight price if no catalog price
-            price = weight_based_price
-            print(
-                f"[INFO] Using weight-based price for {artikul}: {weight_inc}kg * {weight_price} = {weight_based_price}"
-            )
+    # Store only catalog price in results file (weight-based pricing applied only in invoice generation)
+    final_price = catalog_price
+    if final_price == 0:
+        print(f"[INFO] No catalog price found for {artikul}, storing 0")
+    else:
+        print(
+            f"[INFO] Storing catalog price for {artikul}: {final_price} (weight-based pricing will be applied in invoice)"
+        )
 
     # Build match key
     key_norm = _norm(artikul)
@@ -122,7 +117,8 @@ def record_match(
                 return 0
 
         df.loc[idx, "Количество"] = _to_int(df.loc[idx, "Количество"]) + qty_inc
-        df.loc[idx, "Вес"] = _to_int(df.loc[idx, "Вес"]) + weight_inc
+        new_weight = _to_int(df.loc[idx, "Вес"]) + weight_inc
+        df.loc[idx, "Вес"] = new_weight
         df.loc[idx, "Последнее обновление"] = now
 
         # Update catalog fields if they're empty and we have new data
@@ -132,10 +128,23 @@ def record_match(
             not df.loc[idx, "Описание"] or pd.isna(df.loc[idx, "Описание"])
         ):
             df.loc[idx, "Описание"] = description
-        if price and (
-            not df.loc[idx, "Цена продажи"] or pd.isna(df.loc[idx, "Цена продажи"])
-        ):
-            df.loc[idx, "Цена продажи"] = price
+
+        # Store only catalog price in results file (weight-based pricing applied only in invoice generation)
+        # Use catalog_price from lookup, or keep existing if no new lookup
+        new_quantity = _to_int(df.loc[idx, "Количество"])
+
+        if catalog_price > 0:
+            # Update with new catalog price if found
+            df.loc[idx, "Цена продажи"] = catalog_price
+            df.loc[idx, "Сумма продажи"] = catalog_price * new_quantity
+            print(
+                f"[INFO] Updated catalog price for {artikul}: {catalog_price}, total={catalog_price * new_quantity}"
+            )
+        elif final_price > 0:
+            # Use final_price (catalog price) if we have it
+            df.loc[idx, "Цена продажи"] = final_price
+            df.loc[idx, "Сумма продажи"] = final_price * new_quantity
+        # Otherwise keep existing price if no new catalog price found
 
         action = "updated"
     else:
@@ -147,7 +156,8 @@ def record_match(
             "Последнее обновление": now,
             "Брэнд": brand,
             "Описание": description,
-            "Цена продажи": price,
+            "Цена продажи": final_price,
+            "Сумма продажи": final_price * qty_inc,
         }
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 

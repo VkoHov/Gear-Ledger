@@ -276,64 +276,80 @@ def _write_client_section(
         quantity = result_row.get("Количество", 1)
         weight = result_row.get("Вес", 0)
 
-        # Look up in catalog
+        # Get catalog price from results file (already stored there)
+        catalog_price_from_results = result_row.get("Цена продажи", 0)
+
+        # Look up in catalog for brand, description, etc.
         item_data = _lookup_in_catalog(artikul, catalog_df, col_mapping)
 
         if item_data:
             brand = item_data.get("бренд", "")
             number = item_data.get("номер", artikul)
             description = item_data.get("описание", "")
-            catalog_price = item_data.get("цена", 0)
+            # Use catalog price from results file, fallback to catalog lookup if not in results
+            catalog_price = (
+                float(catalog_price_from_results)
+                if catalog_price_from_results
+                else item_data.get("цена", 0)
+            )
+        else:
+            # No catalog match, but still use price from results if available
+            brand = ""
+            number = artikul
+            description = ""
+            catalog_price = (
+                float(catalog_price_from_results) if catalog_price_from_results else 0
+            )
 
-            try:
-                catalog_price = float(catalog_price) if catalog_price else 0
-                quantity = int(quantity) if quantity else 1
-                weight = float(weight) if weight else 0
-            except:
-                catalog_price = 0
-                quantity = 1
-                weight = 0
+        try:
+            catalog_price = float(catalog_price) if catalog_price else 0
+            quantity = int(quantity) if quantity else 1
+            weight = float(weight) if weight else 0
+        except:
+            catalog_price = 0
+            quantity = 1
+            weight = 0
 
-            # Add weight price to catalog price if weight_price is provided
-            if weight_price > 0:
-                weight_based_price = weight * weight_price
-                if catalog_price > 0:  # Add weight price to existing catalog price
-                    price = catalog_price + weight_based_price
-                else:  # Use only weight price if no catalog price
-                    price = weight_based_price
-            else:
-                price = catalog_price
+        # Add weight price to catalog price ONLY when generating invoice (not stored in results file)
+        if weight_price > 0:
+            weight_based_price = weight * weight_price
+            if catalog_price > 0:  # Add weight price to existing catalog price
+                price = catalog_price + weight_based_price
+            else:  # Use only weight price if no catalog price
+                price = weight_based_price
+        else:
+            price = catalog_price
 
-            total = price * quantity
-            total_sum += total
-            total_weight += weight
+        total = price * quantity
+        total_sum += total
+        total_weight += weight
 
-            # Write row
-            ws[f"A{current_row}"] = item_num
-            ws[f"B{current_row}"] = brand
-            ws[f"C{current_row}"] = number
-            ws[f"D{current_row}"] = description
-            ws[f"E{current_row}"] = quantity
-            ws[f"F{current_row}"] = f"{weight:.3f}"
-            ws[f"G{current_row}"] = f"{price:.2f}"
-            ws[f"H{current_row}"] = f"{total:.2f}"
+        # Write row
+        ws[f"A{current_row}"] = item_num
+        ws[f"B{current_row}"] = brand
+        ws[f"C{current_row}"] = number
+        ws[f"D{current_row}"] = description
+        ws[f"E{current_row}"] = quantity
+        ws[f"F{current_row}"] = f"{weight:.3f}"
+        ws[f"G{current_row}"] = f"{price:.2f}"
+        ws[f"H{current_row}"] = f"{total:.2f}"
 
-            # Format cells
-            for col in header_cols:
-                cell = ws[f"{col}{current_row}"]
-                cell.alignment = Alignment(
-                    horizontal="center" if col in ["A", "E", "F"] else "left",
-                    vertical="center",
-                )
-                cell.border = Border(
-                    left=Side(style="thin"),
-                    right=Side(style="thin"),
-                    top=Side(style="thin"),
-                    bottom=Side(style="thin"),
-                )
+        # Format cells
+        for col in header_cols:
+            cell = ws[f"{col}{current_row}"]
+            cell.alignment = Alignment(
+                horizontal="center" if col in ["A", "E", "F"] else "left",
+                vertical="center",
+            )
+            cell.border = Border(
+                left=Side(style="thin"),
+                right=Side(style="thin"),
+                top=Side(style="thin"),
+                bottom=Side(style="thin"),
+            )
 
-            item_num += 1
-            current_row += 1
+        item_num += 1
+        current_row += 1
 
     # Write total row
     ws[f"D{current_row}"] = "Итого:"

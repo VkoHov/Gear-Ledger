@@ -56,11 +56,16 @@ class SettingsWidget(QGroupBox):
         self.results_edit = QLineEdit()
         # Leave empty initially - will auto-generate on first use
         self.btn_results = QPushButton("Browse…")
+        self.btn_reset_results = QPushButton("Reset")
+        self.btn_reset_results.setToolTip(
+            "Clear selection and start with new empty results file"
+        )
         self.btn_download = QPushButton("Download")
         self.btn_generate_invoice = QPushButton("Generate Invoice")
         self.btn_generate_invoice.setStyleSheet("background-color: #27ae60;")
         results_layout.addWidget(self.results_edit, 1)
         results_layout.addWidget(self.btn_results)
+        results_layout.addWidget(self.btn_reset_results)
         results_layout.addWidget(self.btn_download)
         results_layout.addWidget(self.btn_generate_invoice)
         layout.addLayout(results_layout)
@@ -143,6 +148,7 @@ class SettingsWidget(QGroupBox):
         """Set up signal connections."""
         self.btn_catalog.clicked.connect(self.pick_catalog_excel)
         self.btn_results.clicked.connect(self.pick_results_excel)
+        self.btn_reset_results.clicked.connect(self.reset_results_excel)
         self.btn_download.clicked.connect(self.download_results_excel)
         self.btn_generate_invoice.clicked.connect(self.generate_invoice)
         self.btn_add_manual.clicked.connect(self.add_manual_entry)
@@ -192,6 +198,59 @@ class SettingsWidget(QGroupBox):
             self.results_edit.setText(fn)
             if self.on_results_changed:
                 self.on_results_changed(fn)
+
+    def reset_results_excel(self):
+        """Reset results file to a new empty file."""
+        from PyQt6.QtWidgets import QMessageBox
+        import datetime
+        import pandas as pd
+        from gearledger.config import ROOT_DIR
+        from gearledger.result_ledger import COLUMNS
+
+        # Ask for confirmation
+        reply = QMessageBox.question(
+            self,
+            "Reset Results File",
+            "This will clear the current results file selection and create a new empty file.\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            # Generate new filename with timestamp
+            default_filename = (
+                f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            )
+            new_path = str(ROOT_DIR / default_filename)
+
+            # Create empty DataFrame with column headers
+            df = pd.DataFrame(columns=COLUMNS)
+
+            # Save empty file
+            df.to_excel(new_path, index=False)
+
+            # Update UI
+            self.results_edit.setText(new_path)
+
+            # Notify that the results path has changed
+            if self.on_results_changed:
+                self.on_results_changed(new_path)
+
+            QMessageBox.information(
+                self,
+                "Reset Complete",
+                f"New empty results file created:\n{new_path}",
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Reset Failed",
+                f"Failed to create new results file:\n{str(e)}",
+            )
 
     def download_results_excel(self):
         """Save results Excel file to a chosen location."""
@@ -363,6 +422,7 @@ class SettingsWidget(QGroupBox):
             self.weight_price_edit,
             self.btn_catalog,
             self.btn_results,
+            self.btn_reset_results,
             self.btn_download,
             self.btn_generate_invoice,
             self.manual_part_code,

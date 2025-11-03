@@ -484,6 +484,18 @@ class MainWindow(QWidget):
             self.results_widget.set_match_result(f"{artikul} → {client}")
             speak_match(artikul, client)
 
+            # Validate weight price before recording
+            if not self.settings_widget.is_weight_price_valid():
+                error_msg = self.settings_widget.get_weight_price_error_message()
+                from PyQt6.QtWidgets import QMessageBox
+
+                QMessageBox.critical(
+                    self,
+                    "Weight Price Required",
+                    f"Cannot record match without valid weight price:\n{error_msg}",
+                )
+                return
+
             # Record the match with scale weight
             from gearledger.result_ledger import record_match
 
@@ -498,6 +510,7 @@ class MainWindow(QWidget):
                 qty_inc=1,
                 weight_inc=weight_to_use,
                 catalog_path=self.settings_widget.get_catalog_path(),
+                weight_price=self.settings_widget.get_weight_price(),
             )
             if rec["ok"]:
                 self.append_logs(
@@ -553,6 +566,18 @@ class MainWindow(QWidget):
             self.results_widget.update_fuzzy_result(c, a)
             speak_match(a, c)
 
+            # Validate weight price before recording
+            if not self.settings_widget.is_weight_price_valid():
+                error_msg = self.settings_widget.get_weight_price_error_message()
+                from PyQt6.QtWidgets import QMessageBox
+
+                QMessageBox.critical(
+                    self,
+                    "Weight Price Required",
+                    f"Cannot record match without valid weight price:\n{error_msg}",
+                )
+                return
+
             # Record the match with scale weight
             from gearledger.result_ledger import record_match
 
@@ -567,6 +592,7 @@ class MainWindow(QWidget):
                 qty_inc=1,
                 weight_inc=weight_to_use,
                 catalog_path=self.settings_widget.get_catalog_path(),
+                weight_price=self.settings_widget.get_weight_price(),
             )
             if rec["ok"]:
                 self.append_logs(
@@ -610,6 +636,20 @@ class MainWindow(QWidget):
                     self.results_widget.update_manual_result(client, artikul)
                     speak_match(artikul, client)
 
+                    # Validate weight price before recording
+                    if not self.settings_widget.is_weight_price_valid():
+                        error_msg = (
+                            self.settings_widget.get_weight_price_error_message()
+                        )
+                        from PyQt6.QtWidgets import QMessageBox
+
+                        QMessageBox.critical(
+                            self,
+                            "Weight Price Required",
+                            f"Cannot record manual search without valid weight price:\n{error_msg}",
+                        )
+                        return
+
                     # Record the match
                     from gearledger.result_ledger import record_match
 
@@ -620,6 +660,7 @@ class MainWindow(QWidget):
                         qty_inc=1,
                         weight_inc=1,
                         catalog_path=self.settings_widget.get_catalog_path(),
+                        weight_price=self.settings_widget.get_weight_price(),
                     )
                     if rec["ok"]:
                         self.append_logs(
@@ -673,6 +714,20 @@ class MainWindow(QWidget):
                 ledger_path = self.settings_widget.get_results_path()
 
                 if client and artikul:
+                    # Validate weight price before recording
+                    if not self.settings_widget.is_weight_price_valid():
+                        error_msg = (
+                            self.settings_widget.get_weight_price_error_message()
+                        )
+                        from PyQt6.QtWidgets import QMessageBox
+
+                        QMessageBox.critical(
+                            self,
+                            "Weight Price Required",
+                            f"Cannot record manual entry without valid weight price:\n{error_msg}",
+                        )
+                        return
+
                     # Record the match with the specified weight
                     from gearledger.result_ledger import record_match
 
@@ -683,6 +738,7 @@ class MainWindow(QWidget):
                         qty_inc=1,
                         weight_inc=weight,
                         catalog_path=self.settings_widget.get_catalog_path(),
+                        weight_price=self.settings_widget.get_weight_price(),
                     )
                     if rec["ok"]:
                         self.append_logs(
@@ -774,6 +830,16 @@ class MainWindow(QWidget):
             )
             return
 
+        # Validate weight price
+        if not self.settings_widget.is_weight_price_valid():
+            error_msg = self.settings_widget.get_weight_price_error_message()
+            QMessageBox.critical(
+                self,
+                "Generate Invoice",
+                f"Weight Price validation failed:\n{error_msg}",
+            )
+            return
+
         # Ask user where to save the invoice
         default_name = f"invoice_{os.path.basename(results_path)}"
         output_path, _ = QFileDialog.getSaveFileName(
@@ -794,7 +860,10 @@ class MainWindow(QWidget):
         self.append_logs(["[INFO] Generating invoice..."])
 
         # Generate invoice
-        result = generate_invoice_from_results(results_path, catalog_path, output_path)
+        weight_price = self.settings_widget.get_weight_price()
+        result = generate_invoice_from_results(
+            results_path, catalog_path, output_path, weight_price
+        )
 
         if result.get("ok"):
             self.append_logs(

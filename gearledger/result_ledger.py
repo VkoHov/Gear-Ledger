@@ -28,6 +28,7 @@ def record_match(
     qty_inc: int = 1,
     weight_inc: int = 1,
     catalog_path: str = None,
+    weight_price: float = 0.0,
 ) -> Dict[str, str]:
     """
     Ensure results sheet exists and either insert a row for (Артикул, Клиент)
@@ -35,6 +36,7 @@ def record_match(
     Matching is done on normalized Артикул + case-insensitive Клиент.
 
     If catalog_path is provided, will look up additional fields (Брэнд, Описание, Цена продажи).
+    If weight_price is provided, will calculate Цена продажи as weight * weight_price.
     """
     # Make parent dir if needed
     d = os.path.dirname(path)
@@ -74,6 +76,21 @@ def record_match(
             print(f"[INFO] No catalog data found for {artikul}")
     else:
         print(f"[INFO] No catalog file selected")
+
+    # Add weight price to catalog price if weight_price is provided
+    if weight_price > 0:
+        weight_based_price = weight_inc * weight_price
+        if price > 0:  # Add weight price to existing catalog price
+            original_price = price
+            price = price + weight_based_price
+            print(
+                f"[INFO] Adding weight price to catalog price for {artikul}: {original_price} + {weight_based_price} = {price}"
+            )
+        else:  # Use only weight price if no catalog price
+            price = weight_based_price
+            print(
+                f"[INFO] Using weight-based price for {artikul}: {weight_inc}kg * {weight_price} = {weight_based_price}"
+            )
 
     # Build match key
     key_norm = _norm(artikul)

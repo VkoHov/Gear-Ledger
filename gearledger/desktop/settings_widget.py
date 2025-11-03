@@ -101,6 +101,18 @@ class SettingsWidget(QGroupBox):
         model_layout.addStretch(1)
         layout.addLayout(model_layout)
 
+        # Weight price setting
+        weight_price_layout = QHBoxLayout()
+        weight_price_label = QLabel("Weight Price (per kg):")
+        weight_price_layout.addWidget(weight_price_label)
+        self.weight_price_edit = QLineEdit()
+        self.weight_price_edit.setPlaceholderText(
+            "Enter price per kg (e.g., 1200) - REQUIRED"
+        )
+        self.weight_price_edit.setText("1200")  # Default value
+        weight_price_layout.addWidget(self.weight_price_edit, 1)
+        layout.addLayout(weight_price_layout)
+
         # Manual entry section
         manual_entry_box = QGroupBox("Manual Entry (without scanning)")
         manual_entry_layout = QVBoxLayout(manual_entry_box)
@@ -311,6 +323,34 @@ class SettingsWidget(QGroupBox):
         """Get the current model selection."""
         return self.model_combo.currentText()
 
+    def get_weight_price(self) -> float:
+        """Get the current weight price per kg."""
+        try:
+            return float(self.weight_price_edit.text().strip() or "0")
+        except ValueError:
+            return 0.0
+
+    def is_weight_price_valid(self) -> bool:
+        """Check if weight price is valid (not empty and > 0)."""
+        try:
+            price = float(self.weight_price_edit.text().strip() or "0")
+            return price > 0
+        except ValueError:
+            return False
+
+    def get_weight_price_error_message(self) -> str:
+        """Get error message for invalid weight price."""
+        text = self.weight_price_edit.text().strip()
+        if not text:
+            return "Weight Price is required. Please enter a price per kg."
+        try:
+            price = float(text)
+            if price <= 0:
+                return "Weight Price must be greater than 0."
+        except ValueError:
+            return "Weight Price must be a valid number."
+        return ""
+
     def set_controls_enabled(self, enabled: bool):
         """Enable/disable all controls."""
         for widget in (
@@ -320,6 +360,7 @@ class SettingsWidget(QGroupBox):
             self.rb_vendor,
             self.rb_oem,
             self.model_combo,
+            self.weight_price_edit,
             self.btn_catalog,
             self.btn_results,
             self.btn_download,

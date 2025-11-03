@@ -11,7 +11,10 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
 
 def generate_invoice_from_results(
-    results_path: str, catalog_path: str, output_path: str = None
+    results_path: str,
+    catalog_path: str,
+    output_path: str = None,
+    weight_price: float = 0.0,
 ) -> Dict[str, Any]:
     """
     Generate an invoice file from the results ledger.
@@ -20,6 +23,7 @@ def generate_invoice_from_results(
         results_path: Path to results Excel file (with Артикул, Клиент, Количество, Вес columns)
         catalog_path: Path to catalog Excel file (with full product info including prices)
         output_path: Path for output invoice file (optional, auto-generated if not provided)
+        weight_price: Price per kg to add to catalog prices (default: 0.0)
 
     Returns:
         Dict with 'ok', 'path', 'error' keys
@@ -63,8 +67,6 @@ def generate_invoice_from_results(
 
         # Create invoice workbook
         wb = Workbook()
-        ws = wb.active
-        ws.title = "Invoice"
 
         # Group results by client
         if "Клиент" not in results_df.columns:
@@ -76,6 +78,9 @@ def generate_invoice_from_results(
 
         clients = results_df["Клиент"].unique()
 
+        # Create summary sheet (first tab) with all clients
+        summary_ws = wb.active
+        summary_ws.title = "Summary"
         current_row = 1
 
         for client in clients:
@@ -84,12 +89,35 @@ def generate_invoice_from_results(
 
             client_items = results_df[results_df["Клиент"] == client]
 
-            # Write client header
+            # Write client section to summary sheet
             current_row = _write_client_section(
-                ws, client, client_items, catalog_df, col_mapping, current_row
+                summary_ws,
+                client,
+                client_items,
+                catalog_df,
+                col_mapping,
+                current_row,
+                weight_price,
             )
 
             current_row += 2  # Add spacing between clients
+
+        # Create individual client sheets
+        for client in clients:
+            if pd.isna(client) or str(client).strip() == "":
+                continue
+
+            client_items = results_df[results_df["Клиент"] == client]
+
+            # Create a new worksheet for each client
+            # Clean client name for sheet name (Excel sheet names have restrictions)
+            clean_client_name = _clean_sheet_name(str(client))
+            ws = wb.create_sheet(title=clean_client_name)
+
+            # Write client section to the new worksheet
+            _write_client_section(
+                ws, client, client_items, catalog_df, col_mapping, 1, weight_price
+            )
 
         # Save workbook
         wb.save(output_path)
@@ -147,6 +175,29 @@ def _detect_catalog_columns(df: pd.DataFrame) -> Dict[str, str]:
     return mapping
 
 
+def _clean_sheet_name(name: str) -> str:
+    """Clean client name to be a valid Excel sheet name."""
+    # Excel sheet name restrictions:
+    # - Max 31 characters
+    # - Cannot contain: [ ] * ? : \ /
+    # - Cannot be empty
+
+    # Remove invalid characters
+    invalid_chars = ["[", "]", "*", "?", ":", "\\", "/"]
+    for char in invalid_chars:
+        name = name.replace(char, "_")
+
+    # Truncate if too long
+    if len(name) > 31:
+        name = name[:31]
+
+    # Ensure not empty
+    if not name.strip():
+        name = "Client"
+
+    return name.strip()
+
+
 def _write_client_section(
     ws,
     client: str,
@@ -154,16 +205,17 @@ def _write_client_section(
     catalog_df: pd.DataFrame,
     col_mapping: Dict[str, str],
     start_row: int,
+    weight_price: float = 0.0,
 ) -> int:
     """Write a section for one client. Returns the next available row."""
 
     current_row = start_row
 
-    # Header: Покупатель
-    ws.merge_cells(f"A{current_row}:L{current_row}")
+    # Header: Покупатель (since each sheet is for one client, we can make it more prominent)
+    ws.merge_cells(f"A{current_row}:H{current_row}")
     cell = ws[f"A{current_row}"]
     cell.value = f"Покупатель: {client}"
-    cell.font = Font(bold=True, size=12)
+    cell.font = Font(bold=True, size=14)
     cell.alignment = Alignment(horizontal="left", vertical="center")
     current_row += 2
 
@@ -231,16 +283,26 @@ def _write_client_section(
             brand = item_data.get("бренд", "")
             number = item_data.get("номер", artikul)
             description = item_data.get("описание", "")
-            price = item_data.get("цена", 0)
+            catalog_price = item_data.get("цена", 0)
 
             try:
-                price = float(price) if price else 0
+                catalog_price = float(catalog_price) if catalog_price else 0
                 quantity = int(quantity) if quantity else 1
                 weight = float(weight) if weight else 0
             except:
-                price = 0
+                catalog_price = 0
                 quantity = 1
                 weight = 0
+
+            # Add weight price to catalog price if weight_price is provided
+            if weight_price > 0:
+                weight_based_price = weight * weight_price
+                if catalog_price > 0:  # Add weight price to existing catalog price
+                    price = catalog_price + weight_based_price
+                else:  # Use only weight price if no catalog price
+                    price = weight_based_price
+            else:
+                price = catalog_price
 
             total = price * quantity
             total_sum += total

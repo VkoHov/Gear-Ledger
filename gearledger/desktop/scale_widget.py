@@ -31,11 +31,21 @@ class ScaleWidget(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("Scale Integration", parent)
 
-        # Scale settings
-        self.scale_port = os.getenv("SCALE_PORT", "")
-        self.scale_baudrate = int(os.getenv("SCALE_BAUDRATE", "9600"))
-        self.weight_threshold = float(os.getenv("WEIGHT_THRESHOLD", "0.1"))  # kg
-        self.stable_time = float(os.getenv("STABLE_TIME", "2.0"))  # seconds
+        # Load scale settings from settings manager (if available)
+        try:
+            from gearledger.desktop.settings_manager import load_settings
+
+            settings = load_settings()
+            self.scale_port = settings.scale_port or os.getenv("SCALE_PORT", "")
+            self.scale_baudrate = settings.scale_baudrate
+            self.weight_threshold = settings.weight_threshold
+            self.stable_time = settings.stable_time
+        except Exception:
+            # Fallback to environment variables
+            self.scale_port = os.getenv("SCALE_PORT", "")
+            self.scale_baudrate = int(os.getenv("SCALE_BAUDRATE", "9600"))
+            self.weight_threshold = float(os.getenv("WEIGHT_THRESHOLD", "0.1"))  # kg
+            self.stable_time = float(os.getenv("STABLE_TIME", "2.0"))  # seconds
 
         # State
         self.current_weight = 0.0
@@ -63,6 +73,11 @@ class ScaleWidget(QGroupBox):
             ["", "/dev/ttyUSB0", "/dev/ttyUSB1", "COM1", "COM2", "COM3"]
         )
         if self.scale_port:
+            # Add custom port if not in list
+            if self.scale_port not in [
+                self.port_combo.itemText(i) for i in range(self.port_combo.count())
+            ]:
+                self.port_combo.addItem(self.scale_port)
             self.port_combo.setCurrentText(self.scale_port)
         settings_layout.addWidget(self.port_combo, 1)
 
@@ -224,7 +239,6 @@ class ScaleWidget(QGroupBox):
         self.monitor_timer.start()
 
         QMessageBox.information(self, "Scale Connected", msg)
-
 
     def disconnect_scale(self):
         """Disconnect from the scale."""

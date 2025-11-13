@@ -7,7 +7,15 @@ from typing import Dict, Any
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QSplitter
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QScrollArea,
+    QSplitter,
+    QPushButton,
+    QDialog,
+)
 
 # Import our modular components
 from .camera_widget import CameraWidget
@@ -336,6 +344,29 @@ class MainWindow(QWidget):
         # Top container with scrollable content
         top_container = QWidget()
         top_layout = QVBoxLayout(top_container)
+
+        # Add settings button at the top
+        settings_btn_layout = QHBoxLayout()
+        settings_btn_layout.addStretch(1)
+        self.settings_btn = QPushButton("⚙️ Settings")
+        self.settings_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #95a5a6;
+                color: white;
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #7f8c8d;
+            }
+        """
+        )
+        self.settings_btn.clicked.connect(self._open_settings)
+        settings_btn_layout.addWidget(self.settings_btn)
+        top_layout.addLayout(settings_btn_layout)
+
         top_layout.addWidget(self.settings_widget)
         top_layout.addWidget(self.scale_widget)
         top_layout.addWidget(self.camera_widget)
@@ -449,6 +480,53 @@ class MainWindow(QWidget):
     def _on_results_path_changed(self, path: str):
         """Handle results path change."""
         self.results_pane.set_ledger_path(path)
+
+    def _open_settings(self):
+        """Open the settings page dialog."""
+        from .settings_page import SettingsPage
+        from gearledger.desktop.settings_manager import load_settings
+        import os
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Application Settings")
+        dlg.setMinimumWidth(700)
+        dlg.setMinimumHeight(800)
+
+        layout = QVBoxLayout(dlg)
+        settings_page = SettingsPage(dlg)
+        settings_page._parent_dialog = dlg  # Store reference for closing
+        layout.addWidget(settings_page)
+
+        # Handle settings save callback
+        def on_settings_saved(settings):
+            # Re-apply environment variables
+            if settings.openai_api_key:
+                os.environ["OPENAI_API_KEY"] = settings.openai_api_key
+            os.environ["CAM_INDEX"] = str(settings.cam_index)
+            os.environ["CAM_WIDTH"] = str(settings.cam_width)
+            os.environ["CAM_HEIGHT"] = str(settings.cam_height)
+            os.environ["VISION_BACKEND"] = settings.vision_backend
+
+            # Update scale widget with new settings
+            if settings.scale_port:
+                self.scale_widget.port_combo.setCurrentText(settings.scale_port)
+            self.scale_widget.scale_baudrate = settings.scale_baudrate
+            self.scale_widget.weight_threshold = settings.weight_threshold
+            self.scale_widget.stable_time = settings.stable_time
+
+            # Update settings widget with price
+            if hasattr(self.settings_widget, "weight_price_edit"):
+                self.settings_widget.weight_price_edit.setText(
+                    str(settings.price_per_kg)
+                )
+
+            self.append_logs(
+                ["[INFO] Settings have been updated. Some changes may require restart."]
+            )
+
+        settings_page.on_settings_saved = on_settings_saved
+
+        dlg.exec()
 
     def _on_fuzzy_requested(self, candidates):
         """Handle fuzzy matching request."""

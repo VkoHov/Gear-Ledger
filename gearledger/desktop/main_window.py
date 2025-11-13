@@ -325,7 +325,11 @@ class MainWindow(QWidget):
 
         # Scale widget callbacks
         self.scale_widget.set_weight_ready_callback(self._on_weight_ready)
+        self.scale_widget.weight_changed.connect(self._on_weight_changed)
         self.scale_widget.set_log_callback(self.append_logs)
+
+        # Track if camera was auto-started by scale
+        self._camera_auto_started = False
 
     def _setup_layout(self):
         """Set up the main layout."""
@@ -404,6 +408,22 @@ class MainWindow(QWidget):
         ):
             self.poll_main_timer.start(100)  # Poll every 100ms
             self._update_controls()
+
+    def _on_weight_changed(self, weight: float):
+        """Handle weight change from scale - auto-start camera if not started."""
+        # Auto-start camera when scale detects a meaningful weight (> 0.01 kg)
+        if weight > 0.01 and not self.camera_widget.cap:
+            self.append_logs(
+                [
+                    f"[INFO] Scale detected weight: {weight:.3f} kg - auto-starting camera"
+                ]
+            )
+            try:
+                self.camera_widget.start_camera()
+                self._camera_auto_started = True
+                self.append_logs(["[INFO] Camera started automatically"])
+            except Exception as e:
+                self.append_logs([f"[ERROR] Failed to auto-start camera: {e}"])
 
     def _on_weight_ready(self, weight: float):
         """Handle weight ready from scale - automatically trigger camera capture."""

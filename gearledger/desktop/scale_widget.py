@@ -178,22 +178,19 @@ class ScaleWidget(QGroupBox):
             )
             return
 
-        # Test connection
-        weight = read_weight_once(port, baudrate, timeout=3.0)
-        if weight is None:
+        # Try to open the port *and* read once, but do NOT fail if no data yet.
+        try:
+            # just a quick “ping” to check we can open the port
+            test = read_weight_once(port, baudrate, timeout=3.0)
+        except Exception as e:
             QMessageBox.critical(
                 self,
                 "Scale Connection",
-                f"Failed to connect to scale on {port}.\n\n"
-                "Please check:\n"
-                "- Scale is powered on\n"
-                "- Correct port selected\n"
-                "- Correct baudrate\n"
-                "- Scale is sending weight data",
+                f"Failed to open port {port}.\n\nError: {e}",
             )
             return
 
-        # Connection successful
+        # If we got here, the port is OK – even if test is None.
         self.scale_port = port
         self.scale_baudrate = baudrate
         self.is_monitoring = True
@@ -201,6 +198,16 @@ class ScaleWidget(QGroupBox):
         self.btn_connect.setEnabled(False)
         self.btn_disconnect.setEnabled(True)
         self.btn_tare.setEnabled(True)
+
+        if test is not None:
+            self.weight_label.setText(f"Weight: {test}")
+            msg = f"Successfully connected to scale on {port}.\nCurrent weight: {test}"
+        else:
+            msg = (
+                f"Successfully connected to scale on {port}, "
+                "but no weight data was received yet.\n\n"
+                "This is normal if the scale is empty or only sends data when weight changes."
+            )
 
         self.status_label.setText("Status: Connected")
         self.status_label.setStyleSheet(
@@ -210,17 +217,14 @@ class ScaleWidget(QGroupBox):
                 color: #27ae60;
                 padding: 5px;
             }
-        """
+            """
         )
 
-        # Start monitoring
+        # start monitoring timer – it will poll regularly and update weight when data appears
         self.monitor_timer.start()
 
-        QMessageBox.information(
-            self,
-            "Scale Connected",
-            f"Successfully connected to scale on {port}.\n" f"Current weight: {weight}",
-        )
+        QMessageBox.information(self, "Scale Connected", msg)
+
 
     def disconnect_scale(self):
         """Disconnect from the scale."""

@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 # Camera defaults via env
-CAM_INDEX = int(os.getenv("CAM_INDEX", "0"))
+CAM_INDEX = int(os.getenv("CAM_INDEX", "1"))
 CAM_W = int(os.getenv("CAM_WIDTH", "1280"))
 CAM_H = int(os.getenv("CAM_HEIGHT", "720"))
 

@@ -706,6 +706,9 @@ class MainWindow(QWidget):
         self.poll_main_timer.stop()
         self.process_manager._finish_main_process(res)
 
+        # Reset camera to live feed after processing
+        self.camera_widget.reset_to_live_feed()
+
         if res is None:
             self.append_logs(["[INFO] Job was canceled."])
             self.results_widget.set_match_result("canceled")
@@ -793,6 +796,9 @@ class MainWindow(QWidget):
         """Handle completion of fuzzy matching job."""
         self.poll_fuzzy_timer.stop()
         self.process_manager._finish_fuzzy_process(res)
+
+        # Reset camera to live feed after processing
+        self.camera_widget.reset_to_live_feed()
 
         if res is None:
             self.append_logs(["[INFO] Fuzzy job was canceled."])

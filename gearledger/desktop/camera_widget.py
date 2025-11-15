@@ -19,10 +19,22 @@ from PyQt6.QtWidgets import (
     QMessageBox,
 )
 
-# Camera defaults via env
-CAM_INDEX = int(os.getenv("CAM_INDEX", "1"))
-CAM_W = int(os.getenv("CAM_WIDTH", "1280"))
-CAM_H = int(os.getenv("CAM_HEIGHT", "720"))
+
+# Camera defaults - will be loaded from settings
+def get_camera_settings():
+    """Get camera settings from settings manager."""
+    try:
+        from gearledger.desktop.settings_manager import load_settings
+
+        settings = load_settings()
+        return settings.cam_index, settings.cam_width, settings.cam_height
+    except Exception:
+        # Fallback to environment variables
+        return (
+            int(os.getenv("CAM_INDEX", "0")),
+            int(os.getenv("CAM_WIDTH", "1280")),
+            int(os.getenv("CAM_HEIGHT", "720")),
+        )
 
 
 def open_camera(index: int, w: int, h: int):
@@ -59,6 +71,7 @@ class CameraWidget(QGroupBox):
         self.cap = None
         self.timer: QTimer | None = None
         self._last_frame: np.ndarray | None = None
+        self._captured_image_path: str | None = None  # Path to captured image
 
         # Callbacks
         self.on_capture_callback: Callable[[str], None] | None = None
@@ -120,12 +133,22 @@ class CameraWidget(QGroupBox):
         if self.cap:
             return
 
-        self.cap = open_camera(CAM_INDEX, CAM_W, CAM_H)
+        # Clear captured image when starting camera
+        self._captured_image_path = None
+
+        # Get camera settings from settings manager
+        cam_index, cam_width, cam_height = get_camera_settings()
+
+        self.cap = open_camera(cam_index, cam_width, cam_height)
         if not self.cap:
             QMessageBox.critical(
                 self,
                 "Camera",
-                "Failed to open camera. Try a different CAM_INDEX in .env",
+                f"Failed to open camera (index {cam_index}).\n\n"
+                "Please check:\n"
+                "1. Camera is connected and not in use by another application\n"
+                "2. Camera index is correct (open Settings ⚙️ to change it)\n"
+                "3. Camera permissions are granted",
             )
             return
 
@@ -133,6 +156,26 @@ class CameraWidget(QGroupBox):
         self.timer.timeout.connect(self._grab_and_show)
         self.timer.start(30)
         self._update_controls()
+
+    def reset_to_live_feed(self):
+        """Reset camera to show live feed (after processing is done)."""
+        # Clear captured image
+        self._captured_image_path = None
+
+        # Resume live feed if camera is still open
+        if self.cap:
+            # Restart timer if it exists but is stopped, or create new one
+            if self.timer:
+                # Timer exists, just restart it
+                if not self.timer.isActive():
+                    self.timer.start(30)
+            else:
+                # Timer doesn't exist, create new one
+                self.timer = QTimer(self)
+                self.timer.timeout.connect(self._grab_and_show)
+                self.timer.start(30)
+            # Force immediate update to show live feed
+            self._grab_and_show()
 
     def stop_camera(self):
         """Stop the camera."""
@@ -142,6 +185,8 @@ class CameraWidget(QGroupBox):
         if self.cap:
             release_camera(self.cap)
             self.cap = None
+        # Clear captured image
+        self._captured_image_path = None
         self.preview.setText("Camera preview")
         self._update_controls()
 
@@ -158,12 +203,27 @@ class CameraWidget(QGroupBox):
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
         try:
             cv2.imwrite(tmp.name, self._last_frame)
+            self._captured_image_path = tmp.name
+
+            # Stop live preview timer (but keep camera open)
+            if self.timer:
+                self.timer.stop()
+                # Don't delete timer, just stop it so we can restart later
+
+            # Display the captured image
+            self._show_captured_image(tmp.name)
+
+            # Call the callback
             self.on_capture_callback(tmp.name)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save capture: {e}")
 
     def _grab_and_show(self):
         """Grab frame from camera and display it."""
+        # Don't show live feed if we have a captured image
+        if self._captured_image_path:
+            return
+
         frame = read_frame(self.cap)
         if frame is None:
             return
@@ -179,6 +239,28 @@ class CameraWidget(QGroupBox):
             Qt.TransformationMode.SmoothTransformation,
         )
         self.preview.setPixmap(pix)
+
+    def _show_captured_image(self, image_path: str):
+        """Display the captured image in the preview."""
+        try:
+            # Read the captured image
+            img = cv2.imread(image_path)
+            if img is None:
+                return
+
+            # Convert to RGB
+            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            qimg = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
+            pix = QPixmap.fromImage(qimg).scaled(
+                self.preview.width(),
+                self.preview.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.preview.setPixmap(pix)
+        except Exception as e:
+            print(f"[ERROR] Failed to display captured image: {e}")
 
     def _update_controls(self):
         """Update button states based on camera status."""

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -15,6 +17,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QMessageBox,
     QCheckBox,
+    QScrollArea,
 )
 from PyQt6.QtCore import Qt
 
@@ -32,10 +35,12 @@ class SettingsPage(QWidget):
 
     def _setup_ui(self):
         """Set up the settings page UI."""
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
+        # Main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Title
+        # Title (fixed at top)
         title = QLabel("Application Settings")
         title.setStyleSheet(
             """
@@ -44,10 +49,31 @@ class SettingsPage(QWidget):
                 font-weight: bold;
                 color: #2c3e50;
                 padding: 10px;
+                background-color: #ffffff;
             }
         """
         )
-        layout.addWidget(title)
+        main_layout.addWidget(title)
+
+        # Create scrollable area for content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setStyleSheet(
+            """
+            QScrollArea {
+                border: none;
+                background-color: #f8f9fa;
+            }
+        """
+        )
+
+        # Content widget (scrollable)
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
+        layout.setSpacing(12)
+        layout.setContentsMargins(10, 10, 10, 10)
 
         # OpenAI API Settings
         openai_group = QGroupBox("OpenAI API Configuration")
@@ -179,34 +205,99 @@ class SettingsPage(QWidget):
         self.price_per_kg_spin = QDoubleSpinBox()
         self.price_per_kg_spin.setRange(0, 1e9)
         self.price_per_kg_spin.setDecimals(3)
+        self.price_per_kg_spin.setMaximumWidth(200)
+        self.price_per_kg_spin.setGroupSeparatorShown(
+            False
+        )  # Disable thousand separators
         price_row.addWidget(self.price_per_kg_spin)
         price_row.addStretch(1)
         pricing_layout.addLayout(price_row)
 
         layout.addWidget(pricing_group)
 
+        # Default Result File Settings
+        result_file_group = QGroupBox("Default Result File")
+        result_file_layout = QVBoxLayout(result_file_group)
+        result_file_layout.setSpacing(8)
+
+        result_file_layout.addWidget(
+            QLabel("Default result file (used when no file is selected):")
+        )
+
+        result_file_row = QHBoxLayout()
+        result_file_row.setSpacing(5)
+        self.default_result_file_edit = QLineEdit()
+        self.default_result_file_edit.setPlaceholderText(
+            "Leave empty to auto-generate in app data directory"
+        )
+        result_file_row.addWidget(self.default_result_file_edit, 1)
+
+        browse_result_btn = QPushButton("Browse…")
+        browse_result_btn.setMaximumWidth(100)
+        browse_result_btn.clicked.connect(self._browse_default_result_file)
+        result_file_row.addWidget(browse_result_btn)
+
+        reset_result_btn = QPushButton("Use Default")
+        reset_result_btn.setMaximumWidth(120)
+        reset_result_btn.setToolTip("Set to default location in app data directory")
+        reset_result_btn.clicked.connect(self._reset_default_result_file)
+        result_file_row.addWidget(reset_result_btn)
+
+        result_file_layout.addLayout(result_file_row)
+
+        from gearledger.desktop.settings_manager import APP_DIR
+
+        default_data_dir = os.path.join(APP_DIR, "data")
+        info_label = QLabel(
+            f"If empty, files will be auto-generated in:\n{default_data_dir}"
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet(
+            """
+            QLabel {
+                font-size: 9px;
+                color: #7f8c8d;
+                font-style: italic;
+                padding: 5px;
+                margin-top: 5px;
+            }
+        """
+        )
+        result_file_layout.addWidget(info_label)
+
+        layout.addWidget(result_file_group)
+
         # Save/Cancel/Reset buttons
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
         self.reset_btn = QPushButton("Reset to Defaults")
         self.reset_btn.setStyleSheet(
-            "background-color: #e74c3c; color: white; font-weight: bold;"
+            "background-color: #e74c3c; color: white; font-weight: bold; padding: 8px 16px;"
         )
         self.reset_btn.clicked.connect(self._on_reset)
         button_layout.addWidget(self.reset_btn)
         button_layout.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setStyleSheet("padding: 8px 16px;")
         self.save_btn = QPushButton("Save Settings")
-        self.save_btn.setStyleSheet("background-color: #27ae60; font-weight: bold;")
+        self.save_btn.setStyleSheet(
+            "background-color: #27ae60; color: white; font-weight: bold; padding: 8px 16px;"
+        )
         self.cancel_btn.clicked.connect(self._on_cancel)
         self.save_btn.clicked.connect(self._on_save)
         button_layout.addWidget(self.cancel_btn)
         button_layout.addWidget(self.save_btn)
         layout.addLayout(button_layout)
 
+        # Add some spacing at the bottom
+        layout.addSpacing(10)
+
+        # Set the scrollable content
+        scroll.setWidget(content_widget)
+        main_layout.addWidget(scroll)
+
         # Track if we're in a dialog (to close it on save)
         self._parent_dialog = None
-
-        layout.addStretch(1)
 
     def _load_settings_to_ui(self):
         """Load current settings into UI fields."""
@@ -224,6 +315,7 @@ class SettingsPage(QWidget):
         self.price_per_kg_spin.setValue(s.price_per_kg)
         self.target_combo.setCurrentText(s.default_target)
         self.min_fuzzy_spin.setValue(s.default_min_fuzzy)
+        self.default_result_file_edit.setText(s.default_result_file or "")
 
     def _toggle_api_key_visibility(self):
         """Toggle API key visibility."""
@@ -263,6 +355,27 @@ class SettingsPage(QWidget):
                 )
         except Exception as e:
             QMessageBox.critical(self, "Camera Test", f"Error testing camera: {e}")
+
+    def _browse_default_result_file(self):
+        """Browse for default result file location."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        current_path = self.default_result_file_edit.text().strip()
+        fn, _ = QFileDialog.getSaveFileName(
+            self,
+            "Choose Default Result File",
+            current_path if current_path else "",
+            filter="Excel (*.xlsx);;All files (*)",
+        )
+        if fn:
+            self.default_result_file_edit.setText(fn)
+
+    def _reset_default_result_file(self):
+        """Reset to default location in app data directory."""
+        from gearledger.desktop.settings_manager import get_default_result_file
+
+        default_path = get_default_result_file()
+        self.default_result_file_edit.setText(default_path)
 
     def _test_scale(self):
         """Test scale connection."""
@@ -326,6 +439,7 @@ class SettingsPage(QWidget):
         self.settings.price_per_kg = self.price_per_kg_spin.value()
         self.settings.default_target = self.target_combo.currentText()
         self.settings.default_min_fuzzy = self.min_fuzzy_spin.value()
+        self.settings.default_result_file = self.default_result_file_edit.text().strip()
 
         # Save to disk
         save_settings(self.settings)
@@ -339,20 +453,27 @@ class SettingsPage(QWidget):
         os.environ["CAM_WIDTH"] = str(self.settings.cam_width)
         os.environ["CAM_HEIGHT"] = str(self.settings.cam_height)
 
-        QMessageBox.information(
-            self,
-            "Settings Saved",
-            "Settings have been saved successfully.\n"
-            "Some changes may require restarting the application.",
-        )
-
         # Emit signal or call callback if needed
         if hasattr(self, "on_settings_saved"):
             self.on_settings_saved(self.settings)
 
         # Close parent dialog if exists
         if self._parent_dialog:
+            QMessageBox.information(
+                self,
+                "Settings Saved",
+                "Settings have been saved successfully.\n"
+                "Some changes may require restarting the application.",
+            )
             self._parent_dialog.accept()
+        else:
+            # If not in a dialog, show message
+            QMessageBox.information(
+                self,
+                "Settings Saved",
+                "Settings have been saved successfully.\n"
+                "Some changes may require restarting the application.",
+            )
 
     def _on_reset(self):
         """Reset all settings to default values."""
@@ -416,4 +537,5 @@ class SettingsPage(QWidget):
         s.price_per_kg = self.price_per_kg_spin.value()
         s.default_target = self.target_combo.currentText()
         s.default_min_fuzzy = self.min_fuzzy_spin.value()
+        s.default_result_file = self.default_result_file_edit.text().strip()
         return s

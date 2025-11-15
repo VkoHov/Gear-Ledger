@@ -294,25 +294,54 @@ class SettingsWidget(QGroupBox):
         return self.catalog_edit.text().strip()
 
     def get_results_path(self) -> str:
-        """Get the current results file path. Creates default if not set."""
+        """Get the current results file path. Uses default from settings if not set."""
         path = self.results_edit.text().strip()
 
-        # If no path is set, create a default one with timestamp
+        # If no path is set, use default from settings or create one
         if not path:
-            import datetime
-            from gearledger.config import ROOT_DIR
+            try:
+                from gearledger.desktop.settings_manager import (
+                    load_settings,
+                    get_default_result_file,
+                )
+                import os
+                import pandas as pd
+                from gearledger.result_ledger import COLUMNS
 
-            default_filename = (
-                f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            )
-            path = str(ROOT_DIR / default_filename)
+                settings = load_settings()
+                # Use configured default, or fall back to app data directory
+                if settings.default_result_file:
+                    path = settings.default_result_file
+                else:
+                    path = get_default_result_file()
 
-            # Update the UI with the new path (so it persists for this session)
-            self.results_edit.setText(path)
+                # Ensure the file exists (create empty if it doesn't)
+                if not os.path.exists(path):
+                    # Ensure directory exists
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    # Create empty DataFrame with column headers
+                    df = pd.DataFrame(columns=COLUMNS)
+                    df.to_excel(path, index=False)
 
-            # Notify that the results path has changed
-            if self.on_results_changed:
-                self.on_results_changed(path)
+                # Update the UI with the new path (so it persists for this session)
+                self.results_edit.setText(path)
+
+                # Notify that the results path has changed
+                if self.on_results_changed:
+                    self.on_results_changed(path)
+
+            except Exception as e:
+                # Fallback to old behavior if settings manager fails
+                import datetime
+                from gearledger.config import ROOT_DIR
+
+                default_filename = (
+                    f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                )
+                path = str(ROOT_DIR / default_filename)
+                self.results_edit.setText(path)
+                if self.on_results_changed:
+                    self.on_results_changed(path)
 
         return path
 

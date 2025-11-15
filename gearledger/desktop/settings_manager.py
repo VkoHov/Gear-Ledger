@@ -35,12 +35,23 @@ class Settings:
     price_per_kg: float = 1200.0
     default_target: str = "auto"  # "auto", "vendor", "oem"
     default_min_fuzzy: int = 70
+    default_result_file: str = ""  # Default result file path (empty = auto-generate)
 
 
 def ensure_dirs():
     """Ensure app directories exist."""
     os.makedirs(APP_DIR, exist_ok=True)
-    os.makedirs(os.path.join(APP_DIR, "data"), exist_ok=True)
+    data_dir = os.path.join(APP_DIR, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
+
+def get_default_result_file() -> str:
+    """Get the default result file path. Creates it in app data directory if not set."""
+    ensure_dirs()
+    data_dir = os.path.join(APP_DIR, "data")
+    default_path = os.path.join(data_dir, "results.xlsx")
+    return default_path
 
 
 def load_settings() -> Settings:

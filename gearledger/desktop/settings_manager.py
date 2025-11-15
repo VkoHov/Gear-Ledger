@@ -36,6 +36,7 @@ class Settings:
     default_target: str = "auto"  # "auto", "vendor", "oem"
     default_min_fuzzy: int = 70
     default_result_file: str = ""  # Default result file path (empty = auto-generate)
+    show_logs: bool = True  # Show/hide logs widget in both tabs
 
 
 def ensure_dirs():

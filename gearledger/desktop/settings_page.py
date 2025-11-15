@@ -196,6 +196,18 @@ class SettingsPage(QWidget):
 
         layout.addWidget(processing_group)
 
+        # UI Settings
+        ui_group = QGroupBox("UI Configuration")
+        ui_layout = QVBoxLayout(ui_group)
+
+        self.show_logs_checkbox = QCheckBox("Show Logs Widget")
+        self.show_logs_checkbox.setToolTip(
+            "Show or hide the logs widget in both Automated and Manual tabs"
+        )
+        ui_layout.addWidget(self.show_logs_checkbox)
+
+        layout.addWidget(ui_group)
+
         # Pricing Settings
         pricing_group = QGroupBox("Pricing Configuration")
         pricing_layout = QVBoxLayout(pricing_group)
@@ -316,6 +328,7 @@ class SettingsPage(QWidget):
         self.target_combo.setCurrentText(s.default_target)
         self.min_fuzzy_spin.setValue(s.default_min_fuzzy)
         self.default_result_file_edit.setText(s.default_result_file or "")
+        self.show_logs_checkbox.setChecked(s.show_logs)
 
     def _toggle_api_key_visibility(self):
         """Toggle API key visibility."""
@@ -440,6 +453,7 @@ class SettingsPage(QWidget):
         self.settings.default_target = self.target_combo.currentText()
         self.settings.default_min_fuzzy = self.min_fuzzy_spin.value()
         self.settings.default_result_file = self.default_result_file_edit.text().strip()
+        self.settings.show_logs = self.show_logs_checkbox.isChecked()
 
         # Save to disk
         save_settings(self.settings)

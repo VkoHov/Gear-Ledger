@@ -82,6 +82,16 @@ class CameraWidget(QGroupBox):
     def _setup_ui(self):
         """Set up the user interface."""
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+
+        # Camera preview container (to support overlay)
+        self.preview_container = QWidget()
+        self.preview_container.setFixedHeight(430)
+        self.preview_container.setMinimumWidth(640)  # Minimum width for camera preview
+        preview_layout = QVBoxLayout(self.preview_container)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(0)
 
         # Camera preview
         self.preview = QLabel("Camera preview")
@@ -99,6 +109,34 @@ class CameraWidget(QGroupBox):
             }
         """
         )
+        preview_layout.addWidget(self.preview)
+
+        # Processing overlay (will be shown during processing)
+        # Set as child of preview label so it overlays directly on top
+        self.processing_overlay = QLabel("⏳ Processing...\nPlease wait", self.preview)
+        self.processing_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.processing_overlay.setStyleSheet(
+            """
+            QLabel {
+                background-color: rgba(44, 62, 80, 0.9);
+                color: #ffffff;
+                border: 3px solid #3498db;
+                border-radius: 8px;
+                font-size: 20px;
+                font-weight: bold;
+                padding: 30px;
+            }
+        """
+        )
+        self.processing_overlay.hide()
+        self.processing_overlay.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        # Ensure overlay is positioned absolutely (not in layout)
+        # Set initial position (will be updated in _update_overlay_position)
+        self.processing_overlay.setGeometry(0, 0, 350, 120)
+
+        layout.addWidget(self.preview_container)
 
         # Control buttons
         self.btn_start = QPushButton("Start camera")
@@ -114,8 +152,7 @@ class CameraWidget(QGroupBox):
         button_layout.addWidget(self.btn_stop_cancel)
         button_layout.addStretch(1)
 
-        # Main layout
-        layout.addWidget(self.preview)
+        # Main layout - only add button layout, preview_container already added
         layout.addLayout(button_layout)
 
     def _setup_connections(self):
@@ -259,8 +296,70 @@ class CameraWidget(QGroupBox):
                 Qt.TransformationMode.SmoothTransformation,
             )
             self.preview.setPixmap(pix)
+
+            # Update overlay position
+            self._update_overlay_position()
         except Exception as e:
             print(f"[ERROR] Failed to display captured image: {e}")
+
+    def _update_overlay_position(self):
+        """Update processing overlay position to center of preview."""
+        if self.processing_overlay and self.preview:
+            # Get the preview label size (overlay is child of preview)
+            preview_width = self.preview.width()
+            preview_height = self.preview.height()
+
+            if preview_width > 0 and preview_height > 0:
+                overlay_width = 350
+                overlay_height = 120
+                x = (preview_width - overlay_width) // 2
+                y = (preview_height - overlay_height) // 2
+                # Position overlay absolutely within the preview label
+                # Use move() and resize() separately to ensure proper positioning
+                self.processing_overlay.move(x, y)
+                self.processing_overlay.resize(overlay_width, overlay_height)
+                # Ensure it's on top
+                self.processing_overlay.raise_()
+                # Force update to ensure visibility
+                self.processing_overlay.update()
+                self.processing_overlay.repaint()
+
+    def showEvent(self, event):
+        """Handle show events to update overlay position."""
+        super().showEvent(event)
+        # Update overlay position after widget is shown
+        if hasattr(self, "processing_overlay") and self.processing_overlay:
+            QTimer.singleShot(100, self._update_overlay_position)
+
+    def resizeEvent(self, event):
+        """Handle resize events to update overlay position."""
+        super().resizeEvent(event)
+        # Update overlay position
+        if (
+            hasattr(self, "processing_overlay")
+            and self.processing_overlay
+            and self.processing_overlay.isVisible()
+        ):
+            self._update_overlay_position()
+
+    def show_processing(self):
+        """Show processing indicator."""
+        if self.processing_overlay:
+            # Update position first
+            self._update_overlay_position()
+            # Then show it
+            self.processing_overlay.show()
+            # Ensure it's raised above all other widgets in the container
+            self.processing_overlay.raise_()
+            # Update position again after showing (in case geometry wasn't ready)
+            QTimer.singleShot(50, self._update_overlay_position)
+            # Force a repaint
+            self.processing_overlay.repaint()
+
+    def hide_processing(self):
+        """Hide processing indicator."""
+        if self.processing_overlay:
+            self.processing_overlay.hide()
 
     def _update_controls(self):
         """Update button states based on camera status."""

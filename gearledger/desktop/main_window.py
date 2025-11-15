@@ -73,6 +73,9 @@ class MainWindow(QWidget):
         self.append_logs(["Ready."])
         self._update_controls()
 
+        # Apply initial logs visibility setting
+        self._update_logs_visibility()
+
     def _apply_styling(self):
         """Apply global application styling."""
         self.setStyleSheet(
@@ -306,8 +309,11 @@ class MainWindow(QWidget):
         # Results widget
         self.results_widget = ResultsWidget()
 
-        # Logs widget
-        self.logs_widget = LogsWidget()
+        # Logs widgets (one for each tab)
+        self.logs_widget_automated = LogsWidget()
+        self.logs_widget_manual = LogsWidget()
+        # Keep reference to both for appending logs
+        self.logs_widgets = [self.logs_widget_automated, self.logs_widget_manual]
 
         # Scale widget
         self.scale_widget = ScaleWidget()
@@ -437,7 +443,10 @@ class MainWindow(QWidget):
         container_layout.addWidget(self.scale_widget)
         container_layout.addWidget(self.camera_widget)
         container_layout.addWidget(self.results_widget)
-        container_layout.addWidget(self.logs_widget, 1)
+        container_layout.addWidget(self.logs_widget_automated, 1)
+
+        # Store reference to container layout for updating logs visibility
+        self.automated_container_layout = container_layout
 
         # Make scrollable
         scroll = QScrollArea()
@@ -487,7 +496,10 @@ class MainWindow(QWidget):
         container_layout.addWidget(manual_entry_box)
 
         # Add logs widget
-        container_layout.addWidget(self.logs_widget, 1)
+        container_layout.addWidget(self.logs_widget_manual, 1)
+
+        # Store reference to container layout for updating logs visibility
+        self.manual_container_layout = container_layout
 
         # Make scrollable
         scroll = QScrollArea()
@@ -574,9 +586,14 @@ class MainWindow(QWidget):
             )
             return
 
+        # Show processing indicator
+        self.camera_widget.show_processing()
+
         # Clear previous results
         self.results_widget.clear_results()
-        self.logs_widget.clear_logs()
+        # Clear all log widgets
+        for logs_widget in self.logs_widgets:
+            logs_widget.clear_logs()
         self.append_logs(["Running…"])
 
         # Get current weight from scale if available
@@ -668,6 +685,9 @@ class MainWindow(QWidget):
             self.scale_widget.weight_threshold = settings.weight_threshold
             self.scale_widget.stable_time = settings.stable_time
 
+            # Update logs visibility
+            self._update_logs_visibility()
+
             # Settings are now stored in settings manager, no need to update UI
 
             self.append_logs(
@@ -705,6 +725,9 @@ class MainWindow(QWidget):
         """Handle completion of main processing job."""
         self.poll_main_timer.stop()
         self.process_manager._finish_main_process(res)
+
+        # Hide processing indicator
+        self.camera_widget.hide_processing()
 
         # Reset camera to live feed after processing
         self.camera_widget.reset_to_live_feed()
@@ -796,6 +819,9 @@ class MainWindow(QWidget):
         """Handle completion of fuzzy matching job."""
         self.poll_fuzzy_timer.stop()
         self.process_manager._finish_fuzzy_process(res)
+
+        # Hide processing indicator
+        self.camera_widget.hide_processing()
 
         # Reset camera to live feed after processing
         self.camera_widget.reset_to_live_feed()
@@ -1145,8 +1171,20 @@ class MainWindow(QWidget):
             )
 
     def append_logs(self, lines):
-        """Append log lines."""
-        self.logs_widget.append_logs(lines)
+        """Append log lines to all log widgets."""
+        for logs_widget in self.logs_widgets:
+            logs_widget.append_logs(lines)
+
+    def _update_logs_visibility(self):
+        """Update logs widget visibility based on settings."""
+        from gearledger.desktop.settings_manager import load_settings
+
+        settings = load_settings()
+        show_logs = settings.show_logs
+
+        # Update visibility in both tabs
+        self.logs_widget_automated.setVisible(show_logs)
+        self.logs_widget_manual.setVisible(show_logs)
 
     def closeEvent(self, event):
         """Handle application close event."""

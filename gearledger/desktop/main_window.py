@@ -15,6 +15,10 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QPushButton,
     QDialog,
+    QTabWidget,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
 )
 
 # Import our modular components
@@ -341,11 +345,10 @@ class MainWindow(QWidget):
 
     def _setup_layout(self):
         """Set up the main layout."""
-        # Top container with scrollable content
-        top_container = QWidget()
-        top_layout = QVBoxLayout(top_container)
+        # Root layout
+        outer = QVBoxLayout()
 
-        # Add settings button at the top
+        # Add settings button at the top (global, visible in all tabs)
         settings_btn_layout = QHBoxLayout()
         settings_btn_layout.addStretch(1)
         self.settings_btn = QPushButton("⚙️ Settings")
@@ -365,32 +368,183 @@ class MainWindow(QWidget):
         )
         self.settings_btn.clicked.connect(self._open_settings)
         settings_btn_layout.addWidget(self.settings_btn)
-        top_layout.addLayout(settings_btn_layout)
+        outer.addLayout(settings_btn_layout)
 
-        top_layout.addWidget(self.settings_widget)
-        top_layout.addWidget(self.scale_widget)
-        top_layout.addWidget(self.camera_widget)
-        top_layout.addWidget(self.results_widget)
-        top_layout.addWidget(self.logs_widget, 1)
+        # Add Settings widget (file selection) - shared between both tabs
+        outer.addWidget(self.settings_widget)
 
-        # Make the top part scrollable
-        top_scroll = QScrollArea()
-        top_scroll.setWidgetResizable(True)
-        top_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        top_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        top_scroll.setWidget(top_container)
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet(
+            """
+            QTabWidget::pane {
+                border: 1px solid #bdc3c7;
+                border-radius: 4px;
+                background-color: #ffffff;
+            }
+            QTabBar::tab {
+                background-color: #ecf0f1;
+                color: #2c3e50;
+                padding: 10px 20px;
+                border: 1px solid #bdc3c7;
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background-color: #3498db;
+                color: white;
+                font-weight: bold;
+            }
+            QTabBar::tab:hover {
+                background-color: #d5dbdb;
+            }
+        """
+        )
 
-        # Splitter for resizable layout
+        # Create Automated tab
+        automated_tab = self._create_automated_tab()
+        self.tab_widget.addTab(automated_tab, "🤖 Automated")
+
+        # Create Manual tab
+        manual_tab = self._create_manual_tab()
+        self.tab_widget.addTab(manual_tab, "✋ Manual")
+
+        # Set Automated as default (index 0)
+        self.tab_widget.setCurrentIndex(0)
+
+        # Splitter for resizable layout (tabs on top, results pane on bottom)
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(top_scroll)
+        splitter.addWidget(self.tab_widget)
         splitter.addWidget(self.results_pane)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
 
-        # Root layout
-        outer = QVBoxLayout()
         outer.addWidget(splitter)
         self.setLayout(outer)
+
+    def _create_automated_tab(self) -> QWidget:
+        """Create the Automated tab content."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Container for scrollable content
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+
+        # Add widgets for automated mode (settings widget is now above tabs)
+        container_layout.addWidget(self.scale_widget)
+        container_layout.addWidget(self.camera_widget)
+        container_layout.addWidget(self.results_widget)
+        container_layout.addWidget(self.logs_widget, 1)
+
+        # Make scrollable
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(container)
+
+        layout.addWidget(scroll)
+        return tab
+
+    def _create_manual_tab(self) -> QWidget:
+        """Create the Manual tab content."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Container for scrollable content
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+
+        # Manual entry section (settings widget is now above tabs)
+        manual_entry_box = QGroupBox("Manual Entry")
+        manual_entry_layout = QVBoxLayout(manual_entry_box)
+
+        # Part code input
+        code_layout = QHBoxLayout()
+        code_layout.addWidget(QLabel("Part Code:"))
+        self.manual_part_code = QLineEdit()
+        self.manual_part_code.setPlaceholderText("Enter part code (e.g., PK-5396)")
+        code_layout.addWidget(self.manual_part_code, 1)
+        manual_entry_layout.addLayout(code_layout)
+
+        # Weight input
+        weight_layout = QHBoxLayout()
+        weight_layout.addWidget(QLabel("Weight (kg):"))
+        self.manual_weight = QLineEdit()
+        self.manual_weight.setPlaceholderText("Enter weight")
+        weight_layout.addWidget(self.manual_weight, 1)
+        manual_entry_layout.addLayout(weight_layout)
+
+        # Add button
+        self.btn_add_manual_tab = QPushButton("Add to Results")
+        self.btn_add_manual_tab.clicked.connect(self._on_manual_entry_from_tab)
+        manual_entry_layout.addWidget(self.btn_add_manual_tab)
+
+        container_layout.addWidget(manual_entry_box)
+
+        # Add logs widget
+        container_layout.addWidget(self.logs_widget, 1)
+
+        # Make scrollable
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(container)
+
+        layout.addWidget(scroll)
+        return tab
+
+    def _on_manual_entry_from_tab(self):
+        """Handle manual entry from the Manual tab."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        part_code = self.manual_part_code.text().strip()
+        weight_text = self.manual_weight.text().strip()
+
+        if not part_code:
+            QMessageBox.warning(
+                self,
+                "Manual Entry",
+                "Please enter a part code.",
+            )
+            return
+
+        if not weight_text:
+            QMessageBox.warning(
+                self,
+                "Manual Entry",
+                "Please enter the weight.",
+            )
+            return
+
+        try:
+            weight = float(weight_text)
+            if weight <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Manual Entry",
+                    "Weight must be greater than 0.",
+                )
+                return
+        except ValueError:
+            QMessageBox.warning(
+                self,
+                "Manual Entry",
+                "Please enter a valid weight number.",
+            )
+            return
+
+        # Use the same handler as the automated tab
+        self._on_manual_entry_requested(part_code, weight)
+
+        # Clear fields after successful entry
+        self.manual_part_code.clear()
+        self.manual_weight.clear()
 
     def _setup_timers(self):
         """Set up polling timers for process queues."""
@@ -514,11 +668,7 @@ class MainWindow(QWidget):
             self.scale_widget.weight_threshold = settings.weight_threshold
             self.scale_widget.stable_time = settings.stable_time
 
-            # Update settings widget with price
-            if hasattr(self.settings_widget, "weight_price_edit"):
-                self.settings_widget.weight_price_edit.setText(
-                    str(settings.price_per_kg)
-                )
+            # Settings are now stored in settings manager, no need to update UI
 
             self.append_logs(
                 ["[INFO] Settings have been updated. Some changes may require restart."]

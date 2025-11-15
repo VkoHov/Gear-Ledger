@@ -12,14 +12,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QLineEdit,
-    QComboBox,
-    QRadioButton,
-    QButtonGroup,
 )
-
-from gearledger.config import DEFAULT_MODEL, DEFAULT_TARGET
-
-MODELS = ["gpt-4o-mini", "gpt-4o"]
 
 
 class SettingsWidget(QGroupBox):
@@ -70,57 +63,10 @@ class SettingsWidget(QGroupBox):
         results_layout.addWidget(self.btn_generate_invoice)
         layout.addLayout(results_layout)
 
-        # Target selection
-        target_layout = QHBoxLayout()
-        target_layout.addWidget(QLabel("Target:"))
-        self.rb_auto = QRadioButton("auto")
-        self.rb_vendor = QRadioButton("vendor")
-        self.rb_oem = QRadioButton("oem")
-        self.tgroup = QButtonGroup(self)
-        for rb in (self.rb_auto, self.rb_vendor, self.rb_oem):
-            self.tgroup.addButton(rb)
-
-        # Set default target
-        if DEFAULT_TARGET == "vendor":
-            self.rb_vendor.setChecked(True)
-        elif DEFAULT_TARGET == "oem":
-            self.rb_oem.setChecked(True)
-        else:
-            self.rb_auto.setChecked(True)
-
-        target_layout.addWidget(self.rb_auto)
-        target_layout.addWidget(self.rb_vendor)
-        target_layout.addWidget(self.rb_oem)
-        target_layout.addStretch(1)
-        layout.addLayout(target_layout)
-
-        # Model selection
-        model_layout = QHBoxLayout()
-        model_layout.addWidget(QLabel("Model:"))
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(MODELS)
-        self.model_combo.setCurrentText(
-            DEFAULT_MODEL if DEFAULT_MODEL in MODELS else MODELS[0]
-        )
-        model_layout.addWidget(self.model_combo)
-        model_layout.addStretch(1)
-        layout.addLayout(model_layout)
-
-        # Weight price setting
-        weight_price_layout = QHBoxLayout()
-        weight_price_label = QLabel("Weight Price (per kg):")
-        weight_price_layout.addWidget(weight_price_label)
-        self.weight_price_edit = QLineEdit()
-        self.weight_price_edit.setPlaceholderText(
-            "Enter price per kg (e.g., 1200) - REQUIRED"
-        )
-        self.weight_price_edit.setText("1200")  # Default value
-        weight_price_layout.addWidget(self.weight_price_edit, 1)
-        layout.addLayout(weight_price_layout)
-
-        # Manual entry section
-        manual_entry_box = QGroupBox("Manual Entry (without scanning)")
-        manual_entry_layout = QVBoxLayout(manual_entry_box)
+        # Manual entry section (hidden by default, shown only in Manual tab)
+        self.manual_entry_box = QGroupBox("Manual Entry (without scanning)")
+        self.manual_entry_box.setVisible(False)  # Hide in Automated tab
+        manual_entry_layout = QVBoxLayout(self.manual_entry_box)
 
         # Part code input
         code_layout = QHBoxLayout()
@@ -142,7 +88,7 @@ class SettingsWidget(QGroupBox):
         self.btn_add_manual = QPushButton("Add to Results")
         manual_entry_layout.addWidget(self.btn_add_manual)
 
-        layout.addWidget(manual_entry_box)
+        layout.addWidget(self.manual_entry_box)
 
     def _setup_connections(self):
         """Set up signal connections."""
@@ -371,43 +317,51 @@ class SettingsWidget(QGroupBox):
         return path
 
     def get_target(self) -> str:
-        """Get the current target selection."""
-        if self.rb_vendor.isChecked():
-            return "vendor"
-        if self.rb_oem.isChecked():
-            return "oem"
-        return "auto"
+        """Get the current target selection from settings manager."""
+        try:
+            from gearledger.desktop.settings_manager import load_settings
+
+            settings = load_settings()
+            return settings.default_target
+        except Exception:
+            from gearledger.config import DEFAULT_TARGET
+
+            return DEFAULT_TARGET
 
     def get_model(self) -> str:
-        """Get the current model selection."""
-        return self.model_combo.currentText()
+        """Get the current model selection from settings manager."""
+        try:
+            from gearledger.desktop.settings_manager import load_settings
+
+            settings = load_settings()
+            return settings.openai_model
+        except Exception:
+            from gearledger.config import DEFAULT_MODEL
+
+            return DEFAULT_MODEL
 
     def get_weight_price(self) -> float:
-        """Get the current weight price per kg."""
+        """Get the current weight price per kg from settings manager."""
         try:
-            return float(self.weight_price_edit.text().strip() or "0")
-        except ValueError:
-            return 0.0
+            from gearledger.desktop.settings_manager import load_settings
+
+            settings = load_settings()
+            return settings.price_per_kg
+        except Exception:
+            return 1200.0
 
     def is_weight_price_valid(self) -> bool:
         """Check if weight price is valid (not empty and > 0)."""
-        try:
-            price = float(self.weight_price_edit.text().strip() or "0")
-            return price > 0
-        except ValueError:
-            return False
+        price = self.get_weight_price()
+        return price > 0
 
     def get_weight_price_error_message(self) -> str:
         """Get error message for invalid weight price."""
-        text = self.weight_price_edit.text().strip()
-        if not text:
-            return "Weight Price is required. Please enter a price per kg."
-        try:
-            price = float(text)
-            if price <= 0:
-                return "Weight Price must be greater than 0."
-        except ValueError:
-            return "Weight Price must be a valid number."
+        price = self.get_weight_price()
+        if price <= 0:
+            return (
+                "Weight Price must be greater than 0. Please configure it in Settings."
+            )
         return ""
 
     def set_controls_enabled(self, enabled: bool):
@@ -415,11 +369,6 @@ class SettingsWidget(QGroupBox):
         for widget in (
             self.catalog_edit,
             self.results_edit,
-            self.rb_auto,
-            self.rb_vendor,
-            self.rb_oem,
-            self.model_combo,
-            self.weight_price_edit,
             self.btn_catalog,
             self.btn_results,
             self.btn_reset_results,

@@ -185,8 +185,14 @@ class SettingsPage(QWidget):
 
         layout.addWidget(pricing_group)
 
-        # Save/Cancel buttons
+        # Save/Cancel/Reset buttons
         button_layout = QHBoxLayout()
+        self.reset_btn = QPushButton("Reset to Defaults")
+        self.reset_btn.setStyleSheet(
+            "background-color: #e74c3c; color: white; font-weight: bold;"
+        )
+        self.reset_btn.clicked.connect(self._on_reset)
+        button_layout.addWidget(self.reset_btn)
         button_layout.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
         self.save_btn = QPushButton("Save Settings")
@@ -347,6 +353,42 @@ class SettingsPage(QWidget):
         # Close parent dialog if exists
         if self._parent_dialog:
             self._parent_dialog.accept()
+
+    def _on_reset(self):
+        """Reset all settings to default values."""
+        reply = QMessageBox.question(
+            self,
+            "Reset Settings",
+            "Are you sure you want to reset all settings to their default values?\n\n"
+            "This will clear your API key and all custom configurations.\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Create default settings
+        from gearledger.desktop.settings_manager import Settings, save_settings
+
+        default_settings = Settings()
+
+        # Save defaults to disk
+        save_settings(default_settings)
+
+        # Reload settings
+        self.settings = load_settings()
+
+        # Update UI with default values
+        self._load_settings_to_ui()
+
+        QMessageBox.information(
+            self,
+            "Settings Reset",
+            "All settings have been reset to default values.\n\n"
+            "Remember to configure your API key and other settings before using the application.",
+        )
 
     def _on_cancel(self):
         """Cancel and reload settings from disk."""

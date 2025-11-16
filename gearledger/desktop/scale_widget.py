@@ -53,6 +53,8 @@ class ScaleWidget(QGroupBox):
         self.stable_start_time = None
         self.is_monitoring = False
         self._connection_thread: QThread | None = None  # For async connection
+        self._serial_port = None  # Persistent serial connection
+        self._monitor_thread: QThread | None = None  # Continuous reading thread
 
         # Callbacks
         self.on_weight_ready: Callable[[float], None] | None = None
@@ -165,9 +167,8 @@ class ScaleWidget(QGroupBox):
 
     def _setup_timers(self):
         """Set up monitoring timers."""
-        self.monitor_timer = QTimer(self)
-        self.monitor_timer.timeout.connect(self._monitor_weight)
-        self.monitor_timer.setInterval(500)  # Check every 500ms
+        # No longer using timer-based polling - using continuous thread-based reading instead
+        pass
 
     def set_weight_ready_callback(self, callback: Callable[[float], None]):
         """Set callback for when weight is ready."""
@@ -263,8 +264,29 @@ class ScaleWidget(QGroupBox):
             """
         )
 
-        # start monitoring timer – it will poll regularly and update weight when data appears
-        self.monitor_timer.start()
+        # Open persistent serial connection
+        try:
+            import serial
+
+            self._serial_port = serial.Serial(
+                port=port,
+                baudrate=baudrate,
+                timeout=1.0,  # 1 second timeout for readline
+            )
+
+            # Start continuous monitoring thread
+            self._start_monitoring_thread()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Scale Connection",
+                f"Failed to open persistent connection: {e}",
+            )
+            self.is_monitoring = False
+            self.btn_connect.setEnabled(True)
+            self.btn_disconnect.setEnabled(False)
+            self._connection_thread = None
+            return
 
         QMessageBox.information(self, "Scale Connected", msg)
         self._connection_thread = None
@@ -292,7 +314,23 @@ class ScaleWidget(QGroupBox):
     def disconnect_scale(self):
         """Disconnect from the scale."""
         self.is_monitoring = False
-        self.monitor_timer.stop()
+
+        # Stop monitoring thread
+        if self._monitor_thread:
+            if hasattr(self._monitor_thread, "stop"):
+                self._monitor_thread.stop()
+            if self._monitor_thread.isRunning():
+                self._monitor_thread.terminate()
+                self._monitor_thread.wait(1000)  # Wait up to 1 second
+            self._monitor_thread = None
+
+        # Close serial port
+        if self._serial_port:
+            try:
+                self._serial_port.close()
+            except Exception:
+                pass
+            self._serial_port = None
 
         self.btn_connect.setEnabled(True)
         self.btn_disconnect.setEnabled(False)
@@ -316,36 +354,80 @@ class ScaleWidget(QGroupBox):
 
     def tare_scale(self):
         """Tare the scale (zero it)."""
+        if not self.is_monitoring or not self._serial_port:
+            return
+
+        # Use current weight as tare offset
+        if self.current_weight != 0.0:
+            self.last_stable_weight = self.current_weight
+            if hasattr(self, "append_logs"):
+                self.append_logs([f"Scale tared: {self.current_weight:.3f} kg"])
+
+    def _start_monitoring_thread(self):
+        """Start continuous monitoring thread for scale reading."""
+        if self._monitor_thread and self._monitor_thread.isRunning():
+            return
+
+        class ScaleMonitorThread(QThread):
+            weight_received = pyqtSignal(str)  # Emit raw weight string
+            connection_lost = pyqtSignal()  # Emit when connection is lost
+
+            def __init__(self, serial_port, parent=None):
+                super().__init__(parent)
+                self.serial_port = serial_port
+                self._stop = False
+
+            def stop(self):
+                self._stop = True
+
+            def run(self):
+                """Continuously read from serial port."""
+                import serial
+
+                while not self._stop:
+                    try:
+                        if not self.serial_port or not self.serial_port.is_open:
+                            self.connection_lost.emit()
+                            break
+
+                        # Read a line (blocking with timeout)
+                        raw = (
+                            self.serial_port.readline().decode(errors="ignore").strip()
+                        )
+
+                        if raw:
+                            print(f"Scale raw: {raw}")
+                            # Skip invalid lines
+                            if "/" in raw:
+                                continue
+
+                            # Parse and emit if valid
+                            parsed = parse_weight(raw)
+                            if parsed:
+                                self.weight_received.emit(parsed)
+
+                    except serial.SerialException as e:
+                        print(f"Scale serial error: {e}")
+                        self.connection_lost.emit()
+                        break
+                    except Exception as e:
+                        print(f"Scale monitoring error: {e}")
+                        # Continue reading despite errors
+                        time.sleep(0.1)
+
+        # Create and start monitoring thread
+        self._monitor_thread = ScaleMonitorThread(self._serial_port, self)
+        self._monitor_thread.weight_received.connect(self._on_weight_received)
+        self._monitor_thread.connection_lost.connect(self._on_connection_lost)
+        self._monitor_thread.start()
+
+    def _on_weight_received(self, weight_str: str):
+        """Handle weight data received from monitoring thread."""
         if not self.is_monitoring:
-            return
-
-        # Read current weight and use it as tare offset
-        weight = read_weight_once(self.scale_port, self.scale_baudrate, timeout=2.0)
-        if weight is not None:
-            parsed = parse_weight(weight)
-            if parsed:
-                try:
-                    tare_value = float(parsed.split()[0])
-                    self.last_stable_weight = tare_value
-                    self.append_logs([f"Scale tared: {tare_value} kg"])
-                except (ValueError, IndexError):
-                    pass
-
-    def _monitor_weight(self):
-        """Monitor weight changes."""
-        if not self.is_monitoring:
-            return
-
-        weight = read_weight_once(self.scale_port, self.scale_baudrate, timeout=0.5)
-        if weight is None:
-            return
-
-        parsed = parse_weight(weight)
-        if not parsed:
             return
 
         try:
-            new_weight = float(parsed.split()[0])
+            new_weight = float(weight_str.split()[0])
             self.current_weight = new_weight
 
             # Update display
@@ -367,6 +449,26 @@ class ScaleWidget(QGroupBox):
 
         except (ValueError, IndexError):
             pass
+
+    def _on_connection_lost(self):
+        """Handle connection loss."""
+        if self.is_monitoring:
+            if hasattr(self, "append_logs") and self.append_logs:
+                self.append_logs(["[WARNING] Scale connection lost."])
+            # Disconnect and update UI
+            self.is_monitoring = False
+            self.btn_connect.setEnabled(True)
+            self.btn_disconnect.setEnabled(False)
+            self.status_label.setText("Status: Connection Lost")
+            self.status_label.setStyleSheet(
+                """
+                QLabel {
+                    font-size: 12px;
+                    color: #e74c3c;
+                    padding: 5px;
+                }
+                """
+            )
 
     def _on_weight_ready(self, weight: float):
         """Handle weight ready signal."""

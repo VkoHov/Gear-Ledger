@@ -10,7 +10,7 @@ This guide explains how to build a Windows executable (.exe) from the GearLedger
 
 ## Quick Build
 
-### Option 1: Using the Build Script (Recommended)
+### Option 1: Using PyInstaller (Standard)
 
 ```bash
 # Install PyInstaller if not already installed
@@ -20,9 +20,42 @@ pip install pyinstaller
 python build_exe.py
 ```
 
-The EXE will be created in the `dist/` folder as `GearLedger.exe`.
+The EXE will be created in the `dist/GearLedger/` folder.
 
-### Option 2: Using PyInstaller Directly
+### Option 2: Using Nuitka (Better Antivirus Reputation) ⭐
+
+Nuitka compiles Python to C++ and often has better antivirus reputation,
+**usually avoiding the need for Windows Defender exclusions**.
+
+```bash
+# Install Nuitka
+pip install nuitka
+
+# Build with Nuitka
+python build_nuitka.py
+```
+
+**Advantages:**
+
+- ✅ Better antivirus reputation (usually no exclusions needed)
+- ✅ Faster runtime performance (compiled to C++)
+- ✅ Smaller file size
+- ✅ Single EXE file (no folder needed)
+
+**Disadvantages:**
+
+- ⚠️ Longer build time (compilation takes 5-15 minutes)
+- ⚠️ Requires C++ compiler (Visual Studio Build Tools on Windows)
+
+**Setup Nuitka:**
+
+1. Install Visual Studio Build Tools (one-time):
+   - Download: https://visualstudio.microsoft.com/downloads/
+   - Install "Desktop development with C++" workload
+2. Install Nuitka: `pip install nuitka`
+3. Build: `python build_nuitka.py`
+
+### Option 3: Using PyInstaller Directly
 
 ```bash
 # Install PyInstaller

@@ -6,8 +6,13 @@ import os
 from pathlib import Path
 
 # Prevent some macOS/BLAS issues (MPS/Accelerate)
+# Also helps with Windows performance
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# Optimize NumPy/Pandas for Windows
+os.environ.setdefault(
+    "NUMEXPR_MAX_THREADS", "4"
+)  # Limit threads for better performance
 
 # Try to load settings from settings manager (preferred)
 # Fall back to environment variables for backward compatibility

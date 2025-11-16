@@ -35,11 +35,14 @@ def main():
     print("=" * 60)
 
     # PyInstaller command
+    # Using --onedir instead of --onefile for MUCH faster startup on Windows
+    # --onefile extracts to temp on every launch (very slow!)
+    # --onedir creates a folder (faster startup, easier distribution)
     cmd = [
         "pyinstaller",
         "--name=GearLedger",
         "--windowed",  # No console window
-        "--onefile",  # Single executable file
+        "--onedir",  # Folder with EXE (faster than onefile on Windows)
         "--icon=NONE",  # You can add an icon file later if needed
         f"--add-data=gearledger{os.pathsep}gearledger",  # Include the gearledger package (Windows uses ;)
         "--hidden-import=PyQt6.QtCore",

@@ -19,13 +19,13 @@ from pathlib import Path
 
 def main():
     """Build the Windows EXE using Nuitka."""
-    
+
     # Check if we're on Windows
     if sys.platform != "win32":
         print("=" * 60)
         print("⚠️  Warning: This build script is designed for Windows.")
         print("=" * 60)
-    
+
     # Check if Nuitka is installed
     try:
         import nuitka
@@ -34,14 +34,26 @@ def main():
         print("   Installing Nuitka...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "nuitka"])
         print("✅ Nuitka installed.")
-    
+
     # Get the project root directory
     project_root = Path(__file__).parent.absolute()
     os.chdir(project_root)
-    
+
     print(f"📦 Building EXE with Nuitka from: {project_root}")
     print("=" * 60)
-    
+
+    # Check which optional modules are available
+    optional_modules = []
+
+    # Check for xlrd (optional, for .xls file support)
+    try:
+        import xlrd
+
+        optional_modules.append("xlrd")
+        print("✅ xlrd found (for .xls file support)")
+    except ImportError:
+        print("⚠️  xlrd not found (optional - for .xls file support)")
+
     # Nuitka command
     # Nuitka compiles to C++ and creates a standalone executable
     # Better antivirus reputation than PyInstaller
@@ -51,14 +63,13 @@ def main():
         "nuitka",
         "--standalone",  # Create standalone executable
         "--onefile",  # Single file (Nuitka's onefile is faster than PyInstaller's)
-        "--windows-disable-console",  # No console window
+        "--windows-console-mode=disable",  # No console window (updated syntax)
         "--enable-plugin=pyqt6",  # PyQt6 support
         "--include-package-data=gearledger",  # Include gearledger package
         "--include-module=PyQt6.QtCore",
         "--include-module=PyQt6.QtGui",
         "--include-module=PyQt6.QtWidgets",
         "--include-module=openpyxl",
-        "--include-module=xlrd",
         "--include-module=pandas",
         "--include-module=numpy",
         "--include-module=cv2",
@@ -72,14 +83,18 @@ def main():
         "--output-filename=GearLedger.exe",
         "app_desktop.py",
     ]
-    
+
+    # Add optional modules if available
+    for module in optional_modules:
+        cmd.insert(-1, f"--include-module={module}")
+
     print("🔨 Running Nuitka...")
     print(f"Command: {' '.join(cmd)}")
     print("=" * 60)
     print("💡 Note: Nuitka compilation takes longer but produces faster executables")
     print("   with better antivirus reputation (usually no exclusions needed).")
     print("=" * 60)
-    
+
     try:
         subprocess.check_call(cmd)
         print("=" * 60)
@@ -100,4 +115,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

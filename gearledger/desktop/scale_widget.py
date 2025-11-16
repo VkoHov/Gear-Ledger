@@ -49,7 +49,7 @@ class ScaleWidget(QGroupBox):
 
         # State
         self.current_weight = 0.0
-        self.last_stable_weight = 0.0
+        self.last_stable_weight = None  # None means no stable weight yet
         self.stable_start_time = None
         self.is_monitoring = False
         self._connection_thread: QThread | None = None  # For async connection
@@ -349,7 +349,7 @@ class ScaleWidget(QGroupBox):
 
         self.weight_label.setText("Weight: -- kg")
         self.current_weight = 0.0
-        self.last_stable_weight = 0.0
+        self.last_stable_weight = None  # Reset to None
         self.stable_start_time = None
 
     def tare_scale(self):
@@ -429,12 +429,17 @@ class ScaleWidget(QGroupBox):
         try:
             new_weight = float(weight_str.split()[0])
 
-            # Ignore zero values if we have a meaningful weight (> 0.01 kg)
+            # Ignore zero values completely if we have a meaningful weight (> 0.01 kg)
             # This prevents oscillation between 0.00 and actual weight
-            if new_weight < 0.01 and self.current_weight > 0.01:
-                print(
-                    f"[DEBUG] Ignoring zero value (current weight: {self.current_weight:.3f} kg)"
-                )
+            if new_weight < 0.01:
+                if self.current_weight > 0.01:
+                    print(
+                        f"[DEBUG] Ignoring zero value (current weight: {self.current_weight:.3f} kg)"
+                    )
+                    return
+                # If current weight is also zero, just update display but don't check stability
+                self.current_weight = new_weight
+                self.weight_label.setText(f"Weight: {new_weight:.3f} kg")
                 return
 
             # Only update if weight changed significantly (to avoid noise)
@@ -449,7 +454,16 @@ class ScaleWidget(QGroupBox):
             self.weight_label.setText(f"Weight: {new_weight:.3f} kg")
             self.weight_changed.emit(new_weight)
 
-            # Check for stability
+            # Initialize last_stable_weight if this is the first meaningful weight
+            if self.last_stable_weight is None:
+                self.last_stable_weight = new_weight
+                self.stable_start_time = time.time()
+                print(
+                    f"[DEBUG] First meaningful weight: {new_weight:.3f} kg - starting stability check"
+                )
+                return
+
+            # Check for stability (only for non-zero weights)
             if abs(new_weight - self.last_stable_weight) <= self.weight_threshold:
                 if self.stable_start_time is None:
                     self.stable_start_time = time.time()
@@ -465,11 +479,13 @@ class ScaleWidget(QGroupBox):
                     self.stable_start_time = None
                     self.weight_ready.emit(new_weight)
             else:
-                # Weight changed, reset stability timer
+                # Weight changed significantly, update reference and reset stability timer
                 if self.stable_start_time is not None:
                     print(
                         f"[DEBUG] Weight changed: {new_weight:.3f} kg (was {self.last_stable_weight:.3f} kg, diff: {abs(new_weight - self.last_stable_weight):.3f} kg) - resetting stability timer"
                     )
+                # Update reference to new weight and reset timer
+                self.last_stable_weight = new_weight
                 self.stable_start_time = None
 
         except (ValueError, IndexError):

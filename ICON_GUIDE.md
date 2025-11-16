@@ -67,10 +67,18 @@ After building:
 
 ## Icon Requirements
 
-- **Format:** `.ico` (Windows Icon format)
+- **Format:**
+  - `.ico` (Windows Icon format) - Required for Windows EXE
+  - `.png` (Optional, for better quality on macOS/Linux)
 - **Recommended sizes:** 256x256, 128x128, 64x64, 32x32, 16x16 pixels
-- **Location:** Project root directory (`icon.ico`)
-- **Name:** Must be exactly `icon.ico`
+- **Location:** Project root directory (`icon.ico` or `icon.png`)
+- **Name:** Must be exactly `icon.ico` (or `icon.png` for cross-platform)
+
+**Note:** The app will automatically use `icon.ico` if available, or fall back to `icon.png`. For best results:
+
+- Windows: Use `icon.ico`
+- macOS: You can use either, but `icon.png` may look better
+- Both: Place both files in the project root
 
 ## Troubleshooting
 

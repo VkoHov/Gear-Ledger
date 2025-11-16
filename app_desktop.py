@@ -7,10 +7,40 @@ import os, sys, multiprocessing as mp
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtGui import QIcon
+from pathlib import Path
 
 # Import the modular main window
 from gearledger.desktop.main_window import MainWindow
 from gearledger.desktop.settings_manager import load_settings
+
+
+def _set_application_icon(app: QApplication):
+    """Set the application icon from icon.ico or icon.png if available."""
+    # Try multiple possible locations for icon files
+    possible_paths = [
+        Path(__file__).parent / "icon.ico",  # Project root - ICO
+        Path(__file__).parent / "icon.png",  # Project root - PNG (for macOS)
+        Path.cwd() / "icon.ico",  # Current working directory - ICO
+        Path.cwd() / "icon.png",  # Current working directory - PNG
+    ]
+
+    # Also check if running as EXE (PyInstaller/Nuitka)
+    if hasattr(sys, "_MEIPASS"):  # PyInstaller
+        possible_paths.insert(0, Path(sys._MEIPASS) / "icon.ico")
+        possible_paths.insert(1, Path(sys._MEIPASS) / "icon.png")
+    if hasattr(sys, "_NUITKA_ONEFILE_TEMP"):  # Nuitka onefile
+        possible_paths.insert(0, Path(sys._NUITKA_ONEFILE_TEMP) / "icon.ico")
+        possible_paths.insert(1, Path(sys._NUITKA_ONEFILE_TEMP) / "icon.png")
+
+    # Try to find and load icon
+    for icon_path in possible_paths:
+        if icon_path.exists():
+            try:
+                app.setWindowIcon(QIcon(str(icon_path)))
+                return
+            except Exception:
+                pass
 
 
 def main():
@@ -34,6 +64,9 @@ def main():
     os.environ["VISION_BACKEND"] = settings.vision_backend
 
     app = QApplication(sys.argv)
+
+    # Set application icon if available
+    _set_application_icon(app)
 
     # Show settings dialog on first launch if API key is missing and using OpenAI
     if not settings.openai_api_key and settings.vision_backend == "openai":

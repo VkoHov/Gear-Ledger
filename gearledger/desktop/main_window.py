@@ -78,19 +78,24 @@ class MainWindow(QWidget):
         self._update_logs_visibility()
 
     def _set_window_icon(self):
-        """Set the window icon from icon.ico file if available."""
-        # Try multiple possible locations for icon.ico
+        """Set the window icon from icon.ico or icon.png file if available."""
+        # Try multiple possible locations for icon files
         possible_paths = [
-            Path(__file__).parent.parent.parent / "icon.ico",  # Project root
-            Path.cwd() / "icon.ico",  # Current working directory
-            Path(__file__).parent / "icon.ico",  # Desktop folder
+            Path(__file__).parent.parent.parent / "icon.ico",  # Project root - ICO
+            Path(__file__).parent.parent.parent / "icon.png",  # Project root - PNG
+            Path.cwd() / "icon.ico",  # Current working directory - ICO
+            Path.cwd() / "icon.png",  # Current working directory - PNG
+            Path(__file__).parent / "icon.ico",  # Desktop folder - ICO
+            Path(__file__).parent / "icon.png",  # Desktop folder - PNG
         ]
 
         # Also check if running as EXE (PyInstaller/Nuitka)
         if hasattr(sys, "_MEIPASS"):  # PyInstaller
             possible_paths.insert(0, Path(sys._MEIPASS) / "icon.ico")
+            possible_paths.insert(1, Path(sys._MEIPASS) / "icon.png")
         if hasattr(sys, "_NUITKA_ONEFILE_TEMP"):  # Nuitka onefile
             possible_paths.insert(0, Path(sys._NUITKA_ONEFILE_TEMP) / "icon.ico")
+            possible_paths.insert(1, Path(sys._NUITKA_ONEFILE_TEMP) / "icon.png")
 
         # Try to find and load icon
         for icon_path in possible_paths:
@@ -101,7 +106,15 @@ class MainWindow(QWidget):
                 except Exception:
                     pass
 
-        # Fallback to system theme icon
+        # Fallback: use application icon if set
+        from PyQt6.QtWidgets import QApplication
+
+        app_icon = QApplication.instance().windowIcon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
+            return
+
+        # Final fallback to system theme icon
         try:
             self.setWindowIcon(QIcon.fromTheme("applications-graphics"))
         except Exception:

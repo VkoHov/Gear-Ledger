@@ -630,6 +630,8 @@ class MainWindow(QWidget):
 
     def _on_weight_ready(self, weight: float):
         """Handle weight ready from scale - automatically trigger camera capture when weight stabilizes."""
+        self.append_logs([f"[DEBUG] Weight ready signal received: {weight:.3f} kg"])
+
         if not self.settings_widget.validate_catalog():
             self.append_logs(
                 [
@@ -647,30 +649,72 @@ class MainWindow(QWidget):
                 self.camera_widget.start_camera()
                 self._camera_auto_started = True
                 # Wait a bit for camera to initialize, then capture
-                QTimer.singleShot(1000, lambda: self._capture_after_stable(weight))
+                # Use longer delay to ensure camera is fully ready
+                QTimer.singleShot(2000, lambda: self._capture_after_stable(weight))
                 return
             except Exception as e:
                 self.append_logs([f"[ERROR] Failed to start camera: {e}"])
                 return
 
-        # Camera is ready, capture immediately
+        # Camera is ready, but need to wait for first frame
+        # Check if camera has grabbed a frame yet
+        if self.camera_widget._last_frame is None:
+            self.append_logs(
+                [
+                    f"[INFO] Weight stabilized: {weight:.3f} kg - waiting for camera frame..."
+                ]
+            )
+            # Wait for camera to grab first frame, then capture
+            QTimer.singleShot(500, lambda: self._capture_after_stable(weight))
+            return
+
+        # Camera is ready and has a frame, capture immediately
         self.append_logs(
             [
                 f"[INFO] Weight stabilized: {weight:.3f} kg - capturing image and running OCR"
             ]
         )
-        self.camera_widget.capture_and_run()
+        try:
+            self.camera_widget.capture_and_run()
+        except Exception as e:
+            self.append_logs([f"[ERROR] Failed to capture: {e}"])
 
     def _capture_after_stable(self, weight: float):
         """Capture image after camera has started (called with delay)."""
         if not self.camera_widget.cap:
-            self.append_logs(["[WARNING] Camera not ready for capture"])
+            self.append_logs(
+                ["[WARNING] Camera not ready for capture - waiting longer..."]
+            )
+            # Try one more time after another delay (max 3 attempts)
+            if not hasattr(self, "_capture_attempts"):
+                self._capture_attempts = 0
+            self._capture_attempts += 1
+            if self._capture_attempts < 3:
+                QTimer.singleShot(1000, lambda: self._capture_after_stable(weight))
+            else:
+                self.append_logs(
+                    ["[ERROR] Camera failed to initialize after multiple attempts"]
+                )
+                self._capture_attempts = 0
+            return
+
+        # Reset attempts counter
+        if hasattr(self, "_capture_attempts"):
+            self._capture_attempts = 0
+
+        # Check if camera has a frame ready
+        if self.camera_widget._last_frame is None:
+            self.append_logs(["[INFO] Waiting for camera frame..."])
+            QTimer.singleShot(500, lambda: self._capture_after_stable(weight))
             return
 
         self.append_logs(
             [f"[INFO] Camera ready - capturing image for weight: {weight:.3f} kg"]
         )
-        self.camera_widget.capture_and_run()
+        try:
+            self.camera_widget.capture_and_run()
+        except Exception as e:
+            self.append_logs([f"[ERROR] Failed to capture after delay: {e}"])
 
     def _on_results_path_changed(self, path: str):
         """Handle results path change."""

@@ -438,13 +438,23 @@ class ScaleWidget(QGroupBox):
             if abs(new_weight - self.last_stable_weight) <= self.weight_threshold:
                 if self.stable_start_time is None:
                     self.stable_start_time = time.time()
+                    print(
+                        f"[DEBUG] Weight stabilizing: {new_weight:.3f} kg (threshold: {self.weight_threshold} kg)"
+                    )
                 elif time.time() - self.stable_start_time >= self.stable_time:
                     # Weight is stable
+                    print(
+                        f"[DEBUG] Weight STABILIZED: {new_weight:.3f} kg - emitting weight_ready signal"
+                    )
                     self.last_stable_weight = new_weight
                     self.stable_start_time = None
                     self.weight_ready.emit(new_weight)
             else:
                 # Weight changed, reset stability timer
+                if self.stable_start_time is not None:
+                    print(
+                        f"[DEBUG] Weight changed: {new_weight:.3f} kg (was {self.last_stable_weight:.3f} kg) - resetting stability timer"
+                    )
                 self.stable_start_time = None
 
         except (ValueError, IndexError):
@@ -472,8 +482,15 @@ class ScaleWidget(QGroupBox):
 
     def _on_weight_ready(self, weight: float):
         """Handle weight ready signal."""
+        print(
+            f"[DEBUG] ScaleWidget._on_weight_ready called with weight: {weight:.3f} kg"
+        )
+        print(f"[DEBUG] Callback exists: {self.on_weight_ready is not None}")
         if self.on_weight_ready:
+            print(f"[DEBUG] Calling weight_ready callback...")
             self.on_weight_ready(weight)
+        else:
+            print(f"[DEBUG] WARNING: No weight_ready callback set!")
 
     def _on_weight_changed(self, weight: float):
         """Handle weight changed signal."""

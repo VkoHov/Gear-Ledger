@@ -20,6 +20,9 @@ from PyQt6.QtWidgets import (
     QMessageBox,
 )
 
+# Import low-level camera utilities (consistent with scale_widget.py structure)
+from gearledger.desktop.camera import open_camera, read_frame, release_camera
+
 
 # Camera defaults - will be loaded from settings
 def get_camera_settings():
@@ -36,32 +39,6 @@ def get_camera_settings():
             int(os.getenv("CAM_WIDTH", "1280")),
             int(os.getenv("CAM_HEIGHT", "720")),
         )
-
-
-def open_camera(index: int, w: int, h: int):
-    """Open camera with specified settings."""
-    import cv2  # Lazy import - only load when camera is used
-
-    cap = cv2.VideoCapture(index)
-    if not cap or not cap.isOpened():
-        return None
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-    return cap
-
-
-def read_frame(cap) -> np.ndarray | None:
-    """Read a frame from the camera."""
-    ok, frame = cap.read()
-    return frame if ok else None
-
-
-def release_camera(cap):
-    """Release camera resources."""
-    try:
-        cap.release()
-    except Exception:
-        pass
 
 
 class CameraWidget(QGroupBox):
@@ -92,7 +69,10 @@ class CameraWidget(QGroupBox):
         # Camera preview container (to support overlay)
         self.preview_container = QWidget()
         self.preview_container.setFixedHeight(430)
-        self.preview_container.setMinimumWidth(640)  # Minimum width for camera preview
+        # Minimum width for camera preview - allow it to shrink but maintain usability
+        self.preview_container.setMinimumWidth(
+            480
+        )  # Reduced from 640 to allow more flexibility
         preview_layout = QVBoxLayout(self.preview_container)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(0)
@@ -100,7 +80,9 @@ class CameraWidget(QGroupBox):
         # Camera preview
         self.preview = QLabel("Camera preview")
         self.preview.setFixedHeight(430)
+        self.preview.setMinimumWidth(480)  # Minimum width to maintain aspect ratio
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setScaledContents(True)  # Allow image to scale with widget size
         self.preview.setStyleSheet(
             """
             QLabel {
@@ -149,8 +131,9 @@ class CameraWidget(QGroupBox):
         self.btn_capture.setEnabled(False)
         self.btn_stop_cancel.setEnabled(False)
 
-        # Button layout
+        # Button layout - ensure buttons don't get too cramped
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(5)  # Add spacing between buttons
         button_layout.addWidget(self.btn_start)
         button_layout.addWidget(self.btn_capture)
         button_layout.addWidget(self.btn_stop_cancel)
@@ -158,6 +141,9 @@ class CameraWidget(QGroupBox):
 
         # Main layout - only add button layout, preview_container already added
         layout.addLayout(button_layout)
+
+        # Set minimum width for the entire widget to ensure buttons are visible
+        self.setMinimumWidth(480)  # Match preview container minimum
 
     def _setup_connections(self):
         """Set up signal connections."""

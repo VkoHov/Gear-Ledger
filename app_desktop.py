@@ -74,7 +74,7 @@ def main():
         from PyQt6.QtWidgets import QDialog
 
         dlg = QDialog()
-        dlg.setWindowTitle("Initial Setup")
+        dlg.setWindowTitle("Gear Ledger - Initial Setup")
         dlg.setMinimumWidth(600)
         layout = dlg.layout() if dlg.layout() else None
         if not layout:

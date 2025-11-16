@@ -51,7 +51,7 @@ class MainWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GearLedger — desktop (camera)")
+        self.setWindowTitle("Gear Ledger")
         self.resize(1100, 820)
 
         # Try to load icon from file
@@ -483,9 +483,29 @@ class MainWindow(QWidget):
         container = QWidget()
         container_layout = QVBoxLayout(container)
 
+        # Scale and Camera side by side with resizable splitter
+        scale_camera_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Set minimum widths to ensure all important info is visible
+        # Scale widget: needs space for port/baudrate controls, weight display, 3 buttons
+        self.scale_widget.setMinimumWidth(350)
+        # Camera widget: needs space for preview and 3 buttons (reduced from 640 to allow flexibility)
+        self.camera_widget.setMinimumWidth(480)
+
+        # Add widgets to splitter with stretch factors
+        scale_camera_splitter.addWidget(self.scale_widget)
+        scale_camera_splitter.addWidget(self.camera_widget)
+
+        # Set stretch factors (camera gets more space initially)
+        scale_camera_splitter.setStretchFactor(0, 1)  # Scale widget
+        scale_camera_splitter.setStretchFactor(1, 2)  # Camera widget
+
+        # Set initial sizes (scale: 30%, camera: 70%)
+        scale_camera_splitter.setSizes([300, 700])
+
+        container_layout.addWidget(scale_camera_splitter)
+
         # Add widgets for automated mode (settings widget is now above tabs)
-        container_layout.addWidget(self.scale_widget)
-        container_layout.addWidget(self.camera_widget)
         container_layout.addWidget(self.results_widget)
         container_layout.addWidget(self.logs_widget_automated, 1)
 
@@ -770,7 +790,7 @@ class MainWindow(QWidget):
         import os
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Application Settings")
+        dlg.setWindowTitle("Gear Ledger - Settings")
         dlg.setMinimumWidth(700)
         dlg.setMinimumHeight(800)
 

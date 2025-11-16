@@ -127,6 +127,7 @@ class ScaleWidget(QGroupBox):
 
         # Controls
         controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(5)  # Add spacing between buttons
         self.btn_connect = QPushButton("Connect Scale")
         self.btn_disconnect = QPushButton("Disconnect")
         self.btn_disconnect.setEnabled(False)
@@ -138,6 +139,10 @@ class ScaleWidget(QGroupBox):
         controls_layout.addWidget(self.btn_tare)
         controls_layout.addStretch(1)
         layout.addLayout(controls_layout)
+
+        # Set minimum width for the entire widget to ensure all controls are visible
+        # Needs space for: port/baudrate row, weight display, 3 buttons, status, auto-capture label
+        self.setMinimumWidth(350)
 
         # Auto-capture settings
         auto_layout = QHBoxLayout()

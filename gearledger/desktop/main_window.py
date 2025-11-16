@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 import sys
+from pathlib import Path
 from typing import Dict, Any
 
 from PyQt6.QtCore import Qt, QTimer
@@ -52,10 +53,9 @@ class MainWindow(QWidget):
         super().__init__()
         self.setWindowTitle("GearLedger — desktop (camera)")
         self.resize(1100, 820)
-        try:
-            self.setWindowIcon(QIcon.fromTheme("applications-graphics"))
-        except Exception:
-            pass
+
+        # Try to load icon from file
+        self._set_window_icon()
 
         # Apply global application styling
         self._apply_styling()
@@ -76,6 +76,36 @@ class MainWindow(QWidget):
 
         # Apply initial logs visibility setting
         self._update_logs_visibility()
+
+    def _set_window_icon(self):
+        """Set the window icon from icon.ico file if available."""
+        # Try multiple possible locations for icon.ico
+        possible_paths = [
+            Path(__file__).parent.parent.parent / "icon.ico",  # Project root
+            Path.cwd() / "icon.ico",  # Current working directory
+            Path(__file__).parent / "icon.ico",  # Desktop folder
+        ]
+
+        # Also check if running as EXE (PyInstaller/Nuitka)
+        if hasattr(sys, "_MEIPASS"):  # PyInstaller
+            possible_paths.insert(0, Path(sys._MEIPASS) / "icon.ico")
+        if hasattr(sys, "_NUITKA_ONEFILE_TEMP"):  # Nuitka onefile
+            possible_paths.insert(0, Path(sys._NUITKA_ONEFILE_TEMP) / "icon.ico")
+
+        # Try to find and load icon
+        for icon_path in possible_paths:
+            if icon_path.exists():
+                try:
+                    self.setWindowIcon(QIcon(str(icon_path)))
+                    return
+                except Exception:
+                    pass
+
+        # Fallback to system theme icon
+        try:
+            self.setWindowIcon(QIcon.fromTheme("applications-graphics"))
+        except Exception:
+            pass
 
     def _apply_styling(self):
         """Apply global application styling."""

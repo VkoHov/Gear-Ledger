@@ -92,6 +92,14 @@ def main():
     print(f"📦 Building EXE with Nuitka from: {project_root}")
     print("=" * 60)
 
+    # Check for icon file
+    icon_path = project_root / "icon.ico"
+    if icon_path.exists():
+        print(f"✅ Found icon file: {icon_path}")
+    else:
+        print("⚠️  No icon.ico found - EXE will use default Windows icon")
+        print("   Place icon.ico in project root to add a custom icon")
+
     # Nuitka command
     # Nuitka compiles to C++ and creates a standalone executable
     # Better antivirus reputation than PyInstaller
@@ -121,6 +129,10 @@ def main():
         "--output-filename=GearLedger.exe",
         "app_desktop.py",
     ]
+
+    # Add icon if available
+    if icon_path.exists():
+        cmd.insert(-1, f"--windows-icon-from-ico={icon_path}")
 
     # Add optional modules if available
     for module in optional_modules:

@@ -8,6 +8,7 @@ PAT = re.compile(
     re.I,
 )
 
+
 def parse_weight(line: str) -> Optional[str]:
     m = PAT.search(line)
     if not m:
@@ -40,7 +41,6 @@ def read_weight_once(port: str, baudrate=9600, timeout=10.0) -> Optional[str]:
                 if not w:
                     continue
 
-                # prefer non-zero
                 val_str = w.split()[0]
                 try:
                     val = float(val_str)
@@ -50,7 +50,11 @@ def read_weight_once(port: str, baudrate=9600, timeout=10.0) -> Optional[str]:
                 if val is None:
                     continue
 
-                if last is None or val != 0.0:
+                # Prefer non-zero values, but keep last non-zero if current is zero
+                if val != 0.0:
+                    last = w
+                elif last is None:
+                    # Only use zero if we haven't seen any value yet
                     last = w
             return last
     except Exception:

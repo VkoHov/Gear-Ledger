@@ -428,6 +428,21 @@ class ScaleWidget(QGroupBox):
 
         try:
             new_weight = float(weight_str.split()[0])
+
+            # Ignore zero values if we have a meaningful weight (> 0.01 kg)
+            # This prevents oscillation between 0.00 and actual weight
+            if new_weight < 0.01 and self.current_weight > 0.01:
+                print(
+                    f"[DEBUG] Ignoring zero value (current weight: {self.current_weight:.3f} kg)"
+                )
+                return
+
+            # Only update if weight changed significantly (to avoid noise)
+            # Ignore changes less than 0.001 kg (1 gram)
+            weight_diff = abs(new_weight - self.current_weight)
+            if weight_diff < 0.001:
+                return
+
             self.current_weight = new_weight
 
             # Update display
@@ -453,7 +468,7 @@ class ScaleWidget(QGroupBox):
                 # Weight changed, reset stability timer
                 if self.stable_start_time is not None:
                     print(
-                        f"[DEBUG] Weight changed: {new_weight:.3f} kg (was {self.last_stable_weight:.3f} kg) - resetting stability timer"
+                        f"[DEBUG] Weight changed: {new_weight:.3f} kg (was {self.last_stable_weight:.3f} kg, diff: {abs(new_weight - self.last_stable_weight):.3f} kg) - resetting stability timer"
                     )
                 self.stable_start_time = None
 

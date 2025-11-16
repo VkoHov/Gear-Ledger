@@ -26,33 +26,71 @@ def main():
         print("⚠️  Warning: This build script is designed for Windows.")
         print("=" * 60)
 
-    # Check if Nuitka is installed
-    try:
-        import nuitka
-    except ImportError:
-        print("❌ Nuitka is not installed.")
-        print("   Installing Nuitka...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "nuitka"])
-        print("✅ Nuitka installed.")
-
     # Get the project root directory
     project_root = Path(__file__).parent.absolute()
     os.chdir(project_root)
 
-    print(f"📦 Building EXE with Nuitka from: {project_root}")
+    print("=" * 60)
+    print("📦 Checking and installing required dependencies...")
     print("=" * 60)
 
-    # Check which optional modules are available
+    # Required modules for the build (mapping: import_name -> pip_package_name)
+    required_modules = {
+        "nuitka": "nuitka",
+        "PyQt6": "PyQt6",
+        "openpyxl": "openpyxl",
+        "pandas": "pandas",
+        "numpy": "numpy",
+        "cv2": "opencv-python",
+        "serial": "pyserial",
+        "openai": "openai",
+        "fuzzywuzzy": "fuzzywuzzy",
+        "Levenshtein": "python-Levenshtein",
+        "PIL": "Pillow",
+    }
+
+    # Check and install required modules
+    missing_required = []
+    for import_name, pip_name in required_modules.items():
+        try:
+            if import_name == "cv2":
+                import cv2
+            elif import_name == "serial":
+                import serial
+            elif import_name == "PIL":
+                from PIL import Image
+            elif import_name == "Levenshtein":
+                import Levenshtein
+            else:
+                __import__(import_name)
+            print(f"✅ {import_name} is installed")
+        except ImportError:
+            print(f"❌ {import_name} is missing")
+            missing_required.append(pip_name)
+
+    # Install missing required modules
+    if missing_required:
+        print(f"\n📥 Installing missing modules: {', '.join(missing_required)}")
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install"] + missing_required
+        )
+        print("✅ All required modules installed!\n")
+
+    # Check optional modules
     optional_modules = []
+    optional_packages = {"xlrd": "xlrd"}
 
-    # Check for xlrd (optional, for .xls file support)
-    try:
-        import xlrd
+    for import_name, pip_name in optional_packages.items():
+        try:
+            __import__(import_name)
+            optional_modules.append(import_name)
+            print(f"✅ {import_name} found (optional - for .xls file support)")
+        except ImportError:
+            print(f"⚠️  {import_name} not found (optional - for .xls file support)")
 
-        optional_modules.append("xlrd")
-        print("✅ xlrd found (for .xls file support)")
-    except ImportError:
-        print("⚠️  xlrd not found (optional - for .xls file support)")
+    print("=" * 60)
+    print(f"📦 Building EXE with Nuitka from: {project_root}")
+    print("=" * 60)
 
     # Nuitka command
     # Nuitka compiles to C++ and creates a standalone executable

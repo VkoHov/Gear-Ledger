@@ -116,9 +116,20 @@ class ProcessManager:
     def _finish_main_process(self, res: Dict[str, Any] | None):
         """Clean up main process."""
         if self.proc_main:
-            if self.proc_main.is_alive():
-                self.proc_main.join(timeout=0.2)
-            self.proc_main.close()
+            try:
+                if self.proc_main.is_alive():
+                    # Try to join with timeout (wait for process to finish naturally)
+                    self.proc_main.join(timeout=1.0)
+                    # If still alive after join, terminate it
+                    if self.proc_main.is_alive():
+                        self.proc_main.terminate()
+                        self.proc_main.join(timeout=0.5)
+                # Only close if process is not alive
+                if not self.proc_main.is_alive():
+                    self.proc_main.close()
+            except Exception:
+                # Process may already be gone or in invalid state
+                pass
         self.proc_main = None
         self.q_main = None
         self._job_running = False
@@ -126,9 +137,20 @@ class ProcessManager:
     def _finish_fuzzy_process(self, res: Dict[str, Any] | None):
         """Clean up fuzzy process."""
         if self.proc_fuzzy:
-            if self.proc_fuzzy.is_alive():
-                self.proc_fuzzy.join(timeout=0.2)
-            self.proc_fuzzy.close()
+            try:
+                if self.proc_fuzzy.is_alive():
+                    # Try to join with timeout (wait for process to finish naturally)
+                    self.proc_fuzzy.join(timeout=1.0)
+                    # If still alive after join, terminate it
+                    if self.proc_fuzzy.is_alive():
+                        self.proc_fuzzy.terminate()
+                        self.proc_fuzzy.join(timeout=0.5)
+                # Only close if process is not alive
+                if not self.proc_fuzzy.is_alive():
+                    self.proc_fuzzy.close()
+            except Exception:
+                # Process may already be gone or in invalid state
+                pass
         self.proc_fuzzy = None
         self.q_fuzzy = None
         self._fuzzy_running = False

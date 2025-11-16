@@ -629,24 +629,47 @@ class MainWindow(QWidget):
                 self.append_logs([f"[ERROR] Failed to auto-start camera: {e}"])
 
     def _on_weight_ready(self, weight: float):
-        """Handle weight ready from scale - automatically trigger camera capture."""
+        """Handle weight ready from scale - automatically trigger camera capture when weight stabilizes."""
         if not self.settings_widget.validate_catalog():
             self.append_logs(
-                [f"[INFO] Weight ready: {weight:.3f} kg, but no catalog file selected"]
+                [
+                    f"[INFO] Weight stabilized: {weight:.3f} kg, but no catalog file selected"
+                ]
             )
             return
 
+        # If camera is not started, try to start it first
         if not self.camera_widget.cap:
             self.append_logs(
-                [f"[INFO] Weight ready: {weight:.3f} kg, but camera not started"]
+                [f"[INFO] Weight stabilized: {weight:.3f} kg - starting camera..."]
             )
+            try:
+                self.camera_widget.start_camera()
+                self._camera_auto_started = True
+                # Wait a bit for camera to initialize, then capture
+                QTimer.singleShot(1000, lambda: self._capture_after_stable(weight))
+                return
+            except Exception as e:
+                self.append_logs([f"[ERROR] Failed to start camera: {e}"])
+                return
+
+        # Camera is ready, capture immediately
+        self.append_logs(
+            [
+                f"[INFO] Weight stabilized: {weight:.3f} kg - capturing image and running OCR"
+            ]
+        )
+        self.camera_widget.capture_and_run()
+
+    def _capture_after_stable(self, weight: float):
+        """Capture image after camera has started (called with delay)."""
+        if not self.camera_widget.cap:
+            self.append_logs(["[WARNING] Camera not ready for capture"])
             return
 
         self.append_logs(
-            [f"[INFO] Weight stabilized: {weight:.3f} kg - triggering OCR"]
+            [f"[INFO] Camera ready - capturing image for weight: {weight:.3f} kg"]
         )
-
-        # Automatically capture and process
         self.camera_widget.capture_and_run()
 
     def _on_results_path_changed(self, path: str):

@@ -442,17 +442,15 @@ class ScaleWidget(QGroupBox):
                 self.weight_label.setText(f"Weight: {new_weight:.3f} kg")
                 return
 
-            # Only update if weight changed significantly (to avoid noise)
-            # Ignore changes less than 0.001 kg (1 gram)
+            # Only update display/emit signal if weight changed significantly (to avoid noise)
+            # But still check stability even if weight hasn't changed
             weight_diff = abs(new_weight - self.current_weight)
-            if weight_diff < 0.001:
-                return
-
-            self.current_weight = new_weight
-
-            # Update display
-            self.weight_label.setText(f"Weight: {new_weight:.3f} kg")
-            self.weight_changed.emit(new_weight)
+            if weight_diff >= 0.001:  # Weight changed by at least 1 gram
+                self.current_weight = new_weight
+                # Update display
+                self.weight_label.setText(f"Weight: {new_weight:.3f} kg")
+                self.weight_changed.emit(new_weight)
+            # If weight hasn't changed, we still need to check stability below
 
             # Initialize last_stable_weight if this is the first meaningful weight
             if self.last_stable_weight is None:
@@ -464,11 +462,12 @@ class ScaleWidget(QGroupBox):
                 return
 
             # Check for stability (only for non-zero weights)
+            # Use the actual new_weight for stability checking
             if abs(new_weight - self.last_stable_weight) <= self.weight_threshold:
                 if self.stable_start_time is None:
                     self.stable_start_time = time.time()
                     print(
-                        f"[DEBUG] Weight stabilizing: {new_weight:.3f} kg (threshold: {self.weight_threshold} kg)"
+                        f"[DEBUG] Weight stabilizing: {new_weight:.3f} kg (threshold: {self.weight_threshold} kg, diff from stable: {abs(new_weight - self.last_stable_weight):.3f} kg)"
                     )
                 elif time.time() - self.stable_start_time >= self.stable_time:
                     # Weight is stable

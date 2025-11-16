@@ -185,9 +185,15 @@ class ResultsPane(QWidget):
         # Set row height
         self.table.verticalHeader().setDefaultSectionSize(35)
 
-        df = self._read_df_safe(ledger_path)
+        # Start with empty DataFrame to avoid blocking startup
+        # Load actual data asynchronously after UI is ready
+        df = pd.DataFrame(columns=COLUMNS)
         self.model = PandasModel(df, self)
         self.table.setModel(self.model)
+
+        # Load actual data after a short delay (non-blocking)
+        if ledger_path:
+            QTimer.singleShot(200, self.refresh)
 
         # Create main layout with styling
         lay = QVBoxLayout(self)

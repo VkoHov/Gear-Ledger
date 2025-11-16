@@ -305,8 +305,6 @@ class SettingsWidget(QGroupBox):
                     get_default_result_file,
                 )
                 import os
-                import pandas as pd
-                from gearledger.result_ledger import COLUMNS
 
                 settings = load_settings()
                 # Use configured default, or fall back to app data directory
@@ -315,13 +313,21 @@ class SettingsWidget(QGroupBox):
                 else:
                     path = get_default_result_file()
 
-                # Ensure the file exists (create empty if it doesn't)
+                # Ensure the file exists (create empty if it doesn't) - do this lazily
                 if not os.path.exists(path):
                     # Ensure directory exists
                     os.makedirs(os.path.dirname(path), exist_ok=True)
-                    # Create empty DataFrame with column headers
-                    df = pd.DataFrame(columns=COLUMNS)
-                    df.to_excel(path, index=False)
+                    # Create empty file asynchronously to avoid blocking startup
+                    # Import pandas only when needed
+                    try:
+                        import pandas as pd
+                        from gearledger.result_ledger import COLUMNS
+
+                        df = pd.DataFrame(columns=COLUMNS)
+                        df.to_excel(path, index=False)
+                    except Exception:
+                        # If pandas fails, just create empty file - will be created on first write
+                        pass
 
                 # Update the UI with the new path (so it persists for this session)
                 self.results_edit.setText(path)

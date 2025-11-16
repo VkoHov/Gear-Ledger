@@ -3,11 +3,12 @@
 from __future__ import annotations
 import os
 import tempfile
-import cv2
 import numpy as np
 from typing import Callable
 
-from PyQt6.QtCore import Qt, QTimer
+# cv2 will be imported lazily when camera is actually used
+
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtWidgets import (
     QWidget,
@@ -39,6 +40,8 @@ def get_camera_settings():
 
 def open_camera(index: int, w: int, h: int):
     """Open camera with specified settings."""
+    import cv2  # Lazy import - only load when camera is used
+
     cap = cv2.VideoCapture(index)
     if not cap or not cap.isOpened():
         return None
@@ -72,6 +75,7 @@ class CameraWidget(QGroupBox):
         self.timer: QTimer | None = None
         self._last_frame: np.ndarray | None = None
         self._captured_image_path: str | None = None  # Path to captured image
+        self._camera_thread: QThread | None = None  # For async camera opening
 
         # Callbacks
         self.on_capture_callback: Callable[[str], None] | None = None
@@ -166,33 +170,108 @@ class CameraWidget(QGroupBox):
         self.on_capture_callback = callback
 
     def start_camera(self):
-        """Start the camera."""
-        if self.cap:
+        """Start the camera (asynchronously to avoid blocking UI)."""
+        if self.cap or self._camera_thread:
             return
 
         # Clear captured image when starting camera
         self._captured_image_path = None
 
+        # Show loading indicator
+        self.preview.setText("Opening camera...\nPlease wait")
+        self.preview.setStyleSheet(
+            """
+            QLabel {
+                background-color: #2c3e50;
+                color: #f39c12;
+                border: 2px solid #34495e;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+        """
+        )
+
         # Get camera settings from settings manager
         cam_index, cam_width, cam_height = get_camera_settings()
 
-        self.cap = open_camera(cam_index, cam_width, cam_height)
-        if not self.cap:
-            QMessageBox.critical(
-                self,
-                "Camera",
-                f"Failed to open camera (index {cam_index}).\n\n"
-                "Please check:\n"
-                "1. Camera is connected and not in use by another application\n"
-                "2. Camera index is correct (open Settings ⚙️ to change it)\n"
-                "3. Camera permissions are granted",
-            )
-            return
+        # Create worker thread for camera opening (non-blocking)
+        class CameraWorker(QThread):
+            finished = pyqtSignal(object, int)  # cap, cam_index
+            error = pyqtSignal(str, int)  # error_msg, cam_index
+
+            def __init__(self, cam_index, cam_width, cam_height):
+                super().__init__()
+                self.cam_index = cam_index
+                self.cam_width = cam_width
+                self.cam_height = cam_height
+
+            def run(self):
+                try:
+                    cap = open_camera(self.cam_index, self.cam_width, self.cam_height)
+                    if cap:
+                        self.finished.emit(cap, self.cam_index)
+                    else:
+                        self.error.emit("Failed to open camera", self.cam_index)
+                except Exception as e:
+                    self.error.emit(str(e), self.cam_index)
+
+        # Start camera opening in background thread
+        self._camera_thread = CameraWorker(cam_index, cam_width, cam_height)
+        self._camera_thread.finished.connect(self._on_camera_opened)
+        self._camera_thread.error.connect(self._on_camera_error)
+        self._camera_thread.start()
+
+    def _on_camera_opened(self, cap, cam_index):
+        """Handle successful camera opening (called from worker thread)."""
+        self.cap = cap
+        self._camera_thread = None
+
+        # Restore preview styling
+        self.preview.setStyleSheet(
+            """
+            QLabel {
+                background-color: #2c3e50;
+                color: #bdc3c7;
+                border: 2px solid #34495e;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+        """
+        )
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._grab_and_show)
         self.timer.start(30)
         self._update_controls()
+
+    def _on_camera_error(self, error_msg, cam_index):
+        """Handle camera opening error (called from worker thread)."""
+        self._camera_thread = None
+        self.preview.setText("Camera preview")
+        self.preview.setStyleSheet(
+            """
+            QLabel {
+                background-color: #2c3e50;
+                color: #bdc3c7;
+                border: 2px solid #34495e;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+        """
+        )
+        QMessageBox.critical(
+            self,
+            "Camera",
+            f"Failed to open camera (index {cam_index}).\n\n"
+            "Please check:\n"
+            "1. Camera is connected and not in use by another application\n"
+            "2. Camera index is correct (open Settings ⚙️ to change it)\n"
+            "3. Camera permissions are granted\n\n"
+            f"Error: {error_msg}",
+        )
 
     def reset_to_live_feed(self):
         """Reset camera to show live feed (after processing is done)."""
@@ -237,6 +316,8 @@ class CameraWidget(QGroupBox):
             return
 
         # Save frame to temporary file
+        import cv2  # Lazy import
+
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
         try:
             cv2.imwrite(tmp.name, self._last_frame)
@@ -266,6 +347,8 @@ class CameraWidget(QGroupBox):
             return
 
         self._last_frame = frame
+        import cv2  # Lazy import
+
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         qimg = QImage(rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
@@ -280,6 +363,8 @@ class CameraWidget(QGroupBox):
     def _show_captured_image(self, image_path: str):
         """Display the captured image in the preview."""
         try:
+            import cv2  # Lazy import
+
             # Read the captured image
             img = cv2.imread(image_path)
             if img is None:

@@ -5,7 +5,7 @@ import os
 import time
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -52,6 +52,7 @@ class ScaleWidget(QGroupBox):
         self.last_stable_weight = 0.0
         self.stable_start_time = None
         self.is_monitoring = False
+        self._connection_thread: QThread | None = None  # For async connection
 
         # Callbacks
         self.on_weight_ready: Callable[[float], None] | None = None
@@ -173,7 +174,7 @@ class ScaleWidget(QGroupBox):
         self.on_weight_ready = callback
 
     def connect_scale(self):
-        """Connect to the scale."""
+        """Connect to the scale (asynchronously to avoid blocking UI)."""
         port = self.port_combo.currentText().strip()
         if not port:
             QMessageBox.warning(
@@ -193,18 +194,45 @@ class ScaleWidget(QGroupBox):
             )
             return
 
-        # Try to open the port *and* read once, but do NOT fail if no data yet.
-        try:
-            # just a quick “ping” to check we can open the port
-            test = read_weight_once(port, baudrate, timeout=3.0)
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Scale Connection",
-                f"Failed to open port {port}.\n\nError: {e}",
-            )
-            return
+        # Disable connect button and show connecting status
+        self.btn_connect.setEnabled(False)
+        self.status_label.setText("Status: Connecting...")
+        self.status_label.setStyleSheet(
+            """
+            QLabel {
+                font-size: 12px;
+                color: #f39c12;
+                padding: 5px;
+            }
+            """
+        )
 
+        # Create worker thread for connection (non-blocking)
+        class ConnectionWorker(QThread):
+            finished = pyqtSignal(object, str, int)  # result, port, baudrate
+            error = pyqtSignal(str, str, int)  # error_msg, port, baudrate
+
+            def __init__(self, port, baudrate):
+                super().__init__()
+                self.port = port
+                self.baudrate = baudrate
+
+            def run(self):
+                try:
+                    # Reduced timeout from 3.0 to 1.5 seconds for faster connection
+                    test = read_weight_once(self.port, self.baudrate, timeout=1.5)
+                    self.finished.emit(test, self.port, self.baudrate)
+                except Exception as e:
+                    self.error.emit(str(e), self.port, self.baudrate)
+
+        # Start connection in background thread
+        self._connection_thread = ConnectionWorker(port, baudrate)
+        self._connection_thread.finished.connect(self._on_scale_connected)
+        self._connection_thread.error.connect(self._on_scale_connection_error)
+        self._connection_thread.start()
+
+    def _on_scale_connected(self, test, port, baudrate):
+        """Handle successful scale connection (called from worker thread)."""
         # If we got here, the port is OK – even if test is None.
         self.scale_port = port
         self.scale_baudrate = baudrate
@@ -239,6 +267,27 @@ class ScaleWidget(QGroupBox):
         self.monitor_timer.start()
 
         QMessageBox.information(self, "Scale Connected", msg)
+        self._connection_thread = None
+
+    def _on_scale_connection_error(self, error_msg, port, baudrate):
+        """Handle scale connection error (called from worker thread)."""
+        self.btn_connect.setEnabled(True)
+        self.status_label.setText("Status: Disconnected")
+        self.status_label.setStyleSheet(
+            """
+            QLabel {
+                font-size: 12px;
+                color: #7f8c8d;
+                padding: 5px;
+            }
+            """
+        )
+        QMessageBox.critical(
+            self,
+            "Scale Connection",
+            f"Failed to open port {port}.\n\nError: {error_msg}",
+        )
+        self._connection_thread = None
 
     def disconnect_scale(self):
         """Disconnect from the scale."""

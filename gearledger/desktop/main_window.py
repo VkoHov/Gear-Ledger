@@ -63,14 +63,15 @@ class MainWindow(QWidget):
         # Initialize process manager
         self.process_manager = ProcessManager()
 
-        # Initialize widgets
+        # Initialize widgets (lightweight first)
         self._setup_widgets()
         self._setup_connections()
         self._setup_layout()
         self._setup_timers()
 
-        # Initialize state
-        self.append_logs(["Ready."])
+        # Initialize state (non-blocking)
+        # Use QTimer to defer heavy operations
+        QTimer.singleShot(0, lambda: self.append_logs(["Ready."]))
         self._update_controls()
 
         # Apply initial logs visibility setting

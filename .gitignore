@@ -28,5 +28,5 @@ processed/
 # IDE
 .vscode/
 .idea/
-
+dist/
 *.egg-info/

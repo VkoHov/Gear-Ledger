@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 import sys
+from pathlib import Path
 from typing import Dict, Any
 
 from PyQt6.QtCore import Qt, QTimer
@@ -50,12 +51,11 @@ class MainWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GearLedger — desktop (camera)")
+        self.setWindowTitle("Gear Ledger")
         self.resize(1100, 820)
-        try:
-            self.setWindowIcon(QIcon.fromTheme("applications-graphics"))
-        except Exception:
-            pass
+
+        # Try to load icon from file
+        self._set_window_icon()
 
         # Apply global application styling
         self._apply_styling()
@@ -76,6 +76,49 @@ class MainWindow(QWidget):
 
         # Apply initial logs visibility setting
         self._update_logs_visibility()
+
+    def _set_window_icon(self):
+        """Set the window icon from icon.ico or icon.png file if available."""
+        # Try multiple possible locations for icon files
+        possible_paths = [
+            Path(__file__).parent.parent.parent / "icon.ico",  # Project root - ICO
+            Path(__file__).parent.parent.parent / "icon.png",  # Project root - PNG
+            Path.cwd() / "icon.ico",  # Current working directory - ICO
+            Path.cwd() / "icon.png",  # Current working directory - PNG
+            Path(__file__).parent / "icon.ico",  # Desktop folder - ICO
+            Path(__file__).parent / "icon.png",  # Desktop folder - PNG
+        ]
+
+        # Also check if running as EXE (PyInstaller/Nuitka)
+        if hasattr(sys, "_MEIPASS"):  # PyInstaller
+            possible_paths.insert(0, Path(sys._MEIPASS) / "icon.ico")
+            possible_paths.insert(1, Path(sys._MEIPASS) / "icon.png")
+        if hasattr(sys, "_NUITKA_ONEFILE_TEMP"):  # Nuitka onefile
+            possible_paths.insert(0, Path(sys._NUITKA_ONEFILE_TEMP) / "icon.ico")
+            possible_paths.insert(1, Path(sys._NUITKA_ONEFILE_TEMP) / "icon.png")
+
+        # Try to find and load icon
+        for icon_path in possible_paths:
+            if icon_path.exists():
+                try:
+                    self.setWindowIcon(QIcon(str(icon_path)))
+                    return
+                except Exception:
+                    pass
+
+        # Fallback: use application icon if set
+        from PyQt6.QtWidgets import QApplication
+
+        app_icon = QApplication.instance().windowIcon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
+            return
+
+        # Final fallback to system theme icon
+        try:
+            self.setWindowIcon(QIcon.fromTheme("applications-graphics"))
+        except Exception:
+            pass
 
     def _apply_styling(self):
         """Apply global application styling."""
@@ -440,9 +483,29 @@ class MainWindow(QWidget):
         container = QWidget()
         container_layout = QVBoxLayout(container)
 
+        # Scale and Camera side by side with resizable splitter
+        scale_camera_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Set minimum widths to ensure all important info is visible
+        # Scale widget: needs space for port/baudrate controls, weight display, 3 buttons
+        self.scale_widget.setMinimumWidth(350)
+        # Camera widget: needs space for preview and 3 buttons (reduced from 640 to allow flexibility)
+        self.camera_widget.setMinimumWidth(480)
+
+        # Add widgets to splitter with stretch factors
+        scale_camera_splitter.addWidget(self.scale_widget)
+        scale_camera_splitter.addWidget(self.camera_widget)
+
+        # Set stretch factors (camera gets more space initially)
+        scale_camera_splitter.setStretchFactor(0, 1)  # Scale widget
+        scale_camera_splitter.setStretchFactor(1, 2)  # Camera widget
+
+        # Set initial sizes (scale: 30%, camera: 70%)
+        scale_camera_splitter.setSizes([300, 700])
+
+        container_layout.addWidget(scale_camera_splitter)
+
         # Add widgets for automated mode (settings widget is now above tabs)
-        container_layout.addWidget(self.scale_widget)
-        container_layout.addWidget(self.camera_widget)
         container_layout.addWidget(self.results_widget)
         container_layout.addWidget(self.logs_widget_automated, 1)
 
@@ -727,7 +790,7 @@ class MainWindow(QWidget):
         import os
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Application Settings")
+        dlg.setWindowTitle("Gear Ledger - Settings")
         dlg.setMinimumWidth(700)
         dlg.setMinimumHeight(800)
 

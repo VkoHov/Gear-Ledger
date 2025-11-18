@@ -34,6 +34,14 @@ def main():
     print(f"📦 Building EXE from: {project_root}")
     print("=" * 60)
 
+    # Check for icon file
+    icon_path = project_root / "icon.ico"
+    if icon_path.exists():
+        print(f"✅ Found icon file: {icon_path}")
+    else:
+        print("⚠️  No icon.ico found - EXE will use default Windows icon")
+        print("   Place icon.ico in project root to add a custom icon")
+
     # PyInstaller command
     # Using --onedir instead of --onefile for MUCH faster startup on Windows
     # --onefile extracts to temp on every launch (very slow!)
@@ -43,7 +51,14 @@ def main():
         "--name=GearLedger",
         "--windowed",  # No console window
         "--onedir",  # Folder with EXE (faster than onefile on Windows)
-        "--icon=NONE",  # You can add an icon file later if needed
+    ]
+    
+    # Add icon if available
+    if icon_path.exists():
+        cmd.append(f"--icon={icon_path}")
+    
+    # Continue with rest of command
+    cmd.extend([
         f"--add-data=gearledger{os.pathsep}gearledger",  # Include the gearledger package (Windows uses ;)
         "--hidden-import=PyQt6.QtCore",
         "--hidden-import=PyQt6.QtGui",

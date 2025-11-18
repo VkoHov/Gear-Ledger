@@ -47,6 +47,11 @@ hiddenimports = [
     'multiprocessing.dummy',
 ]
 
+# Include icon.ico if it exists
+icon_path = Path('icon.ico')
+if icon_path.exists():
+    datas.append(('icon.ico', '.'))
+
 a = Analysis(
     ['app_desktop.py'],
     pathex=[str(project_root)],
@@ -93,7 +98,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Add icon path here if you have one: 'path/to/icon.ico'
+    icon='icon.ico' if Path('icon.ico').exists() else None,  # Auto-detect icon.ico if present
 )
 
 coll = COLLECT(

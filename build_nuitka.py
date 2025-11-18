@@ -92,6 +92,19 @@ def main():
     print(f"📦 Building EXE with Nuitka from: {project_root}")
     print("=" * 60)
 
+    # Clean previous build (optional but recommended)
+    dist_dir = project_root / "dist"
+    if dist_dir.exists():
+        import shutil
+
+        print(f"🧹 Cleaning previous build in {dist_dir}...")
+        try:
+            shutil.rmtree(dist_dir)
+            print("✅ Previous build cleaned")
+        except Exception as e:
+            print(f"⚠️  Could not clean dist folder: {e}")
+            print("   Continuing anyway...")
+
     # Check for icon file
     icon_path = project_root / "icon.ico"
     if icon_path.exists():

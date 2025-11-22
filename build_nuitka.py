@@ -30,6 +30,31 @@ def main():
     project_root = Path(__file__).parent.absolute()
     os.chdir(project_root)
 
+    # Check if we should use install_dependencies.py first
+    install_script = project_root / "install_dependencies.py"
+    use_install_script = False
+
+    if install_script.exists():
+        # Check if key dependencies are missing
+        try:
+            import PyQt6
+            import pandas
+            import openpyxl
+        except ImportError:
+            use_install_script = True
+
+    if use_install_script:
+        print("=" * 60)
+        print("📦 Installing dependencies from requirements.txt...")
+        print("=" * 60)
+        try:
+            subprocess.check_call([sys.executable, str(install_script)])
+            print()
+        except Exception as e:
+            print(f"⚠️  Auto-install failed: {e}")
+            print("   Continuing with manual dependency check...")
+            print()
+
     print("=" * 60)
     print("📦 Checking and installing required dependencies...")
     print("=" * 60)

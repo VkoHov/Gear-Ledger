@@ -18,6 +18,47 @@ from pathlib import Path
 def main():
     """Build the Windows EXE using PyInstaller."""
 
+    # Get the project root directory
+    project_root = Path(__file__).parent.absolute()
+    os.chdir(project_root)
+
+    # Check if dependencies are installed
+    print("=" * 60)
+    print("📦 Checking dependencies...")
+    print("=" * 60)
+    
+    # Try to import install_dependencies and run it if needed
+    install_script = project_root / "install_dependencies.py"
+    if install_script.exists():
+        try:
+            # Check if key dependencies are missing
+            missing = []
+            try:
+                import PyQt6
+            except ImportError:
+                missing.append("PyQt6")
+            try:
+                import pandas
+            except ImportError:
+                missing.append("pandas")
+            try:
+                import openpyxl
+            except ImportError:
+                missing.append("openpyxl")
+            
+            if missing:
+                print(f"⚠️  Missing dependencies: {', '.join(missing)}")
+                print("📥 Running install_dependencies.py...")
+                subprocess.check_call([sys.executable, str(install_script)])
+                print()
+            else:
+                print("✅ Core dependencies are installed")
+                print()
+        except Exception as e:
+            print(f"⚠️  Could not auto-install dependencies: {e}")
+            print("   Please run: python install_dependencies.py")
+            print()
+
     # Check if PyInstaller is installed
     try:
         import PyInstaller
@@ -26,10 +67,7 @@ def main():
         print("   Installing PyInstaller...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
         print("✅ PyInstaller installed.")
-
-    # Get the project root directory
-    project_root = Path(__file__).parent.absolute()
-    os.chdir(project_root)
+        print()
 
     print(f"📦 Building EXE from: {project_root}")
     print("=" * 60)

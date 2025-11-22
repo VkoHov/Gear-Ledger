@@ -15,7 +15,7 @@ from .config import (
     DEFAULT_VISION_BACKEND,
     OPENAI_VISION_MAX_TOKENS,
 )
-from .excel_utils import try_match_in_excel
+from .excel_utils import try_match_in_excel, ExcelReadError
 from .gpt_utils import (
     get_openai_client,
     rank_with_gpt,
@@ -130,6 +130,7 @@ def process_image(
         match_client = None
         match_artikul = None
         dbg_all: List[str] = []
+        excel_error = None
 
         for vis, _norm_ignored in to_try:
             q = _space_norm(vis)  # exact compare after removing spaces
@@ -138,9 +139,15 @@ def process_image(
             log(info, f"Excel exact (space) try: {vis}  (→ {q})")
 
             # Expect simple exact-compare helper (no fuzzy)
-            client_found, artikul_display, dbg = try_match_in_excel(excel_path, q)
-            if dbg:
-                dbg_all.append(dbg)
+            try:
+                client_found, artikul_display, dbg = try_match_in_excel(excel_path, q)
+                if dbg:
+                    dbg_all.append(dbg)
+            except ExcelReadError as e:
+                # Store Excel error for UI to show popup
+                dbg_all.append(f"Excel read error: {e.error_message}")
+                excel_error = e
+                break
 
             if client_found:
                 match_client, match_artikul = client_found, artikul_display
@@ -324,11 +331,20 @@ def run_fuzzy_match(
         #   (excel_path, normalized, min_fuzzy, allow_fuzzy=True)
         #   (excel_path, normalized, min_fuzzy)
         try:
-            c, a, dbg = try_match_in_excel(
-                excel_path, normalized, min_fuzzy, allow_fuzzy=True
-            )
-        except TypeError:
-            c, a, dbg = try_match_in_excel(excel_path, normalized, min_fuzzy)
+            try:
+                c, a, dbg = try_match_in_excel(
+                    excel_path, normalized, min_fuzzy, allow_fuzzy=True
+                )
+            except TypeError:
+                c, a, dbg = try_match_in_excel(excel_path, normalized, min_fuzzy)
+        except ExcelReadError as e:
+            # Return error for UI to show popup
+            return {
+                "ok": False,
+                "error": f"Excel read error: {e.error_message}",
+                "excel_error": e,
+                "logs": logs,
+            }
 
         if dbg:
             dbg_all.append(dbg)
@@ -343,6 +359,7 @@ def run_fuzzy_match(
                 "match_client": c,
                 "match_artikul": a,
                 "logs": logs,
+                "excel_error": None,
             }
 
     log(warn, "Fuzzy pass did not find a match.")
@@ -354,4 +371,5 @@ def run_fuzzy_match(
         "match_client": None,
         "match_artikul": None,
         "logs": logs,
+        "excel_error": None,
     }

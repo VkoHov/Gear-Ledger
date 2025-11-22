@@ -3,6 +3,15 @@ import os
 import pandas as pd
 
 
+class ExcelReadError(Exception):
+    """Exception raised when Excel file cannot be read."""
+
+    def __init__(self, excel_path: str, error_message: str):
+        self.excel_path = excel_path
+        self.error_message = error_message
+        super().__init__(f"Failed to read Excel file: {error_message}")
+
+
 def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
     """
     Space-stripped, UPPERCASE, EXACT equality only.
@@ -16,8 +25,10 @@ def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
     try:
         df = pd.read_excel(excel_path)
     except Exception as e:
-        debug.append(f"Failed to read Excel: {e}")
-        return (None, None, "\n".join(debug))
+        error_msg = str(e)
+        debug.append(f"Failed to read Excel: {error_msg}")
+        # Raise custom exception so UI can show popup
+        raise ExcelReadError(excel_path, error_msg)
 
     # Try to locate columns
     artikul_col = None

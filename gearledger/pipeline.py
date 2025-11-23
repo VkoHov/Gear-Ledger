@@ -132,30 +132,89 @@ def process_image(
         dbg_all: List[str] = []
         excel_error = None
 
-        for vis, _norm_ignored in to_try:
+        # Debug: Log all candidates we'll try
+        log(step, f"═══════════════════════════════════════")
+        log(step, f"EXCEL MATCHING - Trying {len(to_try)} candidates")
+        log(step, f"═══════════════════════════════════════")
+        for idx, (vis, norm) in enumerate(to_try):
+            space_normed = _space_norm(vis)
+            log(
+                info,
+                f"Candidate [{idx+1}/{len(to_try)}]: '{vis}' → normalized: '{norm}' → space-norm: '{space_normed}'",
+            )
+        log(step, f"═══════════════════════════════════════")
+
+        # Try ALL candidates (don't break early unless we find a match or get an error)
+        for idx, (vis, _norm_ignored) in enumerate(to_try):
             q = _space_norm(vis)  # exact compare after removing spaces
             if not q:
+                log(info, f"[{idx+1}/{len(to_try)}] Skipping empty query from: '{vis}'")
                 continue
-            log(info, f"Excel exact (space) try: {vis}  (→ {q})")
 
-            # Expect simple exact-compare helper (no fuzzy)
-            try:
-                client_found, artikul_display, dbg = try_match_in_excel(excel_path, q)
-                if dbg:
-                    dbg_all.append(dbg)
-            except ExcelReadError as e:
-                # Store Excel error for UI to show popup
-                dbg_all.append(f"Excel read error: {e.error_message}")
-                excel_error = e
+            # If code contains hyphen/dash, try both with and without hyphen
+            queries_to_try = [q]
+            if "-" in vis or "—" in vis or "–" in vis:  # Check for various dash types
+                # Try without hyphen/dash
+                q_no_dash = q.replace("-", "").replace("—", "").replace("–", "")
+                if q_no_dash and q_no_dash != q:
+                    queries_to_try.append(q_no_dash)
+                    log(
+                        info,
+                        f"[{idx+1}/{len(to_try)}] Code has hyphen - will try both: '{q}' and '{q_no_dash}'",
+                    )
+
+            # Try each query variation
+            for query_variant in queries_to_try:
+                log(
+                    step, f"[{idx+1}/{len(to_try)}] Trying: '{vis}' → '{query_variant}'"
+                )
+
+                # Expect simple exact-compare helper (no fuzzy)
+                try:
+                    client_found, artikul_display, dbg = try_match_in_excel(
+                        excel_path, query_variant
+                    )
+                    if dbg:
+                        dbg_all.append(f"\n{'='*50}")
+                        dbg_all.append(
+                            f"ATTEMPT [{idx+1}/{len(to_try)}]: '{vis}' → '{query_variant}'"
+                        )
+                        dbg_all.append(f"{'='*50}")
+                        dbg_all.append(dbg)
+                except ExcelReadError as e:
+                    # Store Excel error for UI to show popup
+                    dbg_all.append(f"\n{'='*50}")
+                    dbg_all.append(
+                        f"ATTEMPT [{idx+1}/{len(to_try)}]: '{vis}' → '{query_variant}'"
+                    )
+                    dbg_all.append(f"{'='*50}")
+                    dbg_all.append(f"Excel read error: {e.error_message}")
+                    excel_error = e
+                    break  # Can't continue if Excel can't be read
+
+                if client_found:
+                    match_client, match_artikul = client_found, artikul_display
+                    best_visible = vis
+                    best_norm = query_variant  # keep what we actually matched against
+                    reason = reason or "excel_space_exact"
+                    log(step, f"✓ MATCH FOUND at candidate [{idx+1}/{len(to_try)}]!")
+                    log(
+                        step,
+                        f"  Excel MATCH → {artikul_display}  | Клиент: {client_found}",
+                    )
+                    break  # Found match, stop trying
+                else:
+                    log(
+                        info,
+                        f"[{idx+1}/{len(to_try)}] No match for '{vis}' → '{query_variant}'",
+                    )
+
+            # If we found a match, break out of outer loop too
+            if match_client:
                 break
 
-            if client_found:
-                match_client, match_artikul = client_found, artikul_display
-                best_visible = vis
-                best_norm = q  # keep what we actually matched against
-                reason = reason or "excel_space_exact"
-                log(step, f"Excel MATCH → {artikul_display}  | Клиент: {client_found}")
-                break
+        if not match_client:
+            log(warn, f"✗ NO MATCH FOUND after trying all {len(to_try)} candidates")
 
         # Prepare fuzzy prompt/candidates for the UI if no match
         prompt_fuzzy = False

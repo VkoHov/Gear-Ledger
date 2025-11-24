@@ -131,7 +131,9 @@ class SettingsWidget(QGroupBox):
             # Validate that the file can be read
             try:
                 # Try to read the file to check if it's corrupted
-                pd.read_excel(fn, nrows=1)  # Just read first row to validate
+                df = pd.read_excel(
+                    fn, nrows=10
+                )  # Read first 10 rows to validate structure
             except Exception as e:
                 error_msg = str(e)
                 # Show user-friendly error popup
@@ -152,6 +154,79 @@ class SettingsWidget(QGroupBox):
                 msg.setStandardButtons(QMessageBox.StandardButton.Ok)
                 msg.exec()
                 return  # Don't set the file path if it's corrupted
+
+            # Validate that the file is not empty (has data rows)
+            if len(df) == 0:
+                file_name = os.path.basename(fn)
+                msg = QMessageBox(self)
+                msg.setIcon(QMessageBox.Icon.Warning)
+                msg.setWindowTitle("Empty Catalog File")
+                msg.setText("The catalog file is empty")
+                msg.setInformativeText(
+                    f"The file '{file_name}' does not contain any data rows.\n\n"
+                    f"Please ensure your Excel file has:\n"
+                    f"• Column headers in the first row\n"
+                    f"• At least one data row with part codes\n\n"
+                    f"The file appears to be empty or only contains headers."
+                )
+                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg.exec()
+                return  # Don't set the file path if it's empty
+
+            # Validate that the file has required columns
+            artikul_col = None
+            client_col = None
+
+            # Check for artikul/part-code column (required)
+            for c in df.columns:
+                lc = str(c).strip().lower()
+                if artikul_col is None and any(
+                    k in lc
+                    for k in [
+                        "номер",
+                        "арт",
+                        "artikul",
+                        "article",
+                        "part",
+                        "sku",
+                        "code",
+                        "number",
+                    ]
+                ):
+                    artikul_col = c
+                if client_col is None and any(
+                    k in lc
+                    for k in ["клиент", "client", "name", "buyer", "vendor", "customer"]
+                ):
+                    client_col = c
+
+            # Check exact names (prioritize Номер over Артикул)
+            if "Номер" in df.columns:
+                artikul_col = "Номер"
+            elif "Артикул" in df.columns:
+                artikul_col = "Артикул"
+            if "Клиент" in df.columns:
+                client_col = "Клиент"
+
+            # Validate required column exists
+            if not artikul_col:
+                file_name = os.path.basename(fn)
+                msg = QMessageBox(self)
+                msg.setIcon(QMessageBox.Icon.Warning)
+                msg.setWindowTitle("Invalid Catalog File")
+                msg.setText("The catalog file is missing required columns")
+                msg.setInformativeText(
+                    f"The file '{file_name}' does not contain a part code column.\n\n"
+                    f"Required column (one of):\n"
+                    f"• Номер / Артикул\n"
+                    f"• номер / арт / artikul / article / part / sku / code / number\n\n"
+                    f"Optional column:\n"
+                    f"• Клиент / client / name / buyer / vendor / customer\n\n"
+                    f"Please check your Excel file and ensure it has the correct column headers."
+                )
+                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg.exec()
+                return  # Don't set the file path if it's missing required columns
 
             # File is valid, set it
             self.catalog_edit.setText(fn)

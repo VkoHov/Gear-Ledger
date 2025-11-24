@@ -1292,6 +1292,9 @@ class MainWindow(QWidget):
                 ledger_path = self.settings_widget.get_results_path()
 
                 if client and artikul:
+                    # Speak the match
+                    speak_match(artikul, client)
+
                     # Validate weight price before recording
                     if not self.settings_widget.is_weight_price_valid():
                         error_msg = (
@@ -1352,6 +1355,9 @@ class MainWindow(QWidget):
                     self.append_logs(
                         [f"[INFO] No match found for manual code: {part_code}"]
                     )
+                    # Speak that no match was found
+                    speak(f"No match found for code: {_spell_code(part_code)}.")
+
                     from PyQt6.QtWidgets import QMessageBox
 
                     QMessageBox.information(

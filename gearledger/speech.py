@@ -3,30 +3,60 @@
 import sys
 import subprocess
 
-try:
-    import pyttsx3
+# Don't initialize engine at module level - create it on demand
+_ENGINE_AVAILABLE = None
 
-    _ENGINE = pyttsx3.init()
-except Exception:
-    _ENGINE = None
+
+def _get_engine():
+    """Get or create a pyttsx3 engine instance."""
+    global _ENGINE_AVAILABLE
+    try:
+        import pyttsx3
+
+        if _ENGINE_AVAILABLE is None:
+            # Check if pyttsx3 is available
+            try:
+                test_engine = pyttsx3.init()
+                test_engine.stop()  # Clean up test engine
+                _ENGINE_AVAILABLE = True
+            except Exception:
+                _ENGINE_AVAILABLE = False
+                return None
+
+        if _ENGINE_AVAILABLE:
+            # Create a new engine instance each time to avoid issues
+            engine = pyttsx3.init()
+            return engine
+    except Exception:
+        _ENGINE_AVAILABLE = False
+    return None
 
 
 def speak(text: str):
     if not text:
         return
-    if _ENGINE:
+
+    # Try pyttsx3 first
+    engine = _get_engine()
+    if engine:
         try:
-            _ENGINE.say(text)
-            _ENGINE.runAndWait()
+            engine.say(text)
+            engine.runAndWait()
+            engine.stop()  # Clean up after use
             return
         except Exception:
+            # If engine fails, try fallback
             pass
+
+    # Fallback to system speech (macOS say command)
     if sys.platform == "darwin":
         try:
             subprocess.run(["say", text], check=False)
             return
         except Exception:
             pass
+
+    # Final fallback: print to console
     print(f"[SPEAK] {text}")
 
 

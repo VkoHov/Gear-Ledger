@@ -852,6 +852,42 @@ class MainWindow(QWidget):
         if result is not None:
             self._finish_fuzzy_process(result)
 
+    def _show_excel_error_popup(self, excel_error: dict | Any) -> bool:
+        """
+        Show user-friendly popup for Excel read errors.
+        Returns True if popup was shown, False otherwise.
+        """
+        if not excel_error:
+            return False
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        # excel_error is now a dict (not exception object) due to multiprocessing
+        excel_path = (
+            excel_error.get("excel_path", "")
+            if isinstance(excel_error, dict)
+            else excel_error.excel_path
+        )
+        # Get just the filename for cleaner display
+        file_name = os.path.basename(excel_path) if excel_path else "Unknown file"
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Excel File Problem")
+        msg.setText("The catalog file cannot be opened")
+        msg.setInformativeText(
+            f"The file '{file_name}' appears to be corrupted or in an unsupported format.\n\n"
+            f"To fix this:\n\n"
+            f"1. Open the file in Microsoft Excel or LibreOffice\n"
+            f"2. If it opens, click File → Save As\n"
+            f"3. Choose 'Excel Workbook (.xlsx)' as the format\n"
+            f"4. Save the file\n"
+            f"5. Select the new .xlsx file as Catalog"
+        )
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.exec()
+        return True
+
     def _finish_main_process(self, res: Dict[str, Any] | None):
         """Handle completion of main processing job."""
         self.poll_main_timer.stop()
@@ -872,34 +908,7 @@ class MainWindow(QWidget):
         self.append_logs(res.get("logs"))
 
         # Check for Excel read error FIRST (before generic error handler)
-        excel_error = res.get("excel_error")
-        if excel_error:
-            from PyQt6.QtWidgets import QMessageBox
-
-            # excel_error is now a dict (not exception object) due to multiprocessing
-            excel_path = (
-                excel_error.get("excel_path", "")
-                if isinstance(excel_error, dict)
-                else excel_error.excel_path
-            )
-            # Get just the filename for cleaner display
-            file_name = os.path.basename(excel_path) if excel_path else "Unknown file"
-
-            msg = QMessageBox(self)
-            msg.setIcon(QMessageBox.Icon.Warning)
-            msg.setWindowTitle("Excel File Problem")
-            msg.setText("The catalog file cannot be opened")
-            msg.setInformativeText(
-                f"The file '{file_name}' appears to be corrupted or in an unsupported format.\n\n"
-                f"To fix this:\n\n"
-                f"1. Open the file in Microsoft Excel or LibreOffice\n"
-                f"2. If it opens, click File → Save As\n"
-                f"3. Choose 'Excel Workbook (.xlsx)' as the format\n"
-                f"4. Save the file\n"
-                f"5. Select the new .xlsx file as Catalog"
-            )
-            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            msg.exec()
+        if self._show_excel_error_popup(res.get("excel_error")):
             return
 
         # Handle other errors (non-Excel)
@@ -999,35 +1008,7 @@ class MainWindow(QWidget):
             from PyQt6.QtWidgets import QMessageBox
 
             # Check if it's an Excel read error
-            excel_error = res.get("excel_error")
-            if excel_error:
-                # excel_error is now a dict (not exception object) due to multiprocessing
-                excel_path = (
-                    excel_error.get("excel_path", "")
-                    if isinstance(excel_error, dict)
-                    else excel_error.excel_path
-                )
-                # Get just the filename for cleaner display
-                file_name = (
-                    os.path.basename(excel_path) if excel_path else "Unknown file"
-                )
-
-                msg = QMessageBox(self)
-                msg.setIcon(QMessageBox.Icon.Warning)
-                msg.setWindowTitle("Excel File Problem")
-                msg.setText("The catalog file cannot be opened")
-                msg.setInformativeText(
-                    f"The file '{file_name}' appears to be corrupted or in an unsupported format.\n\n"
-                    f"To fix this:\n\n"
-                    f"1. Open the file in Microsoft Excel or LibreOffice\n"
-                    f"2. If it opens, click File → Save As\n"
-                    f"3. Choose 'Excel Workbook (.xlsx)' as the format\n"
-                    f"4. Save the file\n"
-                    f"5. Select the new .xlsx file in Settings"
-                )
-                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-                msg.exec()
-            else:
+            if not self._show_excel_error_popup(res.get("excel_error")):
                 QMessageBox.critical(
                     self,
                     "Search Failed",
@@ -1265,35 +1246,7 @@ class MainWindow(QWidget):
                 from PyQt6.QtWidgets import QMessageBox
 
                 # Check if it's an Excel read error
-                excel_error = result.get("excel_error")
-                if excel_error:
-                    # excel_error is now a dict (not exception object) due to multiprocessing
-                    excel_path = (
-                        excel_error.get("excel_path", "")
-                        if isinstance(excel_error, dict)
-                        else excel_error.excel_path
-                    )
-                    # Get just the filename for cleaner display
-                    file_name = (
-                        os.path.basename(excel_path) if excel_path else "Unknown file"
-                    )
-
-                    msg = QMessageBox(self)
-                    msg.setIcon(QMessageBox.Icon.Warning)
-                    msg.setWindowTitle("Excel File Problem")
-                    msg.setText("The catalog file cannot be opened")
-                    msg.setInformativeText(
-                        f"The file '{file_name}' appears to be corrupted or in an unsupported format.\n\n"
-                        f"To fix this:\n\n"
-                        f"1. Open the file in Microsoft Excel or LibreOffice\n"
-                        f"2. If it opens, click File → Save As\n"
-                        f"3. Choose 'Excel Workbook (.xlsx)' as the format\n"
-                        f"4. Save the file\n"
-                        f"5. Select the new .xlsx file in Settings"
-                    )
-                    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-                    msg.exec()
-                else:
+                if not self._show_excel_error_popup(result.get("excel_error")):
                     QMessageBox.critical(
                         self,
                         "Search Failed",

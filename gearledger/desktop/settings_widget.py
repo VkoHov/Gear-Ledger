@@ -119,7 +119,8 @@ class SettingsWidget(QGroupBox):
 
     def pick_catalog_excel(self):
         """Open file dialog to select catalog Excel file."""
-        from PyQt6.QtWidgets import QFileDialog
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        import pandas as pd
 
         fn, _ = QFileDialog.getOpenFileName(
             self,
@@ -127,6 +128,32 @@ class SettingsWidget(QGroupBox):
             filter="Excel (*.xlsx *.xlsm *.xls);;All files (*)",
         )
         if fn:
+            # Validate that the file can be read
+            try:
+                # Try to read the file to check if it's corrupted
+                pd.read_excel(fn, nrows=1)  # Just read first row to validate
+            except Exception as e:
+                error_msg = str(e)
+                # Show user-friendly error popup
+                file_name = os.path.basename(fn)
+                msg = QMessageBox(self)
+                msg.setIcon(QMessageBox.Icon.Warning)
+                msg.setWindowTitle("Excel File Problem")
+                msg.setText("The catalog file cannot be opened")
+                msg.setInformativeText(
+                    f"The file '{file_name}' appears to be corrupted or in an unsupported format.\n\n"
+                    f"To fix this:\n\n"
+                    f"1. Open the file in Microsoft Excel or LibreOffice\n"
+                    f"2. If it opens, click File → Save As\n"
+                    f"3. Choose 'Excel Workbook (.xlsx)' as the format\n"
+                    f"4. Save the file\n"
+                    f"5. Select the new .xlsx file as Catalog"
+                )
+                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg.exec()
+                return  # Don't set the file path if it's corrupted
+
+            # File is valid, set it
             self.catalog_edit.setText(fn)
             if self.on_catalog_changed:
                 self.on_catalog_changed(fn)

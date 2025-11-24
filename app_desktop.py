@@ -68,6 +68,55 @@ def main():
     # Set application icon if available
     _set_application_icon(app)
 
+    # Validate API key if OpenAI backend is selected (after QApplication is created)
+    if settings.vision_backend == "openai" and settings.openai_api_key:
+
+        def _validate_openai_api_key(api_key: str) -> tuple[bool, str]:
+            """Validate OpenAI API key by making a test API call."""
+            if not api_key:
+                return False, "API key is empty"
+
+            if not api_key.startswith("sk-"):
+                return False, "API key format is invalid (should start with 'sk-')"
+
+            try:
+                from openai import OpenAI
+
+                client = OpenAI(api_key=api_key)
+                # Try with limit first (newer API versions), fallback without limit
+                try:
+                    list(client.models.list(limit=1))
+                except TypeError:
+                    # If limit is not supported, try without it
+                    list(client.models.list())
+                return True, ""
+            except Exception as e:
+                error_msg = str(e)
+                if "Invalid API key" in error_msg or "Incorrect API key" in error_msg:
+                    return (
+                        False,
+                        "Invalid API key. Please check your key and try again.",
+                    )
+                elif "authentication" in error_msg.lower() or "401" in error_msg:
+                    return False, "Authentication failed. Please check your API key."
+                else:
+                    return (
+                        True,
+                        f"Warning: Could not verify API key ({error_msg[:100]})",
+                    )
+
+        is_valid, error_msg = _validate_openai_api_key(settings.openai_api_key)
+
+        if not is_valid:
+            QMessageBox.critical(
+                None,
+                "Invalid API Key",
+                f"Your OpenAI API key appears to be invalid:\n\n{error_msg}\n\n"
+                "Please update it in Settings.\n\n"
+                "You can get your API key from: https://platform.openai.com/api-keys",
+            )
+            # Continue anyway - user can fix it in settings
+
     # Show settings dialog on first launch if API key is missing and using OpenAI
     if not settings.openai_api_key and settings.vision_backend == "openai":
         from gearledger.desktop.settings_page import SettingsPage
@@ -104,6 +153,10 @@ def main():
 
     win = MainWindow()
     win.show()
+
+    # Check if catalog file is required and not set
+    win._ensure_catalog_file()
+
     sys.exit(app.exec())
 
 

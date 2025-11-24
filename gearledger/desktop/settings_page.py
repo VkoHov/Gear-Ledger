@@ -421,6 +421,47 @@ class SettingsPage(QWidget):
                 self, "Scale Test", f"Failed to connect to scale:\n{str(e)}"
             )
 
+    def _validate_openai_api_key(self, api_key: str) -> tuple[bool, str]:
+        """
+        Validate OpenAI API key by making a test API call.
+        Returns (is_valid, error_message).
+        """
+        if not api_key:
+            return False, "API key is empty"
+
+        # Basic format check
+        if not api_key.startswith("sk-"):
+            return False, "API key format is invalid (should start with 'sk-')"
+
+        # Test API key by making a simple request
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=api_key)
+            # Make a minimal API call to validate the key
+            # Using models.list() without limit for better compatibility
+            # This is lightweight and doesn't consume credits
+            try:
+                # Try with limit first (newer API versions)
+                list(client.models.list(limit=1))
+            except (TypeError, AttributeError):
+                # If limit is not supported, try without it
+                list(client.models.list())
+            return True, ""
+        except Exception as e:
+            error_msg = str(e)
+            if "Invalid API key" in error_msg or "Incorrect API key" in error_msg:
+                return False, "Invalid API key. Please check your key and try again."
+            elif "rate limit" in error_msg.lower():
+                # Rate limit is OK - key is valid but we hit rate limit
+                return True, ""
+            elif "authentication" in error_msg.lower() or "401" in error_msg:
+                return False, "Authentication failed. Please check your API key."
+            else:
+                # Other errors (network, etc.) - assume key might be valid
+                # Don't block saving, but warn user
+                return True, f"Warning: Could not verify API key ({error_msg[:100]})"
+
     def _on_save(self):
         """Save settings and apply them."""
         # Validate API key if OpenAI backend is selected
@@ -437,6 +478,54 @@ class SettingsPage(QWidget):
                 )
                 if reply != QMessageBox.StandardButton.Yes:
                     return
+            else:
+                # Validate the API key
+                from PyQt6.QtWidgets import QMessageBox, QProgressDialog
+
+                # Show progress dialog while validating
+                progress = QProgressDialog("Validating API key...", None, 0, 0, self)
+                progress.setWindowTitle("Validating API Key")
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
+                progress.setCancelButton(None)  # Can't cancel
+                progress.setMinimumDuration(0)
+                progress.show()
+
+                # Process events to show progress dialog
+                from PyQt6.QtWidgets import QApplication
+
+                QApplication.processEvents()
+
+                is_valid, error_msg = self._validate_openai_api_key(api_key)
+                progress.close()
+
+                if not is_valid:
+                    QMessageBox.critical(
+                        self,
+                        "Invalid API Key",
+                        f"Failed to validate OpenAI API key:\n\n{error_msg}\n\n"
+                        "Please check your API key and try again.\n\n"
+                        "You can get your API key from: https://platform.openai.com/api-keys",
+                    )
+                    return
+                elif error_msg:  # Warning but valid
+                    reply = QMessageBox.warning(
+                        self,
+                        "API Key Validation Warning",
+                        f"API key validation completed with a warning:\n\n{error_msg}\n\n"
+                        "The key may be valid, but verification failed.\n"
+                        "Continue anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes,
+                    )
+                    if reply != QMessageBox.StandardButton.Yes:
+                        return
+                else:
+                    # Success
+                    QMessageBox.information(
+                        self,
+                        "API Key Valid",
+                        "OpenAI API key validated successfully!",
+                    )
 
         # Update settings object
         self.settings.openai_api_key = self.api_key_edit.text().strip()

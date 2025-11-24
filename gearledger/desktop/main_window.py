@@ -371,6 +371,7 @@ class MainWindow(QWidget):
         self.camera_widget.set_capture_callback(self._on_camera_capture)
 
         # Settings callbacks
+        self.settings_widget.set_catalog_changed_callback(self._on_catalog_path_changed)
         self.settings_widget.set_results_changed_callback(self._on_results_path_changed)
         self.settings_widget.set_manual_entry_requested_callback(
             self._on_manual_entry_requested
@@ -631,14 +632,18 @@ class MainWindow(QWidget):
         self.poll_fuzzy_timer.timeout.connect(self._poll_fuzzy_queue)
 
     def _update_controls(self):
-        """Update control states based on process status."""
+        """Update control states based on process status and catalog availability."""
         busy = self.process_manager.any_running
+        catalog_valid = self.settings_widget.validate_catalog()
 
         # Update all widgets
-        self.settings_widget.set_controls_enabled(not busy)
-        self.camera_widget.set_controls_enabled(not busy)
-        self.results_widget.set_controls_enabled(not busy)
-        self.scale_widget.set_controls_enabled(not busy)
+        self.settings_widget.set_controls_enabled(
+            True
+        )  # Always allow catalog selection
+        # Only enable functionality if catalog is valid and not busy
+        self.camera_widget.set_controls_enabled(not busy and catalog_valid)
+        self.results_widget.set_controls_enabled(not busy and catalog_valid)
+        self.scale_widget.set_controls_enabled(not busy and catalog_valid)
 
     def _on_camera_capture(self, image_path: str):
         """Handle camera capture and start processing."""
@@ -778,6 +783,120 @@ class MainWindow(QWidget):
             self.camera_widget.capture_and_run()
         except Exception as e:
             self.append_logs([f"[ERROR] Failed to capture after delay: {e}"])
+
+    def _ensure_catalog_file(self):
+        """Ensure catalog file is selected before allowing app functionality."""
+        if not self.settings_widget.validate_catalog():
+            # Show blocking dialog to force catalog selection
+            from PyQt6.QtWidgets import (
+                QMessageBox,
+                QDialog,
+                QVBoxLayout,
+                QLabel,
+                QPushButton,
+            )
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Gear Ledger - Catalog Required")
+            dlg.setModal(True)
+            dlg.setMinimumWidth(500)
+
+            layout = QVBoxLayout(dlg)
+            layout.setSpacing(15)
+
+            # Icon and message
+            icon_label = QLabel("📋")
+            icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon_label.setStyleSheet("font-size: 48px;")
+            layout.addWidget(icon_label)
+
+            title = QLabel("Catalog File Required")
+            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title.setStyleSheet("font-size: 18px; font-weight: bold; color: #2c3e50;")
+            layout.addWidget(title)
+
+            message = QLabel(
+                "Please select a Catalog Excel file to continue.\n\n"
+                "The catalog file contains the part codes and client information\n"
+                "needed for matching scanned items."
+            )
+            message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            message.setWordWrap(True)
+            message.setStyleSheet("font-size: 12px; color: #7f8c8d; padding: 10px;")
+            layout.addWidget(message)
+
+            # Button to open file dialog
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch()
+
+            select_btn = QPushButton("Select Catalog File")
+            select_btn.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #3498db;
+                    color: white;
+                    font-weight: bold;
+                    padding: 10px 20px;
+                    border-radius: 5px;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #2980b9;
+                }
+                """
+            )
+            select_btn.clicked.connect(lambda: self._select_catalog_from_dialog(dlg))
+            btn_layout.addWidget(select_btn)
+            btn_layout.addStretch()
+
+            layout.addLayout(btn_layout)
+
+            # Disable functionality until catalog is set
+            self._disable_app_functionality()
+
+            # Show dialog (blocking)
+            dlg.exec()
+
+    def _select_catalog_from_dialog(self, dialog: QDialog):
+        """Open catalog file selection from the required dialog."""
+        # Trigger the catalog selection
+        self.settings_widget.pick_catalog_excel()
+
+        # Check if catalog is now valid
+        if self.settings_widget.validate_catalog():
+            # Catalog is set, close dialog and enable functionality
+            dialog.accept()
+            self._enable_app_functionality()
+            self.append_logs(
+                ["[INFO] Catalog file selected. App functionality enabled."]
+            )
+        # If not valid, dialog stays open (user can try again or cancel)
+
+    def _enable_app_functionality(self):
+        """Enable all app functionality when catalog is set."""
+        # Enable all widgets (unless processing is running)
+        busy = self.process_manager.any_running
+        self.settings_widget.set_controls_enabled(True)  # Always allow catalog change
+        self.camera_widget.set_controls_enabled(not busy)
+        self.results_widget.set_controls_enabled(not busy)
+        self.scale_widget.set_controls_enabled(not busy)
+
+    def _disable_app_functionality(self):
+        """Disable app functionality when catalog is not set."""
+        # Disable functionality widgets, but keep catalog selection enabled
+        self.camera_widget.set_controls_enabled(False)
+        self.results_widget.set_controls_enabled(False)
+        self.scale_widget.set_controls_enabled(False)
+        # Settings widget catalog selection should remain enabled
+
+    def _on_catalog_path_changed(self, path: str):
+        """Handle catalog path change - enable functionality when catalog is set."""
+        if path and os.path.exists(path):
+            # Catalog is set and valid, enable all functionality
+            self._enable_app_functionality()
+        else:
+            # Catalog is invalid or removed, disable functionality
+            self._disable_app_functionality()
 
     def _on_results_path_changed(self, path: str):
         """Handle results path change."""

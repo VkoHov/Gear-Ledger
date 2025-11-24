@@ -213,6 +213,25 @@ def process_image(
             if match_client:
                 break
 
+        # Check if Excel read error occurred - return early with error
+        if excel_error:
+            log(warn, f"Excel read error occurred: {excel_error.error_message}")
+            logs.append("[MATCH DEBUG] ------------------")
+            for chunk in dbg_all:
+                if chunk:
+                    logs.append(chunk)
+            logs.append("---------- end MATCH DEBUG -----")
+            # Pass error info as dict (not exception object) for multiprocessing queue
+            return {
+                "ok": False,
+                "error": f"Excel read error: {excel_error.error_message}",
+                "excel_error": {
+                    "excel_path": excel_error.excel_path,
+                    "error_message": excel_error.error_message,
+                },
+                "logs": logs,
+            }
+
         if not match_client:
             log(warn, f"✗ NO MATCH FOUND after trying all {len(to_try)} candidates")
 
@@ -261,6 +280,7 @@ def process_image(
             "logs": logs,
             "prompt_fuzzy": prompt_fuzzy,
             "cand_order": cand_order,
+            "excel_error": None,  # Explicitly set to None when no error
         }
 
     # ------------------- PADDLE → GPT PATH -------------------
@@ -398,10 +418,14 @@ def run_fuzzy_match(
                 c, a, dbg = try_match_in_excel(excel_path, normalized, min_fuzzy)
         except ExcelReadError as e:
             # Return error for UI to show popup
+            # Pass error info as dict (not exception object) for multiprocessing queue
             return {
                 "ok": False,
                 "error": f"Excel read error: {e.error_message}",
-                "excel_error": e,
+                "excel_error": {
+                    "excel_path": e.excel_path,
+                    "error_message": e.error_message,
+                },
                 "logs": logs,
             }
 

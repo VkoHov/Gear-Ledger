@@ -870,19 +870,20 @@ class MainWindow(QWidget):
 
         # Handle main result
         self.append_logs(res.get("logs"))
-        if not res.get("ok"):
-            from PyQt6.QtWidgets import QMessageBox
 
-            QMessageBox.critical(self, "Run failed", str(res.get("error")))
-            return
-
-        # Check for Excel read error and show popup
+        # Check for Excel read error FIRST (before generic error handler)
         excel_error = res.get("excel_error")
         if excel_error:
             from PyQt6.QtWidgets import QMessageBox
 
+            # excel_error is now a dict (not exception object) due to multiprocessing
+            excel_path = (
+                excel_error.get("excel_path", "")
+                if isinstance(excel_error, dict)
+                else excel_error.excel_path
+            )
             # Get just the filename for cleaner display
-            file_name = os.path.basename(excel_error.excel_path)
+            file_name = os.path.basename(excel_path) if excel_path else "Unknown file"
 
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Icon.Warning)
@@ -899,6 +900,13 @@ class MainWindow(QWidget):
             )
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             msg.exec()
+            return
+
+        # Handle other errors (non-Excel)
+        if not res.get("ok"):
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(self, "Run failed", str(res.get("error")))
             return
 
         # Update result fields
@@ -993,8 +1001,16 @@ class MainWindow(QWidget):
             # Check if it's an Excel read error
             excel_error = res.get("excel_error")
             if excel_error:
+                # excel_error is now a dict (not exception object) due to multiprocessing
+                excel_path = (
+                    excel_error.get("excel_path", "")
+                    if isinstance(excel_error, dict)
+                    else excel_error.excel_path
+                )
                 # Get just the filename for cleaner display
-                file_name = os.path.basename(excel_error.excel_path)
+                file_name = (
+                    os.path.basename(excel_path) if excel_path else "Unknown file"
+                )
 
                 msg = QMessageBox(self)
                 msg.setIcon(QMessageBox.Icon.Warning)
@@ -1251,8 +1267,16 @@ class MainWindow(QWidget):
                 # Check if it's an Excel read error
                 excel_error = result.get("excel_error")
                 if excel_error:
+                    # excel_error is now a dict (not exception object) due to multiprocessing
+                    excel_path = (
+                        excel_error.get("excel_path", "")
+                        if isinstance(excel_error, dict)
+                        else excel_error.excel_path
+                    )
                     # Get just the filename for cleaner display
-                    file_name = os.path.basename(excel_error.excel_path)
+                    file_name = (
+                        os.path.basename(excel_path) if excel_path else "Unknown file"
+                    )
 
                     msg = QMessageBox(self)
                     msg.setIcon(QMessageBox.Icon.Warning)

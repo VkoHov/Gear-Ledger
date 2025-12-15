@@ -37,6 +37,7 @@ class Settings:
     default_min_fuzzy: int = 70
     default_result_file: str = ""  # Default result file path (empty = auto-generate)
     show_logs: bool = True  # Show/hide logs widget in both tabs
+    language: str = "en"  # UI language: "en" or "ru"
 
 
 def ensure_dirs():

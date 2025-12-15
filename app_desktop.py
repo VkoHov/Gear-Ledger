@@ -63,6 +63,11 @@ def main():
     os.environ["CAM_HEIGHT"] = str(settings.cam_height)
     os.environ["VISION_BACKEND"] = settings.vision_backend
 
+    # Load language setting
+    from gearledger.desktop.translations import set_current_language
+
+    set_current_language(settings.language)
+
     app = QApplication(sys.argv)
 
     # Set application icon if available

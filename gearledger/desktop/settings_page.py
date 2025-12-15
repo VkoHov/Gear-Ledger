@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from .settings_manager import Settings, save_settings, load_settings
+from .translations import tr
 
 
 class SettingsPage(QWidget):
@@ -41,7 +42,7 @@ class SettingsPage(QWidget):
         main_layout.setSpacing(0)
 
         # Title (fixed at top)
-        title = QLabel("Application Settings")
+        title = QLabel(tr("application_settings"))
         title.setStyleSheet(
             """
             QLabel {
@@ -76,10 +77,10 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
 
         # OpenAI API Settings
-        openai_group = QGroupBox("OpenAI API Configuration")
+        openai_group = QGroupBox(tr("openai_api_configuration"))
         openai_layout = QVBoxLayout(openai_group)
 
-        openai_layout.addWidget(QLabel("OpenAI API Key (required for GPT vision):"))
+        openai_layout.addWidget(QLabel(tr("openai_api_key_label")))
         self.api_key_edit = QLineEdit()
         self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key_edit.setPlaceholderText("sk-...")
@@ -87,7 +88,7 @@ class SettingsPage(QWidget):
 
         # Show/Hide API key button
         api_btn_layout = QHBoxLayout()
-        self.show_api_btn = QPushButton("Show")
+        self.show_api_btn = QPushButton(tr("show"))
         self.show_api_btn.setMaximumWidth(80)
         self.show_api_btn.clicked.connect(self._toggle_api_key_visibility)
         api_btn_layout.addWidget(self.show_api_btn)
@@ -96,12 +97,12 @@ class SettingsPage(QWidget):
 
         # Vision backend and model
         backend_layout = QHBoxLayout()
-        backend_layout.addWidget(QLabel("Vision Backend:"))
+        backend_layout.addWidget(QLabel(tr("vision_backend")))
         self.backend_combo = QComboBox()
         self.backend_combo.addItems(["openai", "paddle"])
         backend_layout.addWidget(self.backend_combo)
 
-        backend_layout.addWidget(QLabel("Model:"))
+        backend_layout.addWidget(QLabel(tr("model")))
         self.model_combo = QComboBox()
         self.model_combo.addItems(["gpt-4o-mini", "gpt-4o"])
         backend_layout.addWidget(self.model_combo)
@@ -111,21 +112,21 @@ class SettingsPage(QWidget):
         layout.addWidget(openai_group)
 
         # Camera Settings
-        camera_group = QGroupBox("Camera Configuration")
+        camera_group = QGroupBox(tr("camera_configuration"))
         camera_layout = QVBoxLayout(camera_group)
 
         cam_row = QHBoxLayout()
-        cam_row.addWidget(QLabel("Camera Index:"))
+        cam_row.addWidget(QLabel(tr("camera_index")))
         self.cam_index_spin = QSpinBox()
         self.cam_index_spin.setRange(0, 10)
         cam_row.addWidget(self.cam_index_spin)
 
-        cam_row.addWidget(QLabel("Width:"))
+        cam_row.addWidget(QLabel(tr("width")))
         self.cam_width_spin = QSpinBox()
         self.cam_width_spin.setRange(160, 3840)
         cam_row.addWidget(self.cam_width_spin)
 
-        cam_row.addWidget(QLabel("Height:"))
+        cam_row.addWidget(QLabel(tr("height")))
         self.cam_height_spin = QSpinBox()
         self.cam_height_spin.setRange(120, 2160)
         cam_row.addWidget(self.cam_height_spin)
@@ -133,36 +134,36 @@ class SettingsPage(QWidget):
         camera_layout.addLayout(cam_row)
 
         # Test camera button
-        test_cam_btn = QPushButton("Test Camera")
+        test_cam_btn = QPushButton(tr("test_camera"))
         test_cam_btn.clicked.connect(self._test_camera)
         camera_layout.addWidget(test_cam_btn)
 
         layout.addWidget(camera_group)
 
         # Scale Settings
-        scale_group = QGroupBox("Scale Configuration")
+        scale_group = QGroupBox(tr("scale_configuration"))
         scale_layout = QVBoxLayout(scale_group)
 
         scale_row1 = QHBoxLayout()
-        scale_row1.addWidget(QLabel("Scale Port:"))
+        scale_row1.addWidget(QLabel(tr("scale_port")))
         self.scale_port_edit = QLineEdit()
-        self.scale_port_edit.setPlaceholderText("COM3, /dev/ttyUSB0, etc.")
+        self.scale_port_edit.setPlaceholderText(tr("scale_port_placeholder"))
         scale_row1.addWidget(self.scale_port_edit, 1)
 
-        scale_row1.addWidget(QLabel("Baudrate:"))
+        scale_row1.addWidget(QLabel(tr("baudrate")))
         self.scale_baudrate_spin = QSpinBox()
         self.scale_baudrate_spin.setRange(1200, 230400)
         scale_row1.addWidget(self.scale_baudrate_spin)
         scale_layout.addLayout(scale_row1)
 
         scale_row2 = QHBoxLayout()
-        scale_row2.addWidget(QLabel("Weight Threshold (kg):"))
+        scale_row2.addWidget(QLabel(tr("weight_threshold")))
         self.weight_threshold_spin = QDoubleSpinBox()
         self.weight_threshold_spin.setRange(0.001, 10.0)
         self.weight_threshold_spin.setDecimals(3)
         scale_row2.addWidget(self.weight_threshold_spin)
 
-        scale_row2.addWidget(QLabel("Stable Time (seconds):"))
+        scale_row2.addWidget(QLabel(tr("stable_time")))
         self.stable_time_spin = QDoubleSpinBox()
         self.stable_time_spin.setRange(0.1, 10.0)
         self.stable_time_spin.setDecimals(1)
@@ -171,23 +172,23 @@ class SettingsPage(QWidget):
         scale_layout.addLayout(scale_row2)
 
         # Test scale button
-        test_scale_btn = QPushButton("Test Scale Connection")
+        test_scale_btn = QPushButton(tr("test_scale_connection"))
         test_scale_btn.clicked.connect(self._test_scale)
         scale_layout.addWidget(test_scale_btn)
 
         layout.addWidget(scale_group)
 
         # Processing Settings
-        processing_group = QGroupBox("Processing Configuration")
+        processing_group = QGroupBox(tr("processing_configuration"))
         processing_layout = QVBoxLayout(processing_group)
 
         proc_row1 = QHBoxLayout()
-        proc_row1.addWidget(QLabel("Default Target:"))
+        proc_row1.addWidget(QLabel(tr("default_target")))
         self.target_combo = QComboBox()
         self.target_combo.addItems(["auto", "vendor", "oem"])
         proc_row1.addWidget(self.target_combo)
 
-        proc_row1.addWidget(QLabel("Min Fuzzy Score:"))
+        proc_row1.addWidget(QLabel(tr("min_fuzzy_score")))
         self.min_fuzzy_spin = QSpinBox()
         self.min_fuzzy_spin.setRange(0, 100)
         proc_row1.addWidget(self.min_fuzzy_spin)
@@ -197,23 +198,32 @@ class SettingsPage(QWidget):
         layout.addWidget(processing_group)
 
         # UI Settings
-        ui_group = QGroupBox("UI Configuration")
+        ui_group = QGroupBox(tr("ui_configuration"))
         ui_layout = QVBoxLayout(ui_group)
 
-        self.show_logs_checkbox = QCheckBox("Show Logs Widget")
-        self.show_logs_checkbox.setToolTip(
-            "Show or hide the logs widget in both Automated and Manual tabs"
-        )
+        # Language selection
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel(tr("language_label")))
+        self.language_combo = QComboBox()
+        self.language_combo.addItem("English", "en")
+        self.language_combo.addItem("Русский", "ru")
+        self.language_combo.setMaximumWidth(150)
+        lang_row.addWidget(self.language_combo)
+        lang_row.addStretch(1)
+        ui_layout.addLayout(lang_row)
+
+        self.show_logs_checkbox = QCheckBox(tr("show_logs_widget"))
+        self.show_logs_checkbox.setToolTip(tr("show_logs_tooltip"))
         ui_layout.addWidget(self.show_logs_checkbox)
 
         layout.addWidget(ui_group)
 
         # Pricing Settings
-        pricing_group = QGroupBox("Pricing Configuration")
+        pricing_group = QGroupBox(tr("pricing_configuration"))
         pricing_layout = QVBoxLayout(pricing_group)
 
         price_row = QHBoxLayout()
-        price_row.addWidget(QLabel("Weight Price (per kg):"))
+        price_row.addWidget(QLabel(tr("weight_price_per_kg")))
         self.price_per_kg_spin = QDoubleSpinBox()
         self.price_per_kg_spin.setRange(0, 1e9)
         self.price_per_kg_spin.setDecimals(3)
@@ -228,30 +238,28 @@ class SettingsPage(QWidget):
         layout.addWidget(pricing_group)
 
         # Default Result File Settings
-        result_file_group = QGroupBox("Default Result File")
+        result_file_group = QGroupBox(tr("default_result_file"))
         result_file_layout = QVBoxLayout(result_file_group)
         result_file_layout.setSpacing(8)
 
-        result_file_layout.addWidget(
-            QLabel("Default result file (used when no file is selected):")
-        )
+        result_file_layout.addWidget(QLabel(tr("default_result_file_label")))
 
         result_file_row = QHBoxLayout()
         result_file_row.setSpacing(5)
         self.default_result_file_edit = QLineEdit()
         self.default_result_file_edit.setPlaceholderText(
-            "Leave empty to auto-generate in app data directory"
+            tr("leave_empty_auto_generate")
         )
         result_file_row.addWidget(self.default_result_file_edit, 1)
 
-        browse_result_btn = QPushButton("Browse…")
+        browse_result_btn = QPushButton(tr("browse"))
         browse_result_btn.setMaximumWidth(100)
         browse_result_btn.clicked.connect(self._browse_default_result_file)
         result_file_row.addWidget(browse_result_btn)
 
-        reset_result_btn = QPushButton("Use Default")
+        reset_result_btn = QPushButton(tr("use_default"))
         reset_result_btn.setMaximumWidth(120)
-        reset_result_btn.setToolTip("Set to default location in app data directory")
+        reset_result_btn.setToolTip(tr("use_default_tooltip"))
         reset_result_btn.clicked.connect(self._reset_default_result_file)
         result_file_row.addWidget(reset_result_btn)
 
@@ -260,9 +268,7 @@ class SettingsPage(QWidget):
         from gearledger.desktop.settings_manager import APP_DIR
 
         default_data_dir = os.path.join(APP_DIR, "data")
-        info_label = QLabel(
-            f"If empty, files will be auto-generated in:\n{default_data_dir}"
-        )
+        info_label = QLabel(tr("if_empty_files_auto_generated", path=default_data_dir))
         info_label.setWordWrap(True)
         info_label.setStyleSheet(
             """
@@ -282,16 +288,16 @@ class SettingsPage(QWidget):
         # Save/Cancel/Reset buttons
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
-        self.reset_btn = QPushButton("Reset to Defaults")
+        self.reset_btn = QPushButton(tr("reset_to_defaults"))
         self.reset_btn.setStyleSheet(
             "background-color: #e74c3c; color: white; font-weight: bold; padding: 8px 16px;"
         )
         self.reset_btn.clicked.connect(self._on_reset)
         button_layout.addWidget(self.reset_btn)
         button_layout.addStretch(1)
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton(tr("cancel"))
         self.cancel_btn.setStyleSheet("padding: 8px 16px;")
-        self.save_btn = QPushButton("Save Settings")
+        self.save_btn = QPushButton(tr("save_settings"))
         self.save_btn.setStyleSheet(
             "background-color: #27ae60; color: white; font-weight: bold; padding: 8px 16px;"
         )
@@ -329,15 +335,19 @@ class SettingsPage(QWidget):
         self.min_fuzzy_spin.setValue(s.default_min_fuzzy)
         self.default_result_file_edit.setText(s.default_result_file or "")
         self.show_logs_checkbox.setChecked(s.show_logs)
+        # Set language combo by data value
+        lang_index = self.language_combo.findData(s.language)
+        if lang_index >= 0:
+            self.language_combo.setCurrentIndex(lang_index)
 
     def _toggle_api_key_visibility(self):
         """Toggle API key visibility."""
         if self.api_key_edit.echoMode() == QLineEdit.EchoMode.Password:
             self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.show_api_btn.setText("Hide")
+            self.show_api_btn.setText(tr("hide"))
         else:
             self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-            self.show_api_btn.setText("Show")
+            self.show_api_btn.setText(tr("show"))
 
     def _test_camera(self):
         """Test camera connection."""
@@ -352,22 +362,28 @@ class SettingsPage(QWidget):
                 if ret:
                     QMessageBox.information(
                         self,
-                        "Camera Test",
-                        f"Camera {cam_index} is working!\n"
-                        f"Frame size: {frame.shape[1]}x{frame.shape[0]}",
+                        tr("camera_test"),
+                        tr(
+                            "camera_working",
+                            index=cam_index,
+                            width=frame.shape[1],
+                            height=frame.shape[0],
+                        ),
                     )
                 else:
                     QMessageBox.warning(
                         self,
-                        "Camera Test",
-                        f"Camera {cam_index} opened but couldn't read frame.",
+                        tr("camera_test"),
+                        tr("camera_no_frame", index=cam_index),
                     )
             else:
                 QMessageBox.warning(
-                    self, "Camera Test", f"Failed to open camera {cam_index}."
+                    self, tr("camera_test"), tr("camera_failed_open", index=cam_index)
                 )
         except Exception as e:
-            QMessageBox.critical(self, "Camera Test", f"Error testing camera: {e}")
+            QMessageBox.critical(
+                self, tr("camera_test"), tr("camera_test_error", error=e)
+            )
 
     def _browse_default_result_file(self):
         """Browse for default result file location."""
@@ -376,9 +392,9 @@ class SettingsPage(QWidget):
         current_path = self.default_result_file_edit.text().strip()
         fn, _ = QFileDialog.getSaveFileName(
             self,
-            "Choose Default Result File",
+            tr("choose_default_result_file"),
             current_path if current_path else "",
-            filter="Excel (*.xlsx);;All files (*)",
+            filter=tr("excel_filter"),
         )
         if fn:
             self.default_result_file_edit.setText(fn)
@@ -396,7 +412,7 @@ class SettingsPage(QWidget):
         baudrate = self.scale_baudrate_spin.value()
 
         if not port:
-            QMessageBox.warning(self, "Scale Test", "Please enter a scale port.")
+            QMessageBox.warning(self, tr("scale_test"), tr("enter_scale_port"))
             return
 
         try:
@@ -406,19 +422,23 @@ class SettingsPage(QWidget):
             if weight is not None:
                 QMessageBox.information(
                     self,
-                    "Scale Test",
-                    f"Scale connection successful!\nPort: {port}\nBaudrate: {baudrate}\nWeight: {weight}",
+                    tr("scale_test"),
+                    tr(
+                        "scale_connection_success",
+                        port=port,
+                        baudrate=baudrate,
+                        weight=weight,
+                    ),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Scale Test",
-                    f"Connected to {port} but no weight data received.\n"
-                    "This is normal if the scale is empty.",
+                    tr("scale_test"),
+                    tr("scale_connected_no_data", port=port),
                 )
         except Exception as e:
             QMessageBox.critical(
-                self, "Scale Test", f"Failed to connect to scale:\n{str(e)}"
+                self, tr("scale_test"), tr("scale_connection_failed", error=str(e))
             )
 
     def _validate_openai_api_key(self, api_key: str) -> tuple[bool, str]:
@@ -470,9 +490,8 @@ class SettingsPage(QWidget):
             if not api_key:
                 reply = QMessageBox.question(
                     self,
-                    "Missing API Key",
-                    "OpenAI API key is empty. You won't be able to use GPT vision.\n"
-                    "Continue anyway?",
+                    tr("missing_api_key"),
+                    tr("missing_api_key_msg"),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
@@ -483,8 +502,8 @@ class SettingsPage(QWidget):
                 from PyQt6.QtWidgets import QMessageBox, QProgressDialog
 
                 # Show progress dialog while validating
-                progress = QProgressDialog("Validating API key...", None, 0, 0, self)
-                progress.setWindowTitle("Validating API Key")
+                progress = QProgressDialog(tr("validating_api_key"), None, 0, 0, self)
+                progress.setWindowTitle(tr("validating_api_key_title"))
                 progress.setWindowModality(Qt.WindowModality.WindowModal)
                 progress.setCancelButton(None)  # Can't cancel
                 progress.setMinimumDuration(0)
@@ -501,19 +520,15 @@ class SettingsPage(QWidget):
                 if not is_valid:
                     QMessageBox.critical(
                         self,
-                        "Invalid API Key",
-                        f"Failed to validate OpenAI API key:\n\n{error_msg}\n\n"
-                        "Please check your API key and try again.\n\n"
-                        "You can get your API key from: https://platform.openai.com/api-keys",
+                        tr("invalid_api_key"),
+                        tr("invalid_api_key_msg", error=error_msg),
                     )
                     return
                 elif error_msg:  # Warning but valid
                     reply = QMessageBox.warning(
                         self,
-                        "API Key Validation Warning",
-                        f"API key validation completed with a warning:\n\n{error_msg}\n\n"
-                        "The key may be valid, but verification failed.\n"
-                        "Continue anyway?",
+                        tr("api_key_validation_warning"),
+                        tr("api_key_warning_msg", error=error_msg),
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                         QMessageBox.StandardButton.Yes,
                     )
@@ -523,8 +538,8 @@ class SettingsPage(QWidget):
                     # Success
                     QMessageBox.information(
                         self,
-                        "API Key Valid",
-                        "OpenAI API key validated successfully!",
+                        tr("api_key_valid"),
+                        tr("api_key_valid_msg"),
                     )
 
         # Update settings object
@@ -543,6 +558,12 @@ class SettingsPage(QWidget):
         self.settings.default_min_fuzzy = self.min_fuzzy_spin.value()
         self.settings.default_result_file = self.default_result_file_edit.text().strip()
         self.settings.show_logs = self.show_logs_checkbox.isChecked()
+        self.settings.language = self.language_combo.currentData()
+
+        # Update global language
+        from gearledger.desktop.translations import set_current_language
+
+        set_current_language(self.settings.language)
 
         # Save to disk
         save_settings(self.settings)
@@ -564,28 +585,24 @@ class SettingsPage(QWidget):
         if self._parent_dialog:
             QMessageBox.information(
                 self,
-                "Settings Saved",
-                "Settings have been saved successfully.\n"
-                "Some changes may require restarting the application.",
+                tr("settings_saved"),
+                tr("settings_saved_msg"),
             )
             self._parent_dialog.accept()
         else:
             # If not in a dialog, show message
             QMessageBox.information(
                 self,
-                "Settings Saved",
-                "Settings have been saved successfully.\n"
-                "Some changes may require restarting the application.",
+                tr("settings_saved"),
+                tr("settings_saved_msg"),
             )
 
     def _on_reset(self):
         """Reset all settings to default values."""
         reply = QMessageBox.question(
             self,
-            "Reset Settings",
-            "Are you sure you want to reset all settings to their default values?\n\n"
-            "This will clear your API key and all custom configurations.\n"
-            "This action cannot be undone.",
+            tr("reset_settings"),
+            tr("reset_settings_msg"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -609,9 +626,8 @@ class SettingsPage(QWidget):
 
         QMessageBox.information(
             self,
-            "Settings Reset",
-            "All settings have been reset to default values.\n\n"
-            "Remember to configure your API key and other settings before using the application.",
+            tr("settings_reset_title"),
+            tr("settings_reset_msg"),
         )
 
     def _on_cancel(self):

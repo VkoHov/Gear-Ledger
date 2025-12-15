@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 # Import low-level camera utilities (consistent with scale_widget.py structure)
 from gearledger.desktop.camera import open_camera, read_frame, release_camera
+from gearledger.desktop.translations import tr
 
 
 # Camera defaults - will be loaded from settings
@@ -50,7 +51,7 @@ class CameraWidget(QGroupBox):
     manual_code_submitted = pyqtSignal(str)  # Emitted when manual code is submitted
 
     def __init__(self, parent=None):
-        super().__init__("Item Input", parent)
+        super().__init__(tr("item_input"), parent)
 
         # Camera state
         self.cap = None
@@ -80,8 +81,8 @@ class CameraWidget(QGroupBox):
         mode_layout = QHBoxLayout()
         mode_layout.setSpacing(0)
 
-        self.btn_camera_mode = QPushButton("📷 Camera")
-        self.btn_manual_code_mode = QPushButton("✏️ Manual")
+        self.btn_camera_mode = QPushButton(tr("camera"))
+        self.btn_manual_code_mode = QPushButton(tr("manual"))
 
         # Style for toggle buttons
         active_style = """
@@ -140,7 +141,7 @@ class CameraWidget(QGroupBox):
         preview_layout.setSpacing(0)
 
         # Camera preview
-        self.preview = QLabel("Camera preview")
+        self.preview = QLabel(tr("camera_preview"))
         self.preview.setFixedHeight(400)
         self.preview.setMinimumWidth(480)  # Minimum width to maintain aspect ratio
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -161,7 +162,7 @@ class CameraWidget(QGroupBox):
 
         # Processing overlay (will be shown during processing)
         # Set as child of preview label so it overlays directly on top
-        self.processing_overlay = QLabel("⏳ Processing...\nPlease wait", self.preview)
+        self.processing_overlay = QLabel(tr("processing"), self.preview)
         self.processing_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.processing_overlay.setStyleSheet(
             """
@@ -187,9 +188,9 @@ class CameraWidget(QGroupBox):
         camera_layout.addWidget(self.preview_container)
 
         # Control buttons
-        self.btn_start = QPushButton("Start camera")
-        self.btn_capture = QPushButton("Capture & Run")
-        self.btn_stop_cancel = QPushButton("Stop / Cancel")
+        self.btn_start = QPushButton(tr("start_camera"))
+        self.btn_capture = QPushButton(tr("capture_run"))
+        self.btn_stop_cancel = QPushButton(tr("stop_cancel"))
         self.btn_capture.setEnabled(False)
         self.btn_stop_cancel.setEnabled(False)
 
@@ -220,7 +221,7 @@ class CameraWidget(QGroupBox):
         manual_layout.addWidget(icon_label)
 
         # Instruction label
-        instruction_label = QLabel("Enter Part Code Manually")
+        instruction_label = QLabel(tr("enter_part_code"))
         instruction_label.setStyleSheet(
             """
             QLabel {
@@ -235,7 +236,7 @@ class CameraWidget(QGroupBox):
 
         # Manual part code input
         self.manual_code_input = QLineEdit()
-        self.manual_code_input.setPlaceholderText("Enter part code (e.g., PK-5396)")
+        self.manual_code_input.setPlaceholderText(tr("part_code_placeholder"))
         self.manual_code_input.setStyleSheet(
             """
             QLineEdit {
@@ -261,7 +262,7 @@ class CameraWidget(QGroupBox):
         manual_layout.addLayout(input_container)
 
         # Search button
-        self.btn_search_code = QPushButton("🔍 Search & Add")
+        self.btn_search_code = QPushButton(tr("search_add"))
         self.btn_search_code.setStyleSheet(
             """
             QPushButton {
@@ -377,7 +378,7 @@ class CameraWidget(QGroupBox):
         """Submit manual part code."""
         code = self.manual_code_input.text().strip()
         if not code:
-            self.manual_result_label.setText("Please enter a part code")
+            self.manual_result_label.setText(tr("please_enter_code"))
             self.manual_result_label.setStyleSheet(
                 """
                 QLabel {
@@ -390,7 +391,7 @@ class CameraWidget(QGroupBox):
             return
 
         self.manual_code_value = code
-        self.manual_result_label.setText("Searching...")
+        self.manual_result_label.setText(tr("searching"))
         self.manual_result_label.setStyleSheet(
             """
             QLabel {
@@ -451,7 +452,7 @@ class CameraWidget(QGroupBox):
         self._captured_image_path = None
 
         # Show loading indicator
-        self.preview.setText("Opening camera...\nPlease wait")
+        self.preview.setText(tr("opening_camera"))
         self.preview.setStyleSheet(
             """
             QLabel {
@@ -522,7 +523,7 @@ class CameraWidget(QGroupBox):
     def _on_camera_error(self, error_msg, cam_index):
         """Handle camera opening error (called from worker thread)."""
         self._camera_thread = None
-        self.preview.setText("Camera preview")
+        self.preview.setText(tr("camera_preview"))
         self.preview.setStyleSheet(
             """
             QLabel {
@@ -537,13 +538,8 @@ class CameraWidget(QGroupBox):
         )
         QMessageBox.critical(
             self,
-            "Camera",
-            f"Failed to open camera (index {cam_index}).\n\n"
-            "Please check:\n"
-            "1. Camera is connected and not in use by another application\n"
-            "2. Camera index is correct (open Settings ⚙️ to change it)\n"
-            "3. Camera permissions are granted\n\n"
-            f"Error: {error_msg}",
+            tr("camera_title"),
+            tr("camera_failed_open_msg", index=cam_index, error=error_msg),
         )
 
     def reset_to_live_feed(self):
@@ -576,13 +572,13 @@ class CameraWidget(QGroupBox):
             self.cap = None
         # Clear captured image
         self._captured_image_path = None
-        self.preview.setText("Camera preview")
+        self.preview.setText(tr("camera_preview"))
         self._update_controls()
 
     def capture_and_run(self):
         """Capture current frame and run processing."""
         if self._last_frame is None:
-            QMessageBox.information(self, "Camera", "No frame yet. Try again.")
+            QMessageBox.information(self, tr("camera_title"), tr("no_frame_yet"))
             return
 
         if not self.on_capture_callback:
@@ -607,7 +603,7 @@ class CameraWidget(QGroupBox):
             # Call the callback
             self.on_capture_callback(tmp.name)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save capture: {e}")
+            QMessageBox.critical(self, tr("error"), tr("failed_save_capture", error=e))
 
     def _grab_and_show(self):
         """Grab frame from camera and display it."""

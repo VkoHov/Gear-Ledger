@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from gearledger.desktop.scale import read_weight_once, parse_weight
+from gearledger.desktop.translations import tr
 
 
 class ScaleWidget(QGroupBox):
@@ -30,7 +31,7 @@ class ScaleWidget(QGroupBox):
     manual_weight_set = pyqtSignal(float)  # Emitted when manual weight is set
 
     def __init__(self, parent=None):
-        super().__init__("Weight Input", parent)
+        super().__init__(tr("weight_input"), parent)
 
         # Load scale settings from settings manager (if available)
         try:
@@ -78,8 +79,8 @@ class ScaleWidget(QGroupBox):
         mode_layout = QHBoxLayout()
         mode_layout.setSpacing(0)
 
-        self.btn_scale_mode = QPushButton("⚖️ Scale")
-        self.btn_manual_mode = QPushButton("✏️ Manual")
+        self.btn_scale_mode = QPushButton(tr("scale"))
+        self.btn_manual_mode = QPushButton(tr("manual"))
 
         # Style for toggle buttons
         active_style = """
@@ -129,7 +130,7 @@ class ScaleWidget(QGroupBox):
         scale_layout.setSpacing(4)
 
         # Weight display (compact)
-        self.weight_label = QLabel("-- kg")
+        self.weight_label = QLabel(tr("weight_kg"))
         self.weight_label.setStyleSheet(
             """
             QLabel {
@@ -147,7 +148,7 @@ class ScaleWidget(QGroupBox):
         scale_layout.addWidget(self.weight_label)
 
         # Status (compact)
-        self.status_label = QLabel("Disconnected")
+        self.status_label = QLabel(tr("disconnected"))
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -164,12 +165,12 @@ class ScaleWidget(QGroupBox):
         controls_layout = QHBoxLayout()
         controls_layout.setSpacing(4)
 
-        self.btn_connect = QPushButton("Connect")
+        self.btn_connect = QPushButton(tr("connect"))
         self.btn_connect.setStyleSheet("padding: 6px 10px; font-size: 10px;")
-        self.btn_disconnect = QPushButton("Disconnect")
+        self.btn_disconnect = QPushButton(tr("disconnect"))
         self.btn_disconnect.setStyleSheet("padding: 6px 10px; font-size: 10px;")
         self.btn_disconnect.setEnabled(False)
-        self.btn_tare = QPushButton("Tare")
+        self.btn_tare = QPushButton(tr("tare"))
         self.btn_tare.setStyleSheet("padding: 6px 10px; font-size: 10px;")
         self.btn_tare.setEnabled(False)
 
@@ -179,7 +180,7 @@ class ScaleWidget(QGroupBox):
         scale_layout.addLayout(controls_layout)
 
         # Auto-capture note (compact)
-        auto_label = QLabel("⚡ Auto-capture on stable weight")
+        auto_label = QLabel(tr("auto_capture_note"))
         auto_label.setStyleSheet(
             """
             QLabel {
@@ -203,7 +204,7 @@ class ScaleWidget(QGroupBox):
 
         # Manual weight input
         self.manual_weight_input = QLineEdit()
-        self.manual_weight_input.setPlaceholderText("Enter weight (kg)")
+        self.manual_weight_input.setPlaceholderText(tr("enter_weight_kg"))
         self.manual_weight_input.setStyleSheet(
             """
             QLineEdit {
@@ -222,7 +223,7 @@ class ScaleWidget(QGroupBox):
         manual_layout.addWidget(self.manual_weight_input)
 
         # Manual weight display (shows confirmed weight)
-        self.manual_weight_display = QLabel("Weight: -- kg")
+        self.manual_weight_display = QLabel(tr("weight_display"))
         self.manual_weight_display.setStyleSheet(
             """
             QLabel {
@@ -237,7 +238,7 @@ class ScaleWidget(QGroupBox):
         manual_layout.addWidget(self.manual_weight_display)
 
         # Set weight button
-        self.btn_set_weight = QPushButton("Set Weight")
+        self.btn_set_weight = QPushButton(tr("set_weight"))
         self.btn_set_weight.setStyleSheet(
             """
             QPushButton {
@@ -341,7 +342,7 @@ class ScaleWidget(QGroupBox):
             weight = float(weight_text)
             if weight <= 0:
                 QMessageBox.warning(
-                    self, "Invalid Weight", "Weight must be greater than 0."
+                    self, tr("invalid_weight"), tr("weight_must_be_positive")
                 )
                 return
 
@@ -360,7 +361,7 @@ class ScaleWidget(QGroupBox):
             self.manual_weight_set.emit(weight)
 
         except ValueError:
-            QMessageBox.warning(self, "Invalid Weight", "Please enter a valid number.")
+            QMessageBox.warning(self, tr("invalid_weight"), tr("enter_valid_number"))
 
     def _setup_timers(self):
         """Set up monitoring timers."""
@@ -387,14 +388,14 @@ class ScaleWidget(QGroupBox):
         if not port:
             QMessageBox.warning(
                 self,
-                "Scale Connection",
-                "Please configure the scale port in Settings.",
+                tr("scale_connection_title"),
+                tr("configure_scale_port"),
             )
             return
 
         # Disable connect button and show connecting status
         self.btn_connect.setEnabled(False)
-        self.status_label.setText("Connecting...")
+        self.status_label.setText(tr("connecting"))
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -442,15 +443,11 @@ class ScaleWidget(QGroupBox):
 
         if test is not None:
             self.weight_label.setText(f"{test}")
-            msg = f"Successfully connected to scale on {port}.\nCurrent weight: {test}"
+            msg = tr("scale_connected_msg", port=port, weight=test)
         else:
-            msg = (
-                f"Successfully connected to scale on {port}, "
-                "but no weight data was received yet.\n\n"
-                "This is normal if the scale is empty or only sends data when weight changes."
-            )
+            msg = tr("scale_connected_no_weight", port=port)
 
-        self.status_label.setText("Connected")
+        self.status_label.setText(tr("connected"))
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -476,8 +473,8 @@ class ScaleWidget(QGroupBox):
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "Scale Connection",
-                f"Failed to open persistent connection: {e}",
+                tr("scale_connection_title"),
+                tr("failed_persistent_connection", error=e),
             )
             self.is_monitoring = False
             self.btn_connect.setEnabled(True)
@@ -485,13 +482,13 @@ class ScaleWidget(QGroupBox):
             self._connection_thread = None
             return
 
-        QMessageBox.information(self, "Scale Connected", msg)
+        QMessageBox.information(self, tr("scale_connected_title"), msg)
         self._connection_thread = None
 
     def _on_scale_connection_error(self, error_msg, port, baudrate):
         """Handle scale connection error (called from worker thread)."""
         self.btn_connect.setEnabled(True)
-        self.status_label.setText("Disconnected")
+        self.status_label.setText(tr("disconnected"))
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -503,8 +500,8 @@ class ScaleWidget(QGroupBox):
         )
         QMessageBox.critical(
             self,
-            "Scale Connection",
-            f"Failed to open port {port}.\n\nError: {error_msg}",
+            tr("scale_connection_title"),
+            tr("failed_open_port", port=port, error=error_msg),
         )
         self._connection_thread = None
 
@@ -533,7 +530,7 @@ class ScaleWidget(QGroupBox):
         self.btn_disconnect.setEnabled(False)
         self.btn_tare.setEnabled(False)
 
-        self.status_label.setText("Disconnected")
+        self.status_label.setText(tr("disconnected"))
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -691,12 +688,12 @@ class ScaleWidget(QGroupBox):
         """Handle connection loss."""
         if self.is_monitoring:
             if hasattr(self, "append_logs") and self.append_logs:
-                self.append_logs(["[WARNING] Scale connection lost."])
+                self.append_logs([tr("log_scale_connection_lost")])
             # Disconnect and update UI
             self.is_monitoring = False
             self.btn_connect.setEnabled(True)
             self.btn_disconnect.setEnabled(False)
-            self.status_label.setText("Connection Lost")
+            self.status_label.setText(tr("connection_lost"))
             self.status_label.setStyleSheet(
                 """
                 QLabel {
@@ -723,7 +720,7 @@ class ScaleWidget(QGroupBox):
         """Handle weight changed signal."""
         # Update status to show weight is changing
         if self.stable_start_time is None:
-            self.status_label.setText("Changing...")
+            self.status_label.setText(tr("changing"))
             self.status_label.setStyleSheet(
                 """
                 QLabel {
@@ -734,7 +731,7 @@ class ScaleWidget(QGroupBox):
             """
             )
         else:
-            self.status_label.setText("Stabilizing...")
+            self.status_label.setText(tr("stabilizing"))
             self.status_label.setStyleSheet(
                 """
                 QLabel {

@@ -19,13 +19,14 @@ from PyQt6.QtWidgets import (
 )
 
 from gearledger.config import DEFAULT_MIN_FUZZY
+from gearledger.desktop.translations import tr
 
 
 class ResultsWidget(QGroupBox):
     """Results display and fuzzy matching widget."""
 
     def __init__(self, parent=None):
-        super().__init__("Result summary", parent)
+        super().__init__(tr("result_summary"), parent)
 
         # Callbacks
         self.on_fuzzy_requested: Callable[[List[Tuple[str, str]]], None] | None = None
@@ -44,7 +45,7 @@ class ResultsWidget(QGroupBox):
         # Result display fields
         # Best visible
         best_vis_layout = QHBoxLayout()
-        best_vis_layout.addWidget(QLabel("Best (visible):"))
+        best_vis_layout.addWidget(QLabel(tr("best_visible")))
         self.best_vis = QLineEdit()
         self.best_vis.setReadOnly(True)
         best_vis_layout.addWidget(self.best_vis, 1)
@@ -52,7 +53,7 @@ class ResultsWidget(QGroupBox):
 
         # Best normalized
         best_norm_layout = QHBoxLayout()
-        best_norm_layout.addWidget(QLabel("Best (normalized):"))
+        best_norm_layout.addWidget(QLabel(tr("best_normalized")))
         self.best_norm = QLineEdit()
         self.best_norm.setReadOnly(True)
         best_norm_layout.addWidget(self.best_norm, 1)
@@ -60,7 +61,7 @@ class ResultsWidget(QGroupBox):
 
         # Excel match
         match_layout = QHBoxLayout()
-        match_layout.addWidget(QLabel("Excel match:"))
+        match_layout.addWidget(QLabel(tr("excel_match")))
         self.match_line = QLineEdit()
         self.match_line.setReadOnly(True)
         match_layout.addWidget(self.match_line, 1)
@@ -68,27 +69,27 @@ class ResultsWidget(QGroupBox):
 
         # GPT cost
         cost_layout = QHBoxLayout()
-        cost_layout.addWidget(QLabel("Est. GPT cost:"))
+        cost_layout.addWidget(QLabel(tr("est_gpt_cost")))
         self.cost_line = QLineEdit()
         self.cost_line.setReadOnly(True)
         cost_layout.addWidget(self.cost_line, 1)
         layout.addLayout(cost_layout)
 
         # Fuzzy matching section
-        self.fuzzy_box = QGroupBox("No exact match — try fuzzy?")
+        self.fuzzy_box = QGroupBox(tr("no_exact_match_fuzzy"))
         self.fuzzy_box.setVisible(False)
 
         fuzzy_layout = QVBoxLayout(self.fuzzy_box)
-        fuzzy_layout.addWidget(QLabel("Likely candidates (from GPT/local ranking):"))
+        fuzzy_layout.addWidget(QLabel(tr("likely_candidates")))
 
         self.cand_list = QListWidget()
         self.cand_list.setMinimumHeight(100)
         fuzzy_layout.addWidget(self.cand_list)
 
-        self.chk_use_shown = QCheckBox("Limit fuzzy to shown candidates")
+        self.chk_use_shown = QCheckBox(tr("limit_fuzzy_to_shown"))
         fuzzy_layout.addWidget(self.chk_use_shown)
 
-        self.btn_run_fuzzy = QPushButton("Run fuzzy match")
+        self.btn_run_fuzzy = QPushButton(tr("run_fuzzy_match"))
         fuzzy_layout.addWidget(
             self.btn_run_fuzzy, alignment=Qt.AlignmentFlag.AlignRight
         )
@@ -96,19 +97,17 @@ class ResultsWidget(QGroupBox):
         layout.addWidget(self.fuzzy_box)
 
         # Manual code input section
-        self.manual_box = QGroupBox("No match found — enter code manually?")
+        self.manual_box = QGroupBox(tr("no_match_manual"))
         self.manual_box.setVisible(False)
 
         manual_layout = QVBoxLayout(self.manual_box)
-        manual_layout.addWidget(QLabel("Enter part code to search in invoice:"))
+        manual_layout.addWidget(QLabel(tr("enter_code_search")))
 
         # Manual input layout
         manual_input_layout = QHBoxLayout()
         self.manual_code_input = QLineEdit()
-        self.manual_code_input.setPlaceholderText(
-            "Enter part code (e.g., PK-5396, A 221 501 26 91)"
-        )
-        self.btn_search_manual = QPushButton("Search")
+        self.manual_code_input.setPlaceholderText(tr("part_code_placeholder"))
+        self.btn_search_manual = QPushButton(tr("search"))
         manual_input_layout.addWidget(self.manual_code_input, 1)
         manual_input_layout.addWidget(self.btn_search_manual)
         manual_layout.addLayout(manual_input_layout)
@@ -159,7 +158,7 @@ class ResultsWidget(QGroupBox):
         if isinstance(cost, (int, float)):
             self.cost_line.setText(f"${cost:.6f}")
         else:
-            self.cost_line.setText("— (no API key)")
+            self.cost_line.setText(tr("no_api_key"))
 
     def show_fuzzy_options(
         self, cand_order: List[Tuple[str, str]], prompt_fuzzy: bool = True
@@ -182,11 +181,8 @@ class ResultsWidget(QGroupBox):
         preview = "\n".join(f"• {v}" for v, _ in self._last_cand_order[:5]) or "—"
         choice = QMessageBox.question(
             self,
-            "Start fuzzy matching?",
-            "No exact match found.\n\n"
-            "Top candidates to try with fuzzy matching:\n"
-            f"{preview}\n\n"
-            "Start fuzzy matching now?",
+            tr("start_fuzzy_matching"),
+            tr("no_exact_match_msg", preview=preview),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
@@ -235,8 +231,8 @@ class ResultsWidget(QGroupBox):
 
             QMessageBox.warning(
                 self,
-                "Manual Search",
-                "Please enter a part code to search.",
+                tr("manual_search"),
+                tr("enter_code_to_search"),
             )
             return
 
@@ -257,7 +253,7 @@ class ResultsWidget(QGroupBox):
             self.hide_fuzzy_options()
             self.hide_manual_input()
         else:
-            QMessageBox.information(self, "Fuzzy", "No fuzzy match found.")
+            QMessageBox.information(self, tr("fuzzy"), tr("no_fuzzy_match_found"))
 
     def update_manual_result(self, client: str, artikul: str):
         """Update result with manual search match."""
@@ -265,6 +261,4 @@ class ResultsWidget(QGroupBox):
             self.match_line.setText(f"{artikul} → {client}")
             self.hide_manual_input()
         else:
-            QMessageBox.information(
-                self, "Manual Search", "No match found for the entered code."
-            )
+            QMessageBox.information(self, tr("manual_search"), tr("no_match_for_code"))

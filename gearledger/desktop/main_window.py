@@ -29,6 +29,7 @@ from .logs_widget import LogsWidget
 from .results_pane import ResultsPane
 from .process_helpers import ProcessManager
 from .scale_widget import ScaleWidget
+from .translations import tr
 
 # Optional speech helpers (guarded)
 try:
@@ -401,7 +402,7 @@ class MainWindow(QWidget):
         # Add settings button at the top
         settings_btn_layout = QHBoxLayout()
         settings_btn_layout.addStretch(1)
-        self.settings_btn = QPushButton("⚙️ Settings")
+        self.settings_btn = QPushButton(tr("settings_button"))
         self.settings_btn.setStyleSheet(
             """
             QPushButton {
@@ -514,9 +515,7 @@ class MainWindow(QWidget):
         if not self.settings_widget.validate_catalog():
             from PyQt6.QtWidgets import QMessageBox
 
-            QMessageBox.critical(
-                self, "Error", "Please choose a valid Catalog Excel file."
-            )
+            QMessageBox.critical(self, tr("error"), tr("choose_valid_catalog"))
             return
 
         # Show processing indicator
@@ -526,12 +525,12 @@ class MainWindow(QWidget):
         self.results_widget.clear_results()
         # Clear logs
         self.logs_widget.clear_logs()
-        self.append_logs(["Running…"])
+        self.append_logs([tr("log_running")])
 
         # Get current weight from scale if available
         current_weight = self.scale_widget.get_current_weight()
         if current_weight > 0:
-            self.append_logs([f"Using scale weight: {current_weight:.3f} kg"])
+            self.append_logs([tr("log_using_scale_weight", weight=current_weight)])
 
         # Start main processing job
         if self.process_manager.start_main_job(
@@ -551,72 +550,58 @@ class MainWindow(QWidget):
 
         # Auto-start camera when scale detects a meaningful weight (> 0.01 kg)
         if weight > 0.01 and not self.camera_widget.cap:
-            self.append_logs(
-                [
-                    f"[INFO] Scale detected weight: {weight:.3f} kg - auto-starting camera"
-                ]
-            )
+            self.append_logs([tr("log_scale_detected", weight=weight)])
             try:
                 self.camera_widget.start_camera()
                 self._camera_auto_started = True
-                self.append_logs(["[INFO] Camera started automatically"])
+                self.append_logs([tr("log_camera_started")])
             except Exception as e:
-                self.append_logs([f"[ERROR] Failed to auto-start camera: {e}"])
+                self.append_logs([tr("log_failed_autostart_camera", error=e)])
 
     def _on_manual_weight_set(self, weight: float):
         """Handle manual weight set from scale widget."""
-        self.append_logs([f"[INFO] Manual weight set: {weight:.3f} kg"])
+        self.append_logs([tr("log_manual_weight_set", weight=weight)])
 
     def _on_manual_code_submitted(self, code: str):
         """Handle manual part code submission from camera widget."""
         if not self.settings_widget.validate_catalog():
-            self.camera_widget.show_manual_result(
-                False, "Please select a catalog file first"
-            )
+            self.camera_widget.show_manual_result(False, tr("log_select_catalog_first"))
             return
 
         # Get weight (from scale or manual)
         weight = self.scale_widget.get_current_weight()
         if weight <= 0:
-            self.camera_widget.show_manual_result(
-                False, "Please set a weight first (scale or manual)"
-            )
+            self.camera_widget.show_manual_result(False, tr("log_set_weight_first"))
             return
 
-        self.append_logs(
-            [f"[INFO] Manual code submitted: {code} (weight: {weight:.3f} kg)"]
-        )
+        self.append_logs([tr("log_manual_code_submitted", code=code, weight=weight)])
 
         # Use the manual entry handler
         self._on_manual_entry_requested(code, weight)
 
         # Show result in camera widget
         # The result will be shown through the normal processing flow
-        self.camera_widget.show_manual_result(True, f"Processing: {code}")
+        self.camera_widget.show_manual_result(
+            True, tr("log_processing_code", code=code)
+        )
 
     def _on_weight_ready(self, weight: float):
         """Handle weight ready from scale - automatically trigger camera capture when weight stabilizes."""
-        self.append_logs([f"[DEBUG] Weight ready signal received: {weight:.3f} kg"])
+        self.append_logs([tr("log_weight_ready_debug", weight=weight)])
 
         # Don't auto-capture if camera is in manual mode
         if self.camera_widget.is_manual_mode:
-            self.append_logs(
-                [f"[INFO] Weight stabilized: {weight:.3f} kg (camera in manual mode)"]
-            )
+            self.append_logs([tr("log_weight_stabilized_manual_mode", weight=weight)])
             return
 
         if not self.settings_widget.validate_catalog():
-            self.append_logs(
-                [
-                    f"[INFO] Weight stabilized: {weight:.3f} kg, but no catalog file selected"
-                ]
-            )
+            self.append_logs([tr("log_weight_stabilized_no_catalog", weight=weight)])
             return
 
         # If camera is not started, try to start it first
         if not self.camera_widget.cap:
             self.append_logs(
-                [f"[INFO] Weight stabilized: {weight:.3f} kg - starting camera..."]
+                [tr("log_weight_stabilized_starting_camera", weight=weight)]
             )
             try:
                 self.camera_widget.start_camera()
@@ -626,38 +611,28 @@ class MainWindow(QWidget):
                 QTimer.singleShot(2000, lambda: self._capture_after_stable(weight))
                 return
             except Exception as e:
-                self.append_logs([f"[ERROR] Failed to start camera: {e}"])
+                self.append_logs([tr("log_failed_start_camera", error=e)])
                 return
 
         # Camera is ready, but need to wait for first frame
         # Check if camera has grabbed a frame yet
         if self.camera_widget._last_frame is None:
-            self.append_logs(
-                [
-                    f"[INFO] Weight stabilized: {weight:.3f} kg - waiting for camera frame..."
-                ]
-            )
+            self.append_logs([tr("log_weight_stabilized_waiting_frame", weight=weight)])
             # Wait for camera to grab first frame, then capture
             QTimer.singleShot(500, lambda: self._capture_after_stable(weight))
             return
 
         # Camera is ready and has a frame, capture immediately
-        self.append_logs(
-            [
-                f"[INFO] Weight stabilized: {weight:.3f} kg - capturing image and running OCR"
-            ]
-        )
+        self.append_logs([tr("log_weight_stabilized_capturing", weight=weight)])
         try:
             self.camera_widget.capture_and_run()
         except Exception as e:
-            self.append_logs([f"[ERROR] Failed to capture: {e}"])
+            self.append_logs([tr("log_failed_capture", error=e)])
 
     def _capture_after_stable(self, weight: float):
         """Capture image after camera has started (called with delay)."""
         if not self.camera_widget.cap:
-            self.append_logs(
-                ["[WARNING] Camera not ready for capture - waiting longer..."]
-            )
+            self.append_logs([tr("log_camera_not_ready")])
             # Try one more time after another delay (max 3 attempts)
             if not hasattr(self, "_capture_attempts"):
                 self._capture_attempts = 0
@@ -665,9 +640,7 @@ class MainWindow(QWidget):
             if self._capture_attempts < 3:
                 QTimer.singleShot(1000, lambda: self._capture_after_stable(weight))
             else:
-                self.append_logs(
-                    ["[ERROR] Camera failed to initialize after multiple attempts"]
-                )
+                self.append_logs([tr("log_camera_init_failed")])
                 self._capture_attempts = 0
             return
 
@@ -677,17 +650,15 @@ class MainWindow(QWidget):
 
         # Check if camera has a frame ready
         if self.camera_widget._last_frame is None:
-            self.append_logs(["[INFO] Waiting for camera frame..."])
+            self.append_logs([tr("log_waiting_camera_frame")])
             QTimer.singleShot(500, lambda: self._capture_after_stable(weight))
             return
 
-        self.append_logs(
-            [f"[INFO] Camera ready - capturing image for weight: {weight:.3f} kg"]
-        )
+        self.append_logs([tr("log_camera_ready_capturing", weight=weight)])
         try:
             self.camera_widget.capture_and_run()
         except Exception as e:
-            self.append_logs([f"[ERROR] Failed to capture after delay: {e}"])
+            self.append_logs([tr("log_failed_capture_delay", error=e)])
 
     def _ensure_catalog_file(self):
         """Ensure catalog file is selected before allowing app functionality."""
@@ -702,7 +673,7 @@ class MainWindow(QWidget):
             )
 
             dlg = QDialog(self)
-            dlg.setWindowTitle("Gear Ledger - Catalog Required")
+            dlg.setWindowTitle(tr("catalog_required_title"))
             dlg.setModal(True)
             dlg.setMinimumWidth(500)
 
@@ -715,16 +686,12 @@ class MainWindow(QWidget):
             icon_label.setStyleSheet("font-size: 48px;")
             layout.addWidget(icon_label)
 
-            title = QLabel("Catalog File Required")
+            title = QLabel(tr("catalog_file_required"))
             title.setAlignment(Qt.AlignmentFlag.AlignCenter)
             title.setStyleSheet("font-size: 18px; font-weight: bold; color: #2c3e50;")
             layout.addWidget(title)
 
-            message = QLabel(
-                "Please select a Catalog Excel file to continue.\n\n"
-                "The catalog file contains the part codes and client information\n"
-                "needed for matching scanned items."
-            )
+            message = QLabel(tr("catalog_required_message"))
             message.setAlignment(Qt.AlignmentFlag.AlignCenter)
             message.setWordWrap(True)
             message.setStyleSheet("font-size: 12px; color: #7f8c8d; padding: 10px;")
@@ -734,7 +701,7 @@ class MainWindow(QWidget):
             btn_layout = QHBoxLayout()
             btn_layout.addStretch()
 
-            select_btn = QPushButton("Select Catalog File")
+            select_btn = QPushButton(tr("select_catalog_file"))
             select_btn.setStyleSheet(
                 """
                 QPushButton {
@@ -896,17 +863,9 @@ class MainWindow(QWidget):
 
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Icon.Warning)
-        msg.setWindowTitle("Excel File Problem")
-        msg.setText("The catalog file cannot be opened")
-        msg.setInformativeText(
-            f"The file '{file_name}' appears to be corrupted or in an unsupported format.\n\n"
-            f"To fix this:\n\n"
-            f"1. Open the file in Microsoft Excel or LibreOffice\n"
-            f"2. If it opens, click File → Save As\n"
-            f"3. Choose 'Excel Workbook (.xlsx)' as the format\n"
-            f"4. Save the file\n"
-            f"5. Select the new .xlsx file as Catalog"
-        )
+        msg.setWindowTitle(tr("excel_file_problem"))
+        msg.setText(tr("catalog_cannot_open"))
+        msg.setInformativeText(tr("catalog_corrupted_msg", file=file_name))
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.exec()
         return True
@@ -923,8 +882,8 @@ class MainWindow(QWidget):
         self.camera_widget.reset_to_live_feed()
 
         if res is None:
-            self.append_logs(["[INFO] Job was canceled."])
-            self.results_widget.set_match_result("canceled")
+            self.append_logs([tr("log_job_canceled")])
+            self.results_widget.set_match_result(tr("canceled"))
             return
 
         # Handle main result
@@ -938,7 +897,7 @@ class MainWindow(QWidget):
         if not res.get("ok"):
             from PyQt6.QtWidgets import QMessageBox
 
-            QMessageBox.critical(self, "Run failed", str(res.get("error")))
+            QMessageBox.critical(self, tr("run_failed"), str(res.get("error")))
             return
 
         # Update result fields
@@ -961,8 +920,8 @@ class MainWindow(QWidget):
 
                 QMessageBox.critical(
                     self,
-                    "Weight Price Required",
-                    f"Cannot record match without valid weight price:\n{error_msg}",
+                    tr("weight_price_required"),
+                    tr("cannot_record_match", error=error_msg),
                 )
                 return
 
@@ -984,18 +943,24 @@ class MainWindow(QWidget):
             )
             if rec["ok"]:
                 self.append_logs(
-                    [f"[INFO] Logged to results: {rec['action']} → {rec['path']}"]
+                    [
+                        tr(
+                            "log_logged_to_results",
+                            action=rec["action"],
+                            path=rec["path"],
+                        )
+                    ]
                 )
                 self.results_pane.refresh()
             else:
-                self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
+                self.append_logs([tr("log_results_log_failed", error=rec["error"])])
         else:
-            self.results_widget.set_match_result("not found")
+            self.results_widget.set_match_result(tr("status_not_found"))
             best = res.get("best_visible") or res.get("best_normalized")
             if best:
-                speak(f"No match found. Best guess code: {_spell_code(best)}.")
+                speak(tr("speak_no_match_best_guess", code=_spell_code(best)))
             else:
-                speak("No match found.")
+                speak(tr("speak_no_match"))
 
         # Update cost
         cost = res.get("gpt_cost")
@@ -1023,7 +988,7 @@ class MainWindow(QWidget):
         self.camera_widget.reset_to_live_feed()
 
         if res is None:
-            self.append_logs(["[INFO] Fuzzy job was canceled."])
+            self.append_logs([tr("log_fuzzy_canceled")])
             return
 
         self.append_logs(res.get("logs"))
@@ -1034,8 +999,8 @@ class MainWindow(QWidget):
             if not self._show_excel_error_popup(res.get("excel_error")):
                 QMessageBox.critical(
                     self,
-                    "Search Failed",
-                    "Unable to search the catalog. Please check your settings.",
+                    tr("search_failed"),
+                    tr("unable_search_catalog"),
                 )
             return
 
@@ -1055,8 +1020,8 @@ class MainWindow(QWidget):
 
                 QMessageBox.critical(
                     self,
-                    "Weight Price Required",
-                    f"Cannot record match without valid weight price:\n{error_msg}",
+                    tr("weight_price_required"),
+                    tr("cannot_record_match", error=error_msg),
                 )
                 return
 
@@ -1078,11 +1043,17 @@ class MainWindow(QWidget):
             )
             if rec["ok"]:
                 self.append_logs(
-                    [f"[INFO] Logged to results: {rec['action']} → {rec['path']}"]
+                    [
+                        tr(
+                            "log_logged_to_results",
+                            action=rec["action"],
+                            path=rec["path"],
+                        )
+                    ]
                 )
                 self.results_pane.refresh()
             else:
-                self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
+                self.append_logs([tr("log_results_log_failed", error=rec["error"])])
 
         self._update_controls()
 
@@ -1095,12 +1066,10 @@ class MainWindow(QWidget):
         if not catalog or not os.path.exists(catalog):
             from PyQt6.QtWidgets import QMessageBox
 
-            QMessageBox.critical(
-                self, "Error", "Please choose a valid Catalog Excel file."
-            )
+            QMessageBox.critical(self, tr("error"), tr("choose_valid_catalog"))
             return
 
-        self.append_logs([f"Searching for manual code: {code}"])
+        self.append_logs([tr("log_searching_manual_code", code=code)])
 
         try:
             # Create a single candidate with the manual code
@@ -1127,8 +1096,8 @@ class MainWindow(QWidget):
 
                         QMessageBox.critical(
                             self,
-                            "Weight Price Required",
-                            f"Cannot record manual search without valid weight price:\n{error_msg}",
+                            tr("weight_price_required"),
+                            tr("cannot_record_manual_search", error=error_msg),
                         )
                         return
 
@@ -1147,24 +1116,33 @@ class MainWindow(QWidget):
                     if rec["ok"]:
                         self.append_logs(
                             [
-                                f"[INFO] Logged to results: {rec['action']} → {rec['path']}"
+                                tr(
+                                    "log_logged_to_results",
+                                    action=rec["action"],
+                                    path=rec["path"],
+                                )
                             ]
                         )
                         self.results_pane.refresh()
                     else:
-                        self.append_logs([f"[WARN] Results log failed: {rec['error']}"])
+                        self.append_logs(
+                            [tr("log_results_log_failed", error=rec["error"])]
+                        )
                 else:
                     self.results_widget.update_manual_result("", "")
             else:
                 self.append_logs(
                     [
-                        f"[ERROR] Manual search failed: {result.get('error', 'Unknown error')}"
+                        tr(
+                            "log_manual_search_failed",
+                            error=result.get("error", "Unknown error"),
+                        )
                     ]
                 )
                 self.results_widget.update_manual_result("", "")
 
         except Exception as e:
-            self.append_logs([f"[ERROR] Manual search error: {str(e)}"])
+            self.append_logs([tr("log_manual_search_error", error=str(e))])
             self.results_widget.update_manual_result("", "")
 
     def _on_manual_entry_requested(self, part_code: str, weight: float):
@@ -1176,12 +1154,10 @@ class MainWindow(QWidget):
         if not catalog or not os.path.exists(catalog):
             from PyQt6.QtWidgets import QMessageBox
 
-            QMessageBox.critical(
-                self, "Error", "Please choose a valid Catalog Excel file."
-            )
+            QMessageBox.critical(self, tr("error"), tr("choose_valid_catalog"))
             return
 
-        self.append_logs([f"Manual entry: {part_code} (weight: {weight} kg)"])
+        self.append_logs([tr("log_manual_entry", code=part_code, weight=weight)])
 
         try:
             # Create a single candidate with the manual code
@@ -1208,8 +1184,8 @@ class MainWindow(QWidget):
 
                         QMessageBox.critical(
                             self,
-                            "Weight Price Required",
-                            f"Cannot record manual entry without valid weight price:\n{error_msg}",
+                            tr("weight_price_required"),
+                            tr("cannot_record_manual_entry", error=error_msg),
                         )
                         return
 
@@ -1228,7 +1204,12 @@ class MainWindow(QWidget):
                     if rec["ok"]:
                         self.append_logs(
                             [
-                                f"[INFO] Manual entry logged: {artikul} → {client} (weight: {weight} kg)"
+                                tr(
+                                    "log_manual_entry_logged",
+                                    artikul=artikul,
+                                    client=client,
+                                    weight=weight,
+                                )
                             ]
                         )
                         self.results_pane.refresh()
@@ -1241,55 +1222,60 @@ class MainWindow(QWidget):
 
                         QMessageBox.information(
                             self,
-                            "Manual Entry Success",
-                            f"Successfully added:\n{artikul} → {client}\nWeight: {weight} kg",
+                            tr("manual_entry_success"),
+                            tr(
+                                "manual_entry_success_msg",
+                                artikul=artikul,
+                                client=client,
+                                weight=weight,
+                            ),
                         )
                     else:
                         self.append_logs(
-                            [f"[WARN] Manual entry log failed: {rec['error']}"]
+                            [tr("log_manual_entry_failed", error=rec["error"])]
                         )
                         from PyQt6.QtWidgets import QMessageBox
 
                         QMessageBox.warning(
                             self,
-                            "Manual Entry Failed",
-                            f"Failed to log entry: {rec['error']}",
+                            tr("manual_entry_failed"),
+                            tr("manual_entry_failed_msg", error=rec["error"]),
                         )
                 else:
-                    self.append_logs(
-                        [f"[INFO] No match found for manual code: {part_code}"]
-                    )
+                    self.append_logs([tr("log_no_match_manual_code", code=part_code)])
                     # Speak that no match was found
-                    speak(f"No match found for code: {_spell_code(part_code)}.")
+                    speak(tr("speak_no_match_for_code", code=_spell_code(part_code)))
 
                     from PyQt6.QtWidgets import QMessageBox
 
                     QMessageBox.information(
                         self,
-                        "No Match Found",
-                        f"No match found for part code: {part_code}\n\nYou can still add it manually to your inventory.",
+                        tr("no_match_found"),
+                        tr("no_match_for_part_code", code=part_code),
                     )
             else:
                 error_msg = result.get("error", "Unknown error")
-                self.append_logs([f"[ERROR] Manual entry search failed: {error_msg}"])
+                self.append_logs(
+                    [tr("log_manual_entry_search_failed", error=error_msg)]
+                )
                 from PyQt6.QtWidgets import QMessageBox
 
                 # Check if it's an Excel read error
                 if not self._show_excel_error_popup(result.get("excel_error")):
                     QMessageBox.critical(
                         self,
-                        "Search Failed",
-                        f"Unable to search for part code '{part_code}'.\n\nPlease check that your catalog file is set up correctly in Settings.",
+                        tr("search_failed"),
+                        tr("unable_search_part_code", code=part_code),
                     )
 
         except Exception as e:
-            self.append_logs([f"[ERROR] Manual entry error: {str(e)}"])
+            self.append_logs([tr("log_manual_entry_error", error=str(e))])
             from PyQt6.QtWidgets import QMessageBox
 
             QMessageBox.critical(
                 self,
-                "Manual Entry Error",
-                f"An error occurred: {str(e)}",
+                tr("manual_entry_error"),
+                tr("error_occurred", error=str(e)),
             )
 
     def _on_generate_invoice_requested(self):
@@ -1304,16 +1290,16 @@ class MainWindow(QWidget):
         if not results_path or not os.path.exists(results_path):
             QMessageBox.warning(
                 self,
-                "Generate Invoice",
-                "No results file found. Please run some OCR operations first to generate results.",
+                tr("generate_invoice_title"),
+                tr("no_results_file_invoice"),
             )
             return
 
         if not catalog_path or not os.path.exists(catalog_path):
             QMessageBox.critical(
                 self,
-                "Generate Invoice",
-                "Please choose a valid Catalog Excel file first.",
+                tr("generate_invoice_title"),
+                tr("choose_valid_catalog_first"),
             )
             return
 
@@ -1322,8 +1308,8 @@ class MainWindow(QWidget):
             error_msg = self.settings_widget.get_weight_price_error_message()
             QMessageBox.critical(
                 self,
-                "Generate Invoice",
-                f"Weight Price validation failed:\n{error_msg}",
+                tr("generate_invoice_title"),
+                tr("weight_price_validation_failed", error=error_msg),
             )
             return
 
@@ -1331,9 +1317,9 @@ class MainWindow(QWidget):
         default_name = f"invoice_{os.path.basename(results_path)}"
         output_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Invoice As",
+            tr("save_invoice_as"),
             default_name,
-            filter="Excel (*.xlsx);;All files (*)",
+            filter=tr("excel_filter"),
             initialFilter="Excel (*.xlsx)",
         )
 
@@ -1344,7 +1330,7 @@ class MainWindow(QWidget):
         if not output_path.endswith(".xlsx"):
             output_path += ".xlsx"
 
-        self.append_logs(["[INFO] Generating invoice..."])
+        self.append_logs([tr("log_generating_invoice")])
 
         # Generate invoice
         weight_price = self.settings_widget.get_weight_price()
@@ -1355,26 +1341,28 @@ class MainWindow(QWidget):
         if result.get("ok"):
             self.append_logs(
                 [
-                    f"[INFO] Invoice generated successfully!",
-                    f"[INFO] Output: {result['path']}",
-                    f"[INFO] Clients processed: {result.get('clients', 0)}",
+                    tr("log_invoice_success"),
+                    tr("log_invoice_output", path=result["path"]),
+                    tr("log_invoice_clients", clients=result.get("clients", 0)),
                 ]
             )
 
             QMessageBox.information(
                 self,
-                "Invoice Generated",
-                f"Invoice generated successfully!\n\nFile: {result['path']}\nClients: {result.get('clients', 0)}",
+                tr("invoice_generated"),
+                tr(
+                    "invoice_generated_msg",
+                    path=result["path"],
+                    clients=result.get("clients", 0),
+                ),
             )
         else:
-            self.append_logs(
-                [f"[ERROR] Invoice generation failed: {result.get('error')}"]
-            )
+            self.append_logs([tr("log_invoice_failed", error=result.get("error"))])
 
             QMessageBox.critical(
                 self,
-                "Invoice Generation Failed",
-                f"Failed to generate invoice:\n\n{result.get('error')}",
+                tr("invoice_generation_failed"),
+                tr("invoice_generation_failed_msg", error=result.get("error")),
             )
 
     def append_logs(self, lines):

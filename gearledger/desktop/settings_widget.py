@@ -14,12 +14,14 @@ from PyQt6.QtWidgets import (
     QLineEdit,
 )
 
+from gearledger.desktop.translations import tr
+
 
 class SettingsWidget(QGroupBox):
     """Settings and configuration widget."""
 
     def __init__(self, parent=None):
-        super().__init__("Settings", parent)
+        super().__init__(tr("settings_group"), parent)
 
         # Callbacks
         self.on_catalog_changed: Callable[[str], None] | None = None
@@ -36,25 +38,23 @@ class SettingsWidget(QGroupBox):
 
         # Catalog Excel file
         catalog_layout = QHBoxLayout()
-        catalog_layout.addWidget(QLabel("Catalog Excel (lookup):"))
+        catalog_layout.addWidget(QLabel(tr("catalog_excel_lookup")))
         self.catalog_edit = QLineEdit()
-        self.btn_catalog = QPushButton("Browse…")
+        self.btn_catalog = QPushButton(tr("browse"))
         catalog_layout.addWidget(self.catalog_edit, 1)
         catalog_layout.addWidget(self.btn_catalog)
         layout.addLayout(catalog_layout)
 
         # Results Excel file
         results_layout = QHBoxLayout()
-        results_layout.addWidget(QLabel("Results Excel (ledger):"))
+        results_layout.addWidget(QLabel(tr("results_excel_ledger")))
         self.results_edit = QLineEdit()
         # Leave empty initially - will auto-generate on first use
-        self.btn_results = QPushButton("Browse…")
-        self.btn_reset_results = QPushButton("Reset")
-        self.btn_reset_results.setToolTip(
-            "Clear selection and start with new empty results file"
-        )
-        self.btn_download = QPushButton("Download")
-        self.btn_generate_invoice = QPushButton("Generate Invoice")
+        self.btn_results = QPushButton(tr("browse"))
+        self.btn_reset_results = QPushButton(tr("reset"))
+        self.btn_reset_results.setToolTip(tr("reset_tooltip"))
+        self.btn_download = QPushButton(tr("download"))
+        self.btn_generate_invoice = QPushButton(tr("generate_invoice"))
         self.btn_generate_invoice.setStyleSheet("background-color: #27ae60;")
         results_layout.addWidget(self.results_edit, 1)
         results_layout.addWidget(self.btn_results)
@@ -64,28 +64,28 @@ class SettingsWidget(QGroupBox):
         layout.addLayout(results_layout)
 
         # Manual entry section (hidden by default, shown only in Manual tab)
-        self.manual_entry_box = QGroupBox("Manual Entry (without scanning)")
+        self.manual_entry_box = QGroupBox(tr("manual_entry_without_scanning"))
         self.manual_entry_box.setVisible(False)  # Hide in Automated tab
         manual_entry_layout = QVBoxLayout(self.manual_entry_box)
 
         # Part code input
         code_layout = QHBoxLayout()
-        code_layout.addWidget(QLabel("Part Code:"))
+        code_layout.addWidget(QLabel(tr("part_code_label")))
         self.manual_part_code = QLineEdit()
-        self.manual_part_code.setPlaceholderText("Enter part code (e.g., PK-5396)")
+        self.manual_part_code.setPlaceholderText(tr("part_code_placeholder_short"))
         code_layout.addWidget(self.manual_part_code, 1)
         manual_entry_layout.addLayout(code_layout)
 
         # Weight input
         weight_layout = QHBoxLayout()
-        weight_layout.addWidget(QLabel("Weight (kg):"))
+        weight_layout.addWidget(QLabel(tr("weight_kg_label")))
         self.manual_weight = QLineEdit()
-        self.manual_weight.setPlaceholderText("Enter weight")
+        self.manual_weight.setPlaceholderText(tr("enter_weight"))
         weight_layout.addWidget(self.manual_weight, 1)
         manual_entry_layout.addLayout(weight_layout)
 
         # Add button
-        self.btn_add_manual = QPushButton("Add to Results")
+        self.btn_add_manual = QPushButton(tr("add_to_results"))
         manual_entry_layout.addWidget(self.btn_add_manual)
 
         layout.addWidget(self.manual_entry_box)
@@ -124,7 +124,7 @@ class SettingsWidget(QGroupBox):
 
         fn, _ = QFileDialog.getOpenFileName(
             self,
-            "Choose Catalog Excel (lookup)",
+            tr("choose_catalog_excel"),
             filter="Excel (*.xlsx *.xlsm *.xls);;All files (*)",
         )
         if fn:
@@ -140,17 +140,9 @@ class SettingsWidget(QGroupBox):
                 file_name = os.path.basename(fn)
                 msg = QMessageBox(self)
                 msg.setIcon(QMessageBox.Icon.Warning)
-                msg.setWindowTitle("Excel File Problem")
-                msg.setText("The catalog file cannot be opened")
-                msg.setInformativeText(
-                    f"The file '{file_name}' appears to be corrupted or in an unsupported format.\n\n"
-                    f"To fix this:\n\n"
-                    f"1. Open the file in Microsoft Excel or LibreOffice\n"
-                    f"2. If it opens, click File → Save As\n"
-                    f"3. Choose 'Excel Workbook (.xlsx)' as the format\n"
-                    f"4. Save the file\n"
-                    f"5. Select the new .xlsx file as Catalog"
-                )
+                msg.setWindowTitle(tr("excel_file_problem"))
+                msg.setText(tr("catalog_cannot_open"))
+                msg.setInformativeText(tr("catalog_corrupted_msg", file=file_name))
                 msg.setStandardButtons(QMessageBox.StandardButton.Ok)
                 msg.exec()
                 return  # Don't set the file path if it's corrupted
@@ -160,15 +152,9 @@ class SettingsWidget(QGroupBox):
                 file_name = os.path.basename(fn)
                 msg = QMessageBox(self)
                 msg.setIcon(QMessageBox.Icon.Warning)
-                msg.setWindowTitle("Empty Catalog File")
-                msg.setText("The catalog file is empty")
-                msg.setInformativeText(
-                    f"The file '{file_name}' does not contain any data rows.\n\n"
-                    f"Please ensure your Excel file has:\n"
-                    f"• Column headers in the first row\n"
-                    f"• At least one data row with part codes\n\n"
-                    f"The file appears to be empty or only contains headers."
-                )
+                msg.setWindowTitle(tr("empty_catalog_file"))
+                msg.setText(tr("catalog_empty"))
+                msg.setInformativeText(tr("catalog_empty_msg", file=file_name))
                 msg.setStandardButtons(QMessageBox.StandardButton.Ok)
                 msg.exec()
                 return  # Don't set the file path if it's empty
@@ -213,16 +199,10 @@ class SettingsWidget(QGroupBox):
                 file_name = os.path.basename(fn)
                 msg = QMessageBox(self)
                 msg.setIcon(QMessageBox.Icon.Warning)
-                msg.setWindowTitle("Invalid Catalog File")
-                msg.setText("The catalog file is missing required columns")
+                msg.setWindowTitle(tr("invalid_catalog_file"))
+                msg.setText(tr("catalog_missing_columns"))
                 msg.setInformativeText(
-                    f"The file '{file_name}' does not contain a part code column.\n\n"
-                    f"Required column (one of):\n"
-                    f"• Номер / Артикул\n"
-                    f"• номер / арт / artikul / article / part / sku / code / number\n\n"
-                    f"Optional column:\n"
-                    f"• Клиент / client / name / buyer / vendor / customer\n\n"
-                    f"Please check your Excel file and ensure it has the correct column headers."
+                    tr("catalog_missing_columns_msg", file=file_name)
                 )
                 msg.setStandardButtons(QMessageBox.StandardButton.Ok)
                 msg.exec()
@@ -239,7 +219,7 @@ class SettingsWidget(QGroupBox):
 
         fn, _ = QFileDialog.getOpenFileName(
             self,
-            "Choose Results Excel (ledger)",
+            tr("choose_results_excel"),
             filter="Excel (*.xlsx *.xlsm *.xls);;All files (*)",
         )
         if fn:
@@ -258,9 +238,8 @@ class SettingsWidget(QGroupBox):
         # Ask for confirmation
         reply = QMessageBox.question(
             self,
-            "Reset Results File",
-            "This will clear the current results file selection and create a new empty file.\n"
-            "Continue?",
+            tr("reset_results_file"),
+            tr("reset_results_confirm"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -290,14 +269,14 @@ class SettingsWidget(QGroupBox):
 
             QMessageBox.information(
                 self,
-                "Reset Complete",
-                f"New empty results file created:\n{new_path}",
+                tr("reset_complete"),
+                tr("reset_complete_msg", path=new_path),
             )
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "Reset Failed",
-                f"Failed to create new results file:\n{str(e)}",
+                tr("reset_failed"),
+                tr("reset_failed_msg", error=str(e)),
             )
 
     def download_results_excel(self):
@@ -309,16 +288,16 @@ class SettingsWidget(QGroupBox):
         if not current_path or not os.path.exists(current_path):
             QMessageBox.warning(
                 self,
-                "Download Results",
-                "No results file found. Please run some OCR operations first to generate results.",
+                tr("download_results"),
+                tr("no_results_file"),
             )
             return
 
         # Get save location
         fn, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Results Excel File",
-            filter="Excel (*.xlsx);;All files (*)",
+            tr("save_results_excel"),
+            filter=tr("excel_filter"),
             initialFilter="Excel (*.xlsx)",
         )
 
@@ -333,14 +312,14 @@ class SettingsWidget(QGroupBox):
 
                 QMessageBox.information(
                     self,
-                    "Download Complete",
-                    f"Results file saved successfully to:\n{fn}",
+                    tr("download_complete"),
+                    tr("download_complete_msg", path=fn),
                 )
             except Exception as e:
                 QMessageBox.critical(
                     self,
-                    "Download Failed",
-                    f"Failed to save results file:\n{str(e)}",
+                    tr("download_failed"),
+                    tr("download_failed_msg", error=str(e)),
                 )
 
     def generate_invoice(self):
@@ -358,16 +337,16 @@ class SettingsWidget(QGroupBox):
         if not part_code:
             QMessageBox.warning(
                 self,
-                "Manual Entry",
-                "Please enter a part code.",
+                tr("manual_entry"),
+                tr("enter_part_code"),
             )
             return
 
         if not weight_text:
             QMessageBox.warning(
                 self,
-                "Manual Entry",
-                "Please enter the weight.",
+                tr("manual_entry"),
+                tr("enter_the_weight"),
             )
             return
 
@@ -376,15 +355,15 @@ class SettingsWidget(QGroupBox):
             if weight <= 0:
                 QMessageBox.warning(
                     self,
-                    "Manual Entry",
-                    "Weight must be greater than 0.",
+                    tr("manual_entry"),
+                    tr("weight_greater_than_zero"),
                 )
                 return
         except ValueError:
             QMessageBox.warning(
                 self,
-                "Manual Entry",
-                "Please enter a valid weight number.",
+                tr("manual_entry"),
+                tr("enter_valid_weight"),
             )
             return
 
@@ -496,9 +475,7 @@ class SettingsWidget(QGroupBox):
         """Get error message for invalid weight price."""
         price = self.get_weight_price()
         if price <= 0:
-            return (
-                "Weight Price must be greater than 0. Please configure it in Settings."
-            )
+            return tr("weight_price_error")
         return ""
 
     def set_controls_enabled(self, enabled: bool):

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QLabel, QHeaderVie
 from PyQt6.QtGui import QFont, QPalette
 
 from gearledger.result_ledger import COLUMNS
+from gearledger.desktop.translations import tr
 
 
 class PandasModel(QAbstractTableModel):
@@ -102,7 +103,7 @@ class ResultsPane(QWidget):
         self.ledger_path = ledger_path
 
         # Create styled label
-        self.label = QLabel("Results (Excel):")
+        self.label = QLabel(tr("results_excel"))
         self.label.setStyleSheet(
             """
             QLabel {
@@ -203,12 +204,14 @@ class ResultsPane(QWidget):
         lay.addWidget(self.table)
 
         if self.ledger_path:
-            self.label.setText(f"Results (Excel): {os.path.basename(self.ledger_path)}")
+            self.label.setText(
+                f"{tr('results_excel')} {os.path.basename(self.ledger_path)}"
+            )
 
     def set_ledger_path(self, path: str):
         self.ledger_path = path or ""
         self.label.setText(
-            f"Results (Excel): {os.path.basename(self.ledger_path) if self.ledger_path else ''}"
+            f"{tr('results_excel')} {os.path.basename(self.ledger_path) if self.ledger_path else ''}"
         )
         self.ledger_path_changed.emit(self.ledger_path)
         self.refresh()

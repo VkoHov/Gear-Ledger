@@ -6,12 +6,14 @@ from typing import List
 from PyQt6.QtGui import QTextCursor
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QTextEdit
 
+from gearledger.desktop.translations import tr
+
 
 class LogsWidget(QGroupBox):
     """Logs display widget."""
 
     def __init__(self, parent=None):
-        super().__init__("Logs", parent)
+        super().__init__(tr("logs"), parent)
 
         self._setup_ui()
 

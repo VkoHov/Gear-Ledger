@@ -116,9 +116,10 @@ def record_match(
             except Exception:
                 return 0
 
+        # Only increment quantity, NOT weight (weight stays the same for existing items)
         df.loc[idx, "Количество"] = _to_int(df.loc[idx, "Количество"]) + qty_inc
-        new_weight = _to_int(df.loc[idx, "Вес"]) + weight_inc
-        df.loc[idx, "Вес"] = new_weight
+        # Keep existing weight - don't add new weight for duplicate items
+        new_weight = _to_int(df.loc[idx, "Вес"])
         df.loc[idx, "Последнее обновление"] = now
 
         # Update catalog fields if they're empty and we have new data

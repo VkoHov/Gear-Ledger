@@ -13,8 +13,6 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QLabel,
     QPushButton,
-    QLineEdit,
-    QComboBox,
     QMessageBox,
 )
 
@@ -66,99 +64,76 @@ class ScaleWidget(QGroupBox):
     def _setup_ui(self):
         """Set up the user interface."""
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 12, 8, 8)
+        layout.setSpacing(6)
 
-        # Scale settings
-        settings_layout = QHBoxLayout()
-        settings_layout.addWidget(QLabel("Scale Port:"))
-        self.port_combo = QComboBox()
-        self.port_combo.setEditable(True)
-        self.port_combo.addItems(
-            ["", "/dev/ttyUSB0", "/dev/ttyUSB1", "COM1", "COM2", "COM3"]
-        )
-        if self.scale_port:
-            # Add custom port if not in list
-            if self.scale_port not in [
-                self.port_combo.itemText(i) for i in range(self.port_combo.count())
-            ]:
-                self.port_combo.addItem(self.scale_port)
-            self.port_combo.setCurrentText(self.scale_port)
-        settings_layout.addWidget(self.port_combo, 1)
-
-        settings_layout.addWidget(QLabel("Baudrate:"))
-        self.baudrate_combo = QComboBox()
-        self.baudrate_combo.addItems(["9600", "19200", "38400", "57600", "115200"])
-        self.baudrate_combo.setCurrentText(str(self.scale_baudrate))
-        settings_layout.addWidget(self.baudrate_combo)
-        layout.addLayout(settings_layout)
-
-        # Weight display
-        weight_layout = QVBoxLayout()
-        self.weight_label = QLabel("Weight: -- kg")
+        # Weight display (compact)
+        self.weight_label = QLabel("-- kg")
         self.weight_label.setStyleSheet(
             """
             QLabel {
-                font-size: 24px;
+                font-size: 28px;
                 font-weight: bold;
                 color: #2c3e50;
-                padding: 10px;
+                padding: 8px 12px;
                 border: 2px solid #bdc3c7;
                 border-radius: 8px;
                 background-color: #ffffff;
-                text-align: center;
             }
         """
         )
         self.weight_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        weight_layout.addWidget(self.weight_label)
+        layout.addWidget(self.weight_label)
 
-        # Status
-        self.status_label = QLabel("Status: Disconnected")
+        # Status (compact)
+        self.status_label = QLabel("Disconnected")
         self.status_label.setStyleSheet(
             """
             QLabel {
-                font-size: 12px;
+                font-size: 11px;
                 color: #7f8c8d;
-                padding: 5px;
+                padding: 2px;
             }
         """
         )
-        weight_layout.addWidget(self.status_label)
-        layout.addLayout(weight_layout)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
 
-        # Controls
+        # Controls (compact row)
         controls_layout = QHBoxLayout()
-        controls_layout.setSpacing(5)  # Add spacing between buttons
-        self.btn_connect = QPushButton("Connect Scale")
+        controls_layout.setSpacing(4)
+
+        self.btn_connect = QPushButton("Connect")
+        self.btn_connect.setStyleSheet("padding: 6px 10px; font-size: 10px;")
         self.btn_disconnect = QPushButton("Disconnect")
+        self.btn_disconnect.setStyleSheet("padding: 6px 10px; font-size: 10px;")
         self.btn_disconnect.setEnabled(False)
         self.btn_tare = QPushButton("Tare")
+        self.btn_tare.setStyleSheet("padding: 6px 10px; font-size: 10px;")
         self.btn_tare.setEnabled(False)
 
         controls_layout.addWidget(self.btn_connect)
         controls_layout.addWidget(self.btn_disconnect)
         controls_layout.addWidget(self.btn_tare)
-        controls_layout.addStretch(1)
         layout.addLayout(controls_layout)
 
-        # Set minimum width for the entire widget to ensure all controls are visible
-        # Needs space for: port/baudrate row, weight display, 3 buttons, status, auto-capture label
-        self.setMinimumWidth(350)
-
-        # Auto-capture settings
-        auto_layout = QHBoxLayout()
-        self.auto_capture_checkbox = QLabel("Auto-capture when weight stabilizes")
-        self.auto_capture_checkbox.setStyleSheet(
+        # Auto-capture note (compact)
+        auto_label = QLabel("⚡ Auto-capture on stable weight")
+        auto_label.setStyleSheet(
             """
             QLabel {
-                font-size: 11px;
-                color: #34495e;
+                font-size: 9px;
+                color: #7f8c8d;
                 font-style: italic;
+                padding: 2px 0;
             }
         """
         )
-        auto_layout.addWidget(self.auto_capture_checkbox)
-        auto_layout.addStretch(1)
-        layout.addLayout(auto_layout)
+        auto_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(auto_label)
+
+        # Set compact minimum width
+        self.setMinimumWidth(180)
 
     def _setup_connections(self):
         """Set up signal connections."""
@@ -181,28 +156,28 @@ class ScaleWidget(QGroupBox):
 
     def connect_scale(self):
         """Connect to the scale (asynchronously to avoid blocking UI)."""
-        port = self.port_combo.currentText().strip()
+        # Load port/baudrate from settings
+        try:
+            from gearledger.desktop.settings_manager import load_settings
+
+            settings = load_settings()
+            port = settings.scale_port or self.scale_port
+            baudrate = settings.scale_baudrate or self.scale_baudrate
+        except Exception:
+            port = self.scale_port
+            baudrate = self.scale_baudrate
+
         if not port:
             QMessageBox.warning(
                 self,
                 "Scale Connection",
-                "Please select a scale port.",
-            )
-            return
-
-        try:
-            baudrate = int(self.baudrate_combo.currentText())
-        except ValueError:
-            QMessageBox.warning(
-                self,
-                "Scale Connection",
-                "Invalid baudrate selected.",
+                "Please configure the scale port in Settings.",
             )
             return
 
         # Disable connect button and show connecting status
         self.btn_connect.setEnabled(False)
-        self.status_label.setText("Status: Connecting...")
+        self.status_label.setText("Connecting...")
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -249,7 +224,7 @@ class ScaleWidget(QGroupBox):
         self.btn_tare.setEnabled(True)
 
         if test is not None:
-            self.weight_label.setText(f"Weight: {test}")
+            self.weight_label.setText(f"{test}")
             msg = f"Successfully connected to scale on {port}.\nCurrent weight: {test}"
         else:
             msg = (
@@ -258,7 +233,7 @@ class ScaleWidget(QGroupBox):
                 "This is normal if the scale is empty or only sends data when weight changes."
             )
 
-        self.status_label.setText("Status: Connected")
+        self.status_label.setText("Connected")
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -299,7 +274,7 @@ class ScaleWidget(QGroupBox):
     def _on_scale_connection_error(self, error_msg, port, baudrate):
         """Handle scale connection error (called from worker thread)."""
         self.btn_connect.setEnabled(True)
-        self.status_label.setText("Status: Disconnected")
+        self.status_label.setText("Disconnected")
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -341,7 +316,7 @@ class ScaleWidget(QGroupBox):
         self.btn_disconnect.setEnabled(False)
         self.btn_tare.setEnabled(False)
 
-        self.status_label.setText("Status: Disconnected")
+        self.status_label.setText("Disconnected")
         self.status_label.setStyleSheet(
             """
             QLabel {
@@ -352,7 +327,7 @@ class ScaleWidget(QGroupBox):
         """
         )
 
-        self.weight_label.setText("Weight: -- kg")
+        self.weight_label.setText("-- kg")
         self.current_weight = 0.0
         self.last_stable_weight = None  # Reset to None
         self.stable_start_time = None
@@ -444,7 +419,7 @@ class ScaleWidget(QGroupBox):
                     return
                 # If current weight is also zero, just update display but don't check stability
                 self.current_weight = new_weight
-                self.weight_label.setText(f"Weight: {new_weight:.3f} kg")
+                self.weight_label.setText(f"{new_weight:.3f} kg")
                 return
 
             # Only update display/emit signal if weight changed significantly (to avoid noise)
@@ -453,7 +428,7 @@ class ScaleWidget(QGroupBox):
             if weight_diff >= 0.001:  # Weight changed by at least 1 gram
                 self.current_weight = new_weight
                 # Update display
-                self.weight_label.setText(f"Weight: {new_weight:.3f} kg")
+                self.weight_label.setText(f"{new_weight:.3f} kg")
                 self.weight_changed.emit(new_weight)
             # If weight hasn't changed, we still need to check stability below
 
@@ -504,7 +479,7 @@ class ScaleWidget(QGroupBox):
             self.is_monitoring = False
             self.btn_connect.setEnabled(True)
             self.btn_disconnect.setEnabled(False)
-            self.status_label.setText("Status: Connection Lost")
+            self.status_label.setText("Connection Lost")
             self.status_label.setStyleSheet(
                 """
                 QLabel {
@@ -531,7 +506,7 @@ class ScaleWidget(QGroupBox):
         """Handle weight changed signal."""
         # Update status to show weight is changing
         if self.stable_start_time is None:
-            self.status_label.setText("Status: Weight changing...")
+            self.status_label.setText("Changing...")
             self.status_label.setStyleSheet(
                 """
                 QLabel {
@@ -542,7 +517,7 @@ class ScaleWidget(QGroupBox):
             """
             )
         else:
-            self.status_label.setText("Status: Stabilizing...")
+            self.status_label.setText("Stabilizing...")
             self.status_label.setStyleSheet(
                 """
                 QLabel {
@@ -567,8 +542,6 @@ class ScaleWidget(QGroupBox):
             self.btn_connect.setEnabled(enabled)
         self.btn_disconnect.setEnabled(enabled and self.is_monitoring)
         self.btn_tare.setEnabled(enabled and self.is_monitoring)
-        self.port_combo.setEnabled(enabled and not self.is_monitoring)
-        self.baudrate_combo.setEnabled(enabled and not self.is_monitoring)
 
     def append_logs(self, lines):
         """Append log lines (placeholder for compatibility)."""

@@ -488,9 +488,9 @@ class MainWindow(QWidget):
         scale_camera_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Set minimum widths to ensure all important info is visible
-        # Scale widget: needs space for port/baudrate controls, weight display, 3 buttons
-        self.scale_widget.setMinimumWidth(350)
-        # Camera widget: needs space for preview and 3 buttons (reduced from 640 to allow flexibility)
+        # Scale widget: compact - just weight display and buttons
+        self.scale_widget.setMinimumWidth(200)
+        # Camera widget: needs space for preview and 3 buttons
         self.camera_widget.setMinimumWidth(480)
 
         # Add widgets to splitter with stretch factors
@@ -929,8 +929,7 @@ class MainWindow(QWidget):
             os.environ["VISION_BACKEND"] = settings.vision_backend
 
             # Update scale widget with new settings
-            if settings.scale_port:
-                self.scale_widget.port_combo.setCurrentText(settings.scale_port)
+            self.scale_widget.scale_port = settings.scale_port
             self.scale_widget.scale_baudrate = settings.scale_baudrate
             self.scale_widget.weight_threshold = settings.weight_threshold
             self.scale_widget.stable_time = settings.stable_time

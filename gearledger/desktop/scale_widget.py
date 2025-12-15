@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QMessageBox,
+    QLineEdit,
+    QStackedWidget,
 )
 
 from gearledger.desktop.scale import read_weight_once, parse_weight
@@ -25,9 +27,10 @@ class ScaleWidget(QGroupBox):
     # Signals
     weight_ready = pyqtSignal(float)  # Emitted when weight is stable
     weight_changed = pyqtSignal(float)  # Emitted when weight changes
+    manual_weight_set = pyqtSignal(float)  # Emitted when manual weight is set
 
     def __init__(self, parent=None):
-        super().__init__("Scale Integration", parent)
+        super().__init__("Weight Input", parent)
 
         # Load scale settings from settings manager (if available)
         try:
@@ -57,6 +60,10 @@ class ScaleWidget(QGroupBox):
         # Callbacks
         self.on_weight_ready: Callable[[float], None] | None = None
 
+        # Mode state
+        self.is_manual_mode = False
+        self.manual_weight_value = 0.0
+
         self._setup_ui()
         self._setup_connections()
         self._setup_timers()
@@ -66,6 +73,60 @@ class ScaleWidget(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 12, 8, 8)
         layout.setSpacing(6)
+
+        # Mode toggle buttons
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(0)
+
+        self.btn_scale_mode = QPushButton("⚖️ Scale")
+        self.btn_manual_mode = QPushButton("✏️ Manual")
+
+        # Style for toggle buttons
+        active_style = """
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """
+        inactive_style = """
+            QPushButton {
+                background-color: #ecf0f1;
+                color: #7f8c8d;
+                border: none;
+                padding: 6px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #bdc3c7;
+            }
+        """
+
+        self.btn_scale_mode.setStyleSheet(
+            active_style
+            + "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+        )
+        self.btn_manual_mode.setStyleSheet(
+            inactive_style
+            + "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+        )
+
+        mode_layout.addWidget(self.btn_scale_mode)
+        mode_layout.addWidget(self.btn_manual_mode)
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
+
+        # Stacked widget for different modes
+        self.mode_stack = QStackedWidget()
+
+        # === Scale mode page ===
+        scale_page = QWidget()
+        scale_layout = QVBoxLayout(scale_page)
+        scale_layout.setContentsMargins(0, 0, 0, 0)
+        scale_layout.setSpacing(4)
 
         # Weight display (compact)
         self.weight_label = QLabel("-- kg")
@@ -83,7 +144,7 @@ class ScaleWidget(QGroupBox):
         """
         )
         self.weight_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.weight_label)
+        scale_layout.addWidget(self.weight_label)
 
         # Status (compact)
         self.status_label = QLabel("Disconnected")
@@ -97,7 +158,7 @@ class ScaleWidget(QGroupBox):
         """
         )
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.status_label)
+        scale_layout.addWidget(self.status_label)
 
         # Controls (compact row)
         controls_layout = QHBoxLayout()
@@ -115,7 +176,7 @@ class ScaleWidget(QGroupBox):
         controls_layout.addWidget(self.btn_connect)
         controls_layout.addWidget(self.btn_disconnect)
         controls_layout.addWidget(self.btn_tare)
-        layout.addLayout(controls_layout)
+        scale_layout.addLayout(controls_layout)
 
         # Auto-capture note (compact)
         auto_label = QLabel("⚡ Auto-capture on stable weight")
@@ -130,20 +191,176 @@ class ScaleWidget(QGroupBox):
         """
         )
         auto_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(auto_label)
+        scale_layout.addWidget(auto_label)
+
+        self.mode_stack.addWidget(scale_page)
+
+        # === Manual mode page ===
+        manual_page = QWidget()
+        manual_layout = QVBoxLayout(manual_page)
+        manual_layout.setContentsMargins(0, 0, 0, 0)
+        manual_layout.setSpacing(8)
+
+        # Manual weight input
+        self.manual_weight_input = QLineEdit()
+        self.manual_weight_input.setPlaceholderText("Enter weight (kg)")
+        self.manual_weight_input.setStyleSheet(
+            """
+            QLineEdit {
+                font-size: 18px;
+                padding: 10px;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                background-color: #ffffff;
+            }
+            QLineEdit:focus {
+                border-color: #3498db;
+            }
+        """
+        )
+        self.manual_weight_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        manual_layout.addWidget(self.manual_weight_input)
+
+        # Manual weight display (shows confirmed weight)
+        self.manual_weight_display = QLabel("Weight: -- kg")
+        self.manual_weight_display.setStyleSheet(
+            """
+            QLabel {
+                font-size: 14px;
+                color: #27ae60;
+                padding: 4px;
+                font-weight: bold;
+            }
+        """
+        )
+        self.manual_weight_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        manual_layout.addWidget(self.manual_weight_display)
+
+        # Set weight button
+        self.btn_set_weight = QPushButton("Set Weight")
+        self.btn_set_weight.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                padding: 8px 16px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #219a52;
+            }
+        """
+        )
+        manual_layout.addWidget(self.btn_set_weight)
+
+        manual_layout.addStretch()
+        self.mode_stack.addWidget(manual_page)
+
+        layout.addWidget(self.mode_stack)
 
         # Set compact minimum width
-        self.setMinimumWidth(180)
+        self.setMinimumWidth(200)
 
     def _setup_connections(self):
         """Set up signal connections."""
+        # Mode toggle
+        self.btn_scale_mode.clicked.connect(lambda: self._set_mode(False))
+        self.btn_manual_mode.clicked.connect(lambda: self._set_mode(True))
+
+        # Scale mode connections
         self.btn_connect.clicked.connect(self.connect_scale)
         self.btn_disconnect.clicked.connect(self.disconnect_scale)
         self.btn_tare.clicked.connect(self.tare_scale)
 
+        # Manual mode connections
+        self.btn_set_weight.clicked.connect(self._set_manual_weight)
+        self.manual_weight_input.returnPressed.connect(self._set_manual_weight)
+
         # Connect weight signals
         self.weight_ready.connect(self._on_weight_ready)
         self.weight_changed.connect(self._on_weight_changed)
+
+    def _set_mode(self, manual: bool):
+        """Switch between scale and manual mode."""
+        self.is_manual_mode = manual
+
+        # Update toggle button styles
+        active_style = """
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """
+        inactive_style = """
+            QPushButton {
+                background-color: #ecf0f1;
+                color: #7f8c8d;
+                border: none;
+                padding: 6px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #bdc3c7;
+            }
+        """
+
+        if manual:
+            self.btn_scale_mode.setStyleSheet(
+                inactive_style
+                + "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+            )
+            self.btn_manual_mode.setStyleSheet(
+                active_style
+                + "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+            )
+            self.mode_stack.setCurrentIndex(1)
+        else:
+            self.btn_scale_mode.setStyleSheet(
+                active_style
+                + "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+            )
+            self.btn_manual_mode.setStyleSheet(
+                inactive_style
+                + "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+            )
+            self.mode_stack.setCurrentIndex(0)
+
+    def _set_manual_weight(self):
+        """Set weight from manual input."""
+        try:
+            weight_text = self.manual_weight_input.text().strip()
+            if not weight_text:
+                return
+
+            weight = float(weight_text)
+            if weight <= 0:
+                QMessageBox.warning(
+                    self, "Invalid Weight", "Weight must be greater than 0."
+                )
+                return
+
+            self.manual_weight_value = weight
+            self.manual_weight_display.setText(f"Weight: {weight:.3f} kg")
+            self.manual_weight_display.setStyleSheet(
+                """
+                QLabel {
+                    font-size: 14px;
+                    color: #27ae60;
+                    padding: 4px;
+                    font-weight: bold;
+                }
+            """
+            )
+            self.manual_weight_set.emit(weight)
+
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Weight", "Please enter a valid number.")
 
     def _setup_timers(self):
         """Set up monitoring timers."""
@@ -529,7 +746,9 @@ class ScaleWidget(QGroupBox):
             )
 
     def get_current_weight(self) -> float:
-        """Get the current weight reading."""
+        """Get the current weight reading (from scale or manual input)."""
+        if self.is_manual_mode:
+            return self.manual_weight_value
         return self.current_weight
 
     def is_connected(self) -> bool:

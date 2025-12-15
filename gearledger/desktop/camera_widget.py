@@ -18,6 +18,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QMessageBox,
+    QLineEdit,
+    QStackedWidget,
 )
 
 # Import low-level camera utilities (consistent with scale_widget.py structure)
@@ -44,8 +46,11 @@ def get_camera_settings():
 class CameraWidget(QGroupBox):
     """Camera preview and control widget."""
 
+    # Signals
+    manual_code_submitted = pyqtSignal(str)  # Emitted when manual code is submitted
+
     def __init__(self, parent=None):
-        super().__init__("Camera", parent)
+        super().__init__("Item Input", parent)
 
         # Camera state
         self.cap = None
@@ -54,8 +59,13 @@ class CameraWidget(QGroupBox):
         self._captured_image_path: str | None = None  # Path to captured image
         self._camera_thread: QThread | None = None  # For async camera opening
 
+        # Mode state
+        self.is_manual_mode = False
+        self.manual_code_value = ""
+
         # Callbacks
         self.on_capture_callback: Callable[[str], None] | None = None
+        self.on_manual_code_callback: Callable[[str], None] | None = None
 
         self._setup_ui()
         self._setup_connections()
@@ -66,20 +76,72 @@ class CameraWidget(QGroupBox):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
 
+        # Mode toggle buttons
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(0)
+
+        self.btn_camera_mode = QPushButton("📷 Camera")
+        self.btn_manual_code_mode = QPushButton("✏️ Manual")
+
+        # Style for toggle buttons
+        active_style = """
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """
+        inactive_style = """
+            QPushButton {
+                background-color: #ecf0f1;
+                color: #7f8c8d;
+                border: none;
+                padding: 6px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #bdc3c7;
+            }
+        """
+
+        self.btn_camera_mode.setStyleSheet(
+            active_style
+            + "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+        )
+        self.btn_manual_code_mode.setStyleSheet(
+            inactive_style
+            + "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+        )
+
+        mode_layout.addWidget(self.btn_camera_mode)
+        mode_layout.addWidget(self.btn_manual_code_mode)
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
+
+        # Stacked widget for different modes
+        self.mode_stack = QStackedWidget()
+
+        # === Camera mode page ===
+        camera_page = QWidget()
+        camera_layout = QVBoxLayout(camera_page)
+        camera_layout.setContentsMargins(0, 0, 0, 0)
+        camera_layout.setSpacing(5)
+
         # Camera preview container (to support overlay)
         self.preview_container = QWidget()
-        self.preview_container.setFixedHeight(430)
+        self.preview_container.setFixedHeight(400)
         # Minimum width for camera preview - allow it to shrink but maintain usability
-        self.preview_container.setMinimumWidth(
-            480
-        )  # Reduced from 640 to allow more flexibility
+        self.preview_container.setMinimumWidth(480)
         preview_layout = QVBoxLayout(self.preview_container)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(0)
 
         # Camera preview
         self.preview = QLabel("Camera preview")
-        self.preview.setFixedHeight(430)
+        self.preview.setFixedHeight(400)
         self.preview.setMinimumWidth(480)  # Minimum width to maintain aspect ratio
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setScaledContents(True)  # Allow image to scale with widget size
@@ -122,7 +184,7 @@ class CameraWidget(QGroupBox):
         # Set initial position (will be updated in _update_overlay_position)
         self.processing_overlay.setGeometry(0, 0, 350, 120)
 
-        layout.addWidget(self.preview_container)
+        camera_layout.addWidget(self.preview_container)
 
         # Control buttons
         self.btn_start = QPushButton("Start camera")
@@ -139,17 +201,242 @@ class CameraWidget(QGroupBox):
         button_layout.addWidget(self.btn_stop_cancel)
         button_layout.addStretch(1)
 
-        # Main layout - only add button layout, preview_container already added
-        layout.addLayout(button_layout)
+        camera_layout.addLayout(button_layout)
+        self.mode_stack.addWidget(camera_page)
+
+        # === Manual mode page ===
+        manual_page = QWidget()
+        manual_layout = QVBoxLayout(manual_page)
+        manual_layout.setContentsMargins(0, 0, 0, 0)
+        manual_layout.setSpacing(12)
+
+        # Manual code input area
+        manual_layout.addStretch()
+
+        # Icon/illustration
+        icon_label = QLabel("🏷️")
+        icon_label.setStyleSheet("font-size: 48px;")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        manual_layout.addWidget(icon_label)
+
+        # Instruction label
+        instruction_label = QLabel("Enter Part Code Manually")
+        instruction_label.setStyleSheet(
+            """
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #2c3e50;
+            }
+        """
+        )
+        instruction_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        manual_layout.addWidget(instruction_label)
+
+        # Manual part code input
+        self.manual_code_input = QLineEdit()
+        self.manual_code_input.setPlaceholderText("Enter part code (e.g., PK-5396)")
+        self.manual_code_input.setStyleSheet(
+            """
+            QLineEdit {
+                font-size: 18px;
+                padding: 12px;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                background-color: #ffffff;
+            }
+            QLineEdit:focus {
+                border-color: #3498db;
+            }
+        """
+        )
+        self.manual_code_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.manual_code_input.setMaximumWidth(400)
+
+        # Center the input
+        input_container = QHBoxLayout()
+        input_container.addStretch()
+        input_container.addWidget(self.manual_code_input)
+        input_container.addStretch()
+        manual_layout.addLayout(input_container)
+
+        # Search button
+        self.btn_search_code = QPushButton("🔍 Search & Add")
+        self.btn_search_code.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                padding: 12px 24px;
+                font-size: 14px;
+                font-weight: bold;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #219a52;
+            }
+        """
+        )
+        self.btn_search_code.setMaximumWidth(200)
+
+        # Center the button
+        btn_container = QHBoxLayout()
+        btn_container.addStretch()
+        btn_container.addWidget(self.btn_search_code)
+        btn_container.addStretch()
+        manual_layout.addLayout(btn_container)
+
+        # Result display
+        self.manual_result_label = QLabel("")
+        self.manual_result_label.setStyleSheet(
+            """
+            QLabel {
+                font-size: 14px;
+                color: #7f8c8d;
+                padding: 8px;
+            }
+        """
+        )
+        self.manual_result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.manual_result_label.setWordWrap(True)
+        manual_layout.addWidget(self.manual_result_label)
+
+        manual_layout.addStretch()
+        self.mode_stack.addWidget(manual_page)
+
+        layout.addWidget(self.mode_stack)
 
         # Set minimum width for the entire widget to ensure buttons are visible
         self.setMinimumWidth(480)  # Match preview container minimum
 
     def _setup_connections(self):
         """Set up signal connections."""
+        # Mode toggle
+        self.btn_camera_mode.clicked.connect(lambda: self._set_mode(False))
+        self.btn_manual_code_mode.clicked.connect(lambda: self._set_mode(True))
+
+        # Camera mode connections
         self.btn_start.clicked.connect(self.start_camera)
         self.btn_capture.clicked.connect(self.capture_and_run)
         self.btn_stop_cancel.clicked.connect(self.stop_camera)
+
+        # Manual mode connections
+        self.btn_search_code.clicked.connect(self._submit_manual_code)
+        self.manual_code_input.returnPressed.connect(self._submit_manual_code)
+
+    def _set_mode(self, manual: bool):
+        """Switch between camera and manual mode."""
+        self.is_manual_mode = manual
+
+        # Update toggle button styles
+        active_style = """
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """
+        inactive_style = """
+            QPushButton {
+                background-color: #ecf0f1;
+                color: #7f8c8d;
+                border: none;
+                padding: 6px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #bdc3c7;
+            }
+        """
+
+        if manual:
+            self.btn_camera_mode.setStyleSheet(
+                inactive_style
+                + "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+            )
+            self.btn_manual_code_mode.setStyleSheet(
+                active_style
+                + "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+            )
+            self.mode_stack.setCurrentIndex(1)
+        else:
+            self.btn_camera_mode.setStyleSheet(
+                active_style
+                + "border-top-left-radius: 4px; border-bottom-left-radius: 4px;"
+            )
+            self.btn_manual_code_mode.setStyleSheet(
+                inactive_style
+                + "border-top-right-radius: 4px; border-bottom-right-radius: 4px;"
+            )
+            self.mode_stack.setCurrentIndex(0)
+
+    def _submit_manual_code(self):
+        """Submit manual part code."""
+        code = self.manual_code_input.text().strip()
+        if not code:
+            self.manual_result_label.setText("Please enter a part code")
+            self.manual_result_label.setStyleSheet(
+                """
+                QLabel {
+                    font-size: 14px;
+                    color: #e74c3c;
+                    padding: 8px;
+                }
+            """
+            )
+            return
+
+        self.manual_code_value = code
+        self.manual_result_label.setText("Searching...")
+        self.manual_result_label.setStyleSheet(
+            """
+            QLabel {
+                font-size: 14px;
+                color: #f39c12;
+                padding: 8px;
+            }
+        """
+        )
+
+        # Emit signal and call callback
+        self.manual_code_submitted.emit(code)
+        if self.on_manual_code_callback:
+            self.on_manual_code_callback(code)
+
+    def set_manual_code_callback(self, callback: Callable[[str], None]):
+        """Set the callback function for manual code submission."""
+        self.on_manual_code_callback = callback
+
+    def show_manual_result(self, success: bool, message: str):
+        """Show the result of manual code search."""
+        if success:
+            self.manual_result_label.setText(message)
+            self.manual_result_label.setStyleSheet(
+                """
+                QLabel {
+                    font-size: 14px;
+                    color: #27ae60;
+                    padding: 8px;
+                    font-weight: bold;
+                }
+            """
+            )
+            # Clear the input on success
+            self.manual_code_input.clear()
+        else:
+            self.manual_result_label.setText(message)
+            self.manual_result_label.setStyleSheet(
+                """
+                QLabel {
+                    font-size: 14px;
+                    color: #e74c3c;
+                    padding: 8px;
+                }
+            """
+            )
 
     def set_capture_callback(self, callback: Callable[[str], None]):
         """Set the callback function for when capture is requested."""

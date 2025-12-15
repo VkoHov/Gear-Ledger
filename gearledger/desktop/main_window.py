@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QPushButton,
     QDialog,
-    QTabWidget,
     QGroupBox,
     QLabel,
     QLineEdit,
@@ -353,11 +352,8 @@ class MainWindow(QWidget):
         # Results widget
         self.results_widget = ResultsWidget()
 
-        # Logs widgets (one for each tab)
-        self.logs_widget_automated = LogsWidget()
-        self.logs_widget_manual = LogsWidget()
-        # Keep reference to both for appending logs
-        self.logs_widgets = [self.logs_widget_automated, self.logs_widget_manual]
+        # Logs widget
+        self.logs_widget = LogsWidget()
 
         # Scale widget
         self.scale_widget = ScaleWidget()
@@ -369,6 +365,8 @@ class MainWindow(QWidget):
         """Set up signal connections between widgets."""
         # Camera capture callback
         self.camera_widget.set_capture_callback(self._on_camera_capture)
+        # Camera manual code callback
+        self.camera_widget.set_manual_code_callback(self._on_manual_code_submitted)
 
         # Settings callbacks
         self.settings_widget.set_catalog_changed_callback(self._on_catalog_path_changed)
@@ -389,6 +387,7 @@ class MainWindow(QWidget):
         # Scale widget callbacks
         self.scale_widget.set_weight_ready_callback(self._on_weight_ready)
         self.scale_widget.weight_changed.connect(self._on_weight_changed)
+        self.scale_widget.manual_weight_set.connect(self._on_manual_weight_set)
         self.scale_widget.set_log_callback(self.append_logs)
 
         # Track if camera was auto-started by scale
@@ -399,7 +398,7 @@ class MainWindow(QWidget):
         # Root layout
         outer = QVBoxLayout()
 
-        # Add settings button at the top (global, visible in all tabs)
+        # Add settings button at the top
         settings_btn_layout = QHBoxLayout()
         settings_btn_layout.addStretch(1)
         self.settings_btn = QPushButton("⚙️ Settings")
@@ -421,52 +420,15 @@ class MainWindow(QWidget):
         settings_btn_layout.addWidget(self.settings_btn)
         outer.addLayout(settings_btn_layout)
 
-        # Add Settings widget (file selection) - shared between both tabs
+        # Add Settings widget (file selection)
         outer.addWidget(self.settings_widget)
 
-        # Create tab widget
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet(
-            """
-            QTabWidget::pane {
-                border: 1px solid #bdc3c7;
-                border-radius: 4px;
-                background-color: #ffffff;
-            }
-            QTabBar::tab {
-                background-color: #ecf0f1;
-                color: #2c3e50;
-                padding: 10px 20px;
-                border: 1px solid #bdc3c7;
-                border-bottom: none;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #3498db;
-                color: white;
-                font-weight: bold;
-            }
-            QTabBar::tab:hover {
-                background-color: #d5dbdb;
-            }
-        """
-        )
+        # Create main content area
+        main_content = self._create_main_content()
 
-        # Create Automated tab
-        automated_tab = self._create_automated_tab()
-        self.tab_widget.addTab(automated_tab, "🤖 Automated")
-
-        # Create Manual tab
-        manual_tab = self._create_manual_tab()
-        self.tab_widget.addTab(manual_tab, "✋ Manual")
-
-        # Set Automated as default (index 0)
-        self.tab_widget.setCurrentIndex(0)
-
-        # Splitter for resizable layout (tabs on top, results pane on bottom)
+        # Splitter for resizable layout (main content on top, results pane on bottom)
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self.tab_widget)
+        splitter.addWidget(main_content)
         splitter.addWidget(self.results_pane)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -474,10 +436,10 @@ class MainWindow(QWidget):
         outer.addWidget(splitter)
         self.setLayout(outer)
 
-    def _create_automated_tab(self) -> QWidget:
-        """Create the Automated tab content."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+    def _create_main_content(self) -> QWidget:
+        """Create the main content area with scale and camera."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Container for scrollable content
@@ -506,65 +468,14 @@ class MainWindow(QWidget):
 
         container_layout.addWidget(scale_camera_splitter)
 
-        # Add widgets for automated mode (settings widget is now above tabs)
+        # Add results widget
         container_layout.addWidget(self.results_widget)
-        container_layout.addWidget(self.logs_widget_automated, 1)
-
-        # Store reference to container layout for updating logs visibility
-        self.automated_container_layout = container_layout
-
-        # Make scrollable
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setWidget(container)
-
-        layout.addWidget(scroll)
-        return tab
-
-    def _create_manual_tab(self) -> QWidget:
-        """Create the Manual tab content."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # Container for scrollable content
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-
-        # Manual entry section (settings widget is now above tabs)
-        manual_entry_box = QGroupBox("Manual Entry")
-        manual_entry_layout = QVBoxLayout(manual_entry_box)
-
-        # Part code input
-        code_layout = QHBoxLayout()
-        code_layout.addWidget(QLabel("Part Code:"))
-        self.manual_part_code = QLineEdit()
-        self.manual_part_code.setPlaceholderText("Enter part code (e.g., PK-5396)")
-        code_layout.addWidget(self.manual_part_code, 1)
-        manual_entry_layout.addLayout(code_layout)
-
-        # Weight input
-        weight_layout = QHBoxLayout()
-        weight_layout.addWidget(QLabel("Weight (kg):"))
-        self.manual_weight = QLineEdit()
-        self.manual_weight.setPlaceholderText("Enter weight")
-        weight_layout.addWidget(self.manual_weight, 1)
-        manual_entry_layout.addLayout(weight_layout)
-
-        # Add button
-        self.btn_add_manual_tab = QPushButton("Add to Results")
-        self.btn_add_manual_tab.clicked.connect(self._on_manual_entry_from_tab)
-        manual_entry_layout.addWidget(self.btn_add_manual_tab)
-
-        container_layout.addWidget(manual_entry_box)
 
         # Add logs widget
-        container_layout.addWidget(self.logs_widget_manual, 1)
+        container_layout.addWidget(self.logs_widget, 1)
 
         # Store reference to container layout for updating logs visibility
-        self.manual_container_layout = container_layout
+        self.main_container_layout = container_layout
 
         # Make scrollable
         scroll = QScrollArea()
@@ -574,54 +485,7 @@ class MainWindow(QWidget):
         scroll.setWidget(container)
 
         layout.addWidget(scroll)
-        return tab
-
-    def _on_manual_entry_from_tab(self):
-        """Handle manual entry from the Manual tab."""
-        from PyQt6.QtWidgets import QMessageBox
-
-        part_code = self.manual_part_code.text().strip()
-        weight_text = self.manual_weight.text().strip()
-
-        if not part_code:
-            QMessageBox.warning(
-                self,
-                "Manual Entry",
-                "Please enter a part code.",
-            )
-            return
-
-        if not weight_text:
-            QMessageBox.warning(
-                self,
-                "Manual Entry",
-                "Please enter the weight.",
-            )
-            return
-
-        try:
-            weight = float(weight_text)
-            if weight <= 0:
-                QMessageBox.warning(
-                    self,
-                    "Manual Entry",
-                    "Weight must be greater than 0.",
-                )
-                return
-        except ValueError:
-            QMessageBox.warning(
-                self,
-                "Manual Entry",
-                "Please enter a valid weight number.",
-            )
-            return
-
-        # Use the same handler as the automated tab
-        self._on_manual_entry_requested(part_code, weight)
-
-        # Clear fields after successful entry
-        self.manual_part_code.clear()
-        self.manual_weight.clear()
+        return widget
 
     def _setup_timers(self):
         """Set up polling timers for process queues."""
@@ -660,9 +524,8 @@ class MainWindow(QWidget):
 
         # Clear previous results
         self.results_widget.clear_results()
-        # Clear all log widgets
-        for logs_widget in self.logs_widgets:
-            logs_widget.clear_logs()
+        # Clear logs
+        self.logs_widget.clear_logs()
         self.append_logs(["Running…"])
 
         # Get current weight from scale if available
@@ -682,6 +545,10 @@ class MainWindow(QWidget):
 
     def _on_weight_changed(self, weight: float):
         """Handle weight change from scale - auto-start camera if not started."""
+        # Only auto-start camera if we're in camera mode (not manual mode)
+        if self.camera_widget.is_manual_mode:
+            return
+
         # Auto-start camera when scale detects a meaningful weight (> 0.01 kg)
         if weight > 0.01 and not self.camera_widget.cap:
             self.append_logs(
@@ -696,9 +563,47 @@ class MainWindow(QWidget):
             except Exception as e:
                 self.append_logs([f"[ERROR] Failed to auto-start camera: {e}"])
 
+    def _on_manual_weight_set(self, weight: float):
+        """Handle manual weight set from scale widget."""
+        self.append_logs([f"[INFO] Manual weight set: {weight:.3f} kg"])
+
+    def _on_manual_code_submitted(self, code: str):
+        """Handle manual part code submission from camera widget."""
+        if not self.settings_widget.validate_catalog():
+            self.camera_widget.show_manual_result(
+                False, "Please select a catalog file first"
+            )
+            return
+
+        # Get weight (from scale or manual)
+        weight = self.scale_widget.get_current_weight()
+        if weight <= 0:
+            self.camera_widget.show_manual_result(
+                False, "Please set a weight first (scale or manual)"
+            )
+            return
+
+        self.append_logs(
+            [f"[INFO] Manual code submitted: {code} (weight: {weight:.3f} kg)"]
+        )
+
+        # Use the manual entry handler
+        self._on_manual_entry_requested(code, weight)
+
+        # Show result in camera widget
+        # The result will be shown through the normal processing flow
+        self.camera_widget.show_manual_result(True, f"Processing: {code}")
+
     def _on_weight_ready(self, weight: float):
         """Handle weight ready from scale - automatically trigger camera capture when weight stabilizes."""
         self.append_logs([f"[DEBUG] Weight ready signal received: {weight:.3f} kg"])
+
+        # Don't auto-capture if camera is in manual mode
+        if self.camera_widget.is_manual_mode:
+            self.append_logs(
+                [f"[INFO] Weight stabilized: {weight:.3f} kg (camera in manual mode)"]
+            )
+            return
 
         if not self.settings_widget.validate_catalog():
             self.append_logs(
@@ -1473,9 +1378,8 @@ class MainWindow(QWidget):
             )
 
     def append_logs(self, lines):
-        """Append log lines to all log widgets."""
-        for logs_widget in self.logs_widgets:
-            logs_widget.append_logs(lines)
+        """Append log lines to the log widget."""
+        self.logs_widget.append_logs(lines)
 
     def _update_logs_visibility(self):
         """Update logs widget visibility based on settings."""
@@ -1484,9 +1388,8 @@ class MainWindow(QWidget):
         settings = load_settings()
         show_logs = settings.show_logs
 
-        # Update visibility in both tabs
-        self.logs_widget_automated.setVisible(show_logs)
-        self.logs_widget_manual.setVisible(show_logs)
+        # Update visibility
+        self.logs_widget.setVisible(show_logs)
 
     def closeEvent(self, event):
         """Handle application close event."""

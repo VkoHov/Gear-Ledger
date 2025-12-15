@@ -89,7 +89,7 @@ def generate_invoice_from_results(
 
             client_items = results_df[results_df["Клиент"] == client]
 
-            # Write client section to summary sheet
+            # Write client section to summary sheet (first copy)
             current_row = _write_client_section(
                 summary_ws,
                 client,
@@ -98,6 +98,22 @@ def generate_invoice_from_results(
                 col_mapping,
                 current_row,
                 weight_price,
+                is_duplicate=False,
+            )
+
+            # Add 5 empty rows for cutting line
+            current_row += 15
+
+            # Write duplicate table (second copy for customer)
+            current_row = _write_client_section(
+                summary_ws,
+                client,
+                client_items,
+                catalog_df,
+                col_mapping,
+                current_row,
+                weight_price,
+                is_duplicate=True,
             )
 
             current_row += 2  # Add spacing between clients
@@ -114,9 +130,31 @@ def generate_invoice_from_results(
             clean_client_name = _clean_sheet_name(str(client))
             ws = wb.create_sheet(title=clean_client_name)
 
-            # Write client section to the new worksheet
+            # Write client section to the new worksheet (first copy)
+            end_row = _write_client_section(
+                ws,
+                client,
+                client_items,
+                catalog_df,
+                col_mapping,
+                1,
+                weight_price,
+                is_duplicate=False,
+            )
+
+            # Add 5 empty rows for cutting line
+            end_row += 15
+
+            # Write duplicate table (second copy for customer)
             _write_client_section(
-                ws, client, client_items, catalog_df, col_mapping, 1, weight_price
+                ws,
+                client,
+                client_items,
+                catalog_df,
+                col_mapping,
+                end_row,
+                weight_price,
+                is_duplicate=True,
             )
 
         # Save workbook
@@ -206,17 +244,27 @@ def _write_client_section(
     col_mapping: Dict[str, str],
     start_row: int,
     weight_price: float = 0.0,
+    is_duplicate: bool = False,
 ) -> int:
     """Write a section for one client. Returns the next available row."""
 
     current_row = start_row
 
-    # Header: Покупатель (since each sheet is for one client, we can make it more prominent)
-    ws.merge_cells(f"A{current_row}:H{current_row}")
+    # Header: Покупатель (merge A-G only, leave H for weight price)
+    ws.merge_cells(f"A{current_row}:G{current_row}")
     cell = ws[f"A{current_row}"]
     cell.value = f"Покупатель: {client}"
     cell.font = Font(bold=True, size=14)
     cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    # Weight price in top right corner (on both copies since they can be cut apart)
+    if weight_price > 0:
+        ws[f"H{current_row}"] = f"Цена за кг: {weight_price:.2f}"
+        ws[f"H{current_row}"].font = Font(bold=True, size=10)
+        ws[f"H{current_row}"].alignment = Alignment(
+            horizontal="right", vertical="center"
+        )
+
     current_row += 2
 
     # Date header
@@ -270,6 +318,7 @@ def _write_client_section(
     item_num = 1
     total_sum = 0
     total_weight = 0
+    total_price = 0  # Sum of "Цена продажи" column
 
     for _, result_row in items.iterrows():
         artikul = str(result_row.get("Артикул", ""))
@@ -323,6 +372,7 @@ def _write_client_section(
         total = price * quantity
         total_sum += total
         total_weight += weight
+        total_price += price  # Sum of individual prices for Итого row
 
         # Write row
         ws[f"A{current_row}"] = item_num
@@ -364,7 +414,7 @@ def _write_client_section(
     ws[f"F{current_row}"].font = Font(bold=True)
     ws[f"F{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
-    ws[f"G{current_row}"] = f"{total_sum:.2f}"
+    ws[f"G{current_row}"] = f"{total_price:.2f}"
     ws[f"G{current_row}"].font = Font(bold=True)
     ws[f"G{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 

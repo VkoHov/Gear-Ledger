@@ -1282,6 +1282,123 @@ TRANSLATIONS = {
         "en": "Please set a weight first (scale or manual)",
         "ru": "Сначала установите вес (весы или вручную)",
     },
+    # ============ Network Configuration ============
+    "network_configuration": {
+        "en": "Network Configuration (Multi-Device)",
+        "ru": "Сетевая конфигурация (Многопользовательский режим)",
+    },
+    "network_mode_label": {
+        "en": "Select mode:",
+        "ru": "Выберите режим:",
+    },
+    "standalone_mode": {
+        "en": "📱 Standalone",
+        "ru": "📱 Автономный",
+    },
+    "server_mode": {
+        "en": "🖥️ Server",
+        "ru": "🖥️ Сервер",
+    },
+    "client_mode": {
+        "en": "💻 Client",
+        "ru": "💻 Клиент",
+    },
+    "standalone_tooltip": {
+        "en": "Work independently without network connection",
+        "ru": "Работать независимо без сетевого подключения",
+    },
+    "server_tooltip": {
+        "en": "Run as server - other computers can connect to this one",
+        "ru": "Запустить как сервер - другие компьютеры могут подключаться к этому",
+    },
+    "client_tooltip": {
+        "en": "Connect to another computer running as server",
+        "ru": "Подключиться к другому компьютеру, работающему как сервер",
+    },
+    "server_port_label": {
+        "en": "Port:",
+        "ru": "Порт:",
+    },
+    "start_server": {
+        "en": "▶️ Start Server",
+        "ru": "▶️ Запустить сервер",
+    },
+    "stop_server": {
+        "en": "⏹️ Stop Server",
+        "ru": "⏹️ Остановить сервер",
+    },
+    "server_status_stopped": {
+        "en": "Server is not running",
+        "ru": "Сервер не запущен",
+    },
+    "server_status_running": {
+        "en": "✅ Server running at: {url}",
+        "ru": "✅ Сервер запущен: {url}",
+    },
+    "server_address_label": {
+        "en": "Server Address:",
+        "ru": "Адрес сервера:",
+    },
+    "connect": {
+        "en": "🔗 Connect",
+        "ru": "🔗 Подключить",
+    },
+    "disconnect": {
+        "en": "🔌 Disconnect",
+        "ru": "🔌 Отключить",
+    },
+    "connection_status_disconnected": {
+        "en": "Not connected to any server",
+        "ru": "Не подключено ни к одному серверу",
+    },
+    "connection_status_connected": {
+        "en": "✅ Connected to: {address}",
+        "ru": "✅ Подключено к: {address}",
+    },
+    "server": {
+        "en": "Server",
+        "ru": "Сервер",
+    },
+    "server_started_msg": {
+        "en": "Server started successfully!\n\nOther computers can connect using:\n{url}\n\nShare this address with other devices.",
+        "ru": "Сервер успешно запущен!\n\nДругие компьютеры могут подключиться по адресу:\n{url}\n\nПоделитесь этим адресом с другими устройствами.",
+    },
+    "server_stopped_msg": {
+        "en": "Server has been stopped.",
+        "ru": "Сервер остановлен.",
+    },
+    "server_start_failed": {
+        "en": "Failed to start server. Please check the port is not in use.",
+        "ru": "Не удалось запустить сервер. Проверьте, что порт не занят.",
+    },
+    "server_error": {
+        "en": "Server error: {error}",
+        "ru": "Ошибка сервера: {error}",
+    },
+    "connection": {
+        "en": "Connection",
+        "ru": "Подключение",
+    },
+    "enter_server_address": {
+        "en": "Please enter the server address (e.g., 192.168.1.100:8080)",
+        "ru": "Введите адрес сервера (например, 192.168.1.100:8080)",
+    },
+    "connected_msg": {
+        "en": "Successfully connected to server at:\n{address}\n\nYou can now work together with other devices.",
+        "ru": "Успешно подключено к серверу:\n{address}\n\nТеперь вы можете работать вместе с другими устройствами.",
+    },
+    "disconnected_msg": {
+        "en": "Disconnected from server.",
+        "ru": "Отключено от сервера.",
+    },
+    "connection_failed": {
+        "en": "Failed to connect to server at:\n{address}\n\nPlease check:\n1. Server is running\n2. Address is correct\n3. Firewall allows connection",
+        "ru": "Не удалось подключиться к серверу:\n{address}\n\nПроверьте:\n1. Сервер запущен\n2. Адрес правильный\n3. Брандмауэр разрешает подключение",
+    },
+    "connection_error": {
+        "en": "Connection error: {error}",
+        "ru": "Ошибка подключения: {error}",
+    },
 }
 
 

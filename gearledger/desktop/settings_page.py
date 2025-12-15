@@ -18,8 +18,11 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QCheckBox,
     QScrollArea,
+    QRadioButton,
+    QButtonGroup,
+    QFrame,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from .settings_manager import Settings, save_settings, load_settings
 from .translations import tr
@@ -28,9 +31,14 @@ from .translations import tr
 class SettingsPage(QWidget):
     """Comprehensive settings page for all application configuration."""
 
+    # Signal emitted when network mode changes
+    network_mode_changed = pyqtSignal(str, str)  # mode, address
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.settings = load_settings()
+        self._server = None
+        self._client = None
         self._setup_ui()
         self._load_settings_to_ui()
 
@@ -218,6 +226,92 @@ class SettingsPage(QWidget):
 
         layout.addWidget(ui_group)
 
+        # Network Configuration
+        network_group = QGroupBox(tr("network_configuration"))
+        network_layout = QVBoxLayout(network_group)
+
+        # Mode selection
+        mode_label = QLabel(tr("network_mode_label"))
+        network_layout.addWidget(mode_label)
+
+        self.mode_button_group = QButtonGroup(self)
+        mode_row = QHBoxLayout()
+
+        self.standalone_radio = QRadioButton(tr("standalone_mode"))
+        self.standalone_radio.setToolTip(tr("standalone_tooltip"))
+        self.server_radio = QRadioButton(tr("server_mode"))
+        self.server_radio.setToolTip(tr("server_tooltip"))
+        self.client_radio = QRadioButton(tr("client_mode"))
+        self.client_radio.setToolTip(tr("client_tooltip"))
+
+        self.mode_button_group.addButton(self.standalone_radio, 0)
+        self.mode_button_group.addButton(self.server_radio, 1)
+        self.mode_button_group.addButton(self.client_radio, 2)
+
+        mode_row.addWidget(self.standalone_radio)
+        mode_row.addWidget(self.server_radio)
+        mode_row.addWidget(self.client_radio)
+        mode_row.addStretch(1)
+        network_layout.addLayout(mode_row)
+
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        network_layout.addWidget(separator)
+
+        # Server settings
+        server_row = QHBoxLayout()
+        server_row.addWidget(QLabel(tr("server_port_label")))
+        self.server_port_spin = QSpinBox()
+        self.server_port_spin.setRange(1024, 65535)
+        self.server_port_spin.setValue(8080)
+        server_row.addWidget(self.server_port_spin)
+
+        self.start_server_btn = QPushButton(tr("start_server"))
+        self.start_server_btn.setStyleSheet(
+            "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.start_server_btn.clicked.connect(self._toggle_server)
+        server_row.addWidget(self.start_server_btn)
+
+        server_row.addStretch(1)
+        network_layout.addLayout(server_row)
+
+        # Server status
+        self.server_status_label = QLabel(tr("server_status_stopped"))
+        self.server_status_label.setStyleSheet("color: #7f8c8d; font-style: italic;")
+        network_layout.addWidget(self.server_status_label)
+
+        # Client settings
+        client_row = QHBoxLayout()
+        client_row.addWidget(QLabel(tr("server_address_label")))
+        self.server_address_edit = QLineEdit()
+        self.server_address_edit.setPlaceholderText("192.168.1.100:8080")
+        client_row.addWidget(self.server_address_edit, 1)
+
+        self.connect_btn = QPushButton(tr("connect"))
+        self.connect_btn.setStyleSheet(
+            "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.connect_btn.clicked.connect(self._toggle_connection)
+        client_row.addWidget(self.connect_btn)
+        network_layout.addLayout(client_row)
+
+        # Connection status
+        self.connection_status_label = QLabel(tr("connection_status_disconnected"))
+        self.connection_status_label.setStyleSheet(
+            "color: #7f8c8d; font-style: italic;"
+        )
+        network_layout.addWidget(self.connection_status_label)
+
+        # Connect mode radio buttons to update UI
+        self.standalone_radio.toggled.connect(self._update_network_ui)
+        self.server_radio.toggled.connect(self._update_network_ui)
+        self.client_radio.toggled.connect(self._update_network_ui)
+
+        layout.addWidget(network_group)
+
         # Pricing Settings
         pricing_group = QGroupBox(tr("pricing_configuration"))
         pricing_layout = QVBoxLayout(pricing_group)
@@ -339,6 +433,20 @@ class SettingsPage(QWidget):
         lang_index = self.language_combo.findData(s.language)
         if lang_index >= 0:
             self.language_combo.setCurrentIndex(lang_index)
+
+        # Network settings
+        self.server_port_spin.setValue(s.server_port)
+        self.server_address_edit.setText(s.server_address)
+
+        # Set network mode radio
+        if s.network_mode == "server":
+            self.server_radio.setChecked(True)
+        elif s.network_mode == "client":
+            self.client_radio.setChecked(True)
+        else:
+            self.standalone_radio.setChecked(True)
+
+        self._update_network_ui()
 
     def _toggle_api_key_visibility(self):
         """Toggle API key visibility."""
@@ -560,6 +668,16 @@ class SettingsPage(QWidget):
         self.settings.show_logs = self.show_logs_checkbox.isChecked()
         self.settings.language = self.language_combo.currentData()
 
+        # Network settings
+        self.settings.server_port = self.server_port_spin.value()
+        self.settings.server_address = self.server_address_edit.text().strip()
+        if self.server_radio.isChecked():
+            self.settings.network_mode = "server"
+        elif self.client_radio.isChecked():
+            self.settings.network_mode = "client"
+        else:
+            self.settings.network_mode = "standalone"
+
         # Update global language and speech
         from gearledger.desktop.translations import set_current_language
         from gearledger.speech import set_speech_language
@@ -641,6 +759,157 @@ class SettingsPage(QWidget):
         # Close parent dialog if exists
         if self._parent_dialog:
             self._parent_dialog.reject()
+
+    def _update_network_ui(self):
+        """Update network UI based on selected mode."""
+        is_server = self.server_radio.isChecked()
+        is_client = self.client_radio.isChecked()
+
+        # Server controls
+        self.server_port_spin.setEnabled(is_server)
+        self.start_server_btn.setEnabled(is_server)
+
+        # Client controls
+        self.server_address_edit.setEnabled(is_client)
+        self.connect_btn.setEnabled(is_client)
+
+        # Update button states based on current connection status
+        if is_server and self._server and self._server.is_running():
+            self.start_server_btn.setText(tr("stop_server"))
+            self.start_server_btn.setStyleSheet(
+                "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
+            )
+        else:
+            self.start_server_btn.setText(tr("start_server"))
+            self.start_server_btn.setStyleSheet(
+                "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
+            )
+
+        if is_client and self._client and self._client.is_connected():
+            self.connect_btn.setText(tr("disconnect"))
+            self.connect_btn.setStyleSheet(
+                "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
+            )
+        else:
+            self.connect_btn.setText(tr("connect"))
+            self.connect_btn.setStyleSheet(
+                "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
+            )
+
+    def _toggle_server(self):
+        """Start or stop the server."""
+        from gearledger.server import start_server, stop_server, get_server
+
+        self._server = get_server()
+
+        if self._server and self._server.is_running():
+            # Stop server
+            stop_server()
+            self._server = None
+            self.server_status_label.setText(tr("server_status_stopped"))
+            self.server_status_label.setStyleSheet(
+                "color: #7f8c8d; font-style: italic;"
+            )
+            self.start_server_btn.setText(tr("start_server"))
+            self.start_server_btn.setStyleSheet(
+                "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
+            )
+            self.network_mode_changed.emit("standalone", "")
+            QMessageBox.information(self, tr("server"), tr("server_stopped_msg"))
+        else:
+            # Start server
+            port = self.server_port_spin.value()
+            try:
+                self._server = start_server(port=port)
+                if self._server and self._server.is_running():
+                    url = self._server.get_server_url()
+                    self.server_status_label.setText(
+                        tr("server_status_running", url=url)
+                    )
+                    self.server_status_label.setStyleSheet(
+                        "color: #27ae60; font-weight: bold;"
+                    )
+                    self.start_server_btn.setText(tr("stop_server"))
+                    self.start_server_btn.setStyleSheet(
+                        "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
+                    )
+                    self.network_mode_changed.emit("server", url)
+                    QMessageBox.information(
+                        self,
+                        tr("server"),
+                        tr("server_started_msg", url=url),
+                    )
+                else:
+                    QMessageBox.critical(self, tr("server"), tr("server_start_failed"))
+            except Exception as e:
+                QMessageBox.critical(
+                    self, tr("server"), tr("server_error", error=str(e))
+                )
+
+    def _toggle_connection(self):
+        """Connect or disconnect from server."""
+        from gearledger.api_client import (
+            connect_to_server,
+            disconnect_from_server,
+            get_client,
+        )
+
+        self._client = get_client()
+
+        if self._client and self._client.is_connected():
+            # Disconnect
+            disconnect_from_server()
+            self._client = None
+            self.connection_status_label.setText(tr("connection_status_disconnected"))
+            self.connection_status_label.setStyleSheet(
+                "color: #7f8c8d; font-style: italic;"
+            )
+            self.connect_btn.setText(tr("connect"))
+            self.connect_btn.setStyleSheet(
+                "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
+            )
+            self.network_mode_changed.emit("standalone", "")
+            QMessageBox.information(self, tr("connection"), tr("disconnected_msg"))
+        else:
+            # Connect
+            address = self.server_address_edit.text().strip()
+            if not address:
+                QMessageBox.warning(self, tr("connection"), tr("enter_server_address"))
+                return
+
+            # Add http:// if not present
+            if not address.startswith("http://") and not address.startswith("https://"):
+                address = f"http://{address}"
+
+            try:
+                self._client = connect_to_server(address)
+                if self._client:
+                    self.connection_status_label.setText(
+                        tr("connection_status_connected", address=address)
+                    )
+                    self.connection_status_label.setStyleSheet(
+                        "color: #27ae60; font-weight: bold;"
+                    )
+                    self.connect_btn.setText(tr("disconnect"))
+                    self.connect_btn.setStyleSheet(
+                        "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
+                    )
+                    self.network_mode_changed.emit("client", address)
+                    QMessageBox.information(
+                        self,
+                        tr("connection"),
+                        tr("connected_msg", address=address),
+                    )
+                else:
+                    QMessageBox.critical(
+                        self,
+                        tr("connection"),
+                        tr("connection_failed", address=address),
+                    )
+            except Exception as e:
+                QMessageBox.critical(
+                    self, tr("connection"), tr("connection_error", error=str(e))
+                )
 
     def get_settings(self) -> Settings:
         """Get current settings (from UI, not saved yet)."""

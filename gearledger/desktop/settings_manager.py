@@ -38,6 +38,12 @@ class Settings:
     default_result_file: str = ""  # Default result file path (empty = auto-generate)
     show_logs: bool = True  # Show/hide logs widget in both tabs
     language: str = "en"  # UI language: "en" or "ru"
+    # Network mode settings
+    network_mode: str = "standalone"  # "standalone", "server", or "client"
+    server_port: int = 8080  # Port for server mode
+    server_address: str = (
+        ""  # Address to connect to in client mode (e.g., "192.168.1.100:8080")
+    )
 
 
 def ensure_dirs():

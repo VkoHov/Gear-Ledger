@@ -65,8 +65,10 @@ def main():
 
     # Load language setting
     from gearledger.desktop.translations import set_current_language
+    from gearledger.speech import set_speech_language
 
     set_current_language(settings.language)
+    set_speech_language(settings.language)  # Sync speech language with UI language
 
     app = QApplication(sys.argv)
 

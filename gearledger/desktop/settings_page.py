@@ -560,10 +560,12 @@ class SettingsPage(QWidget):
         self.settings.show_logs = self.show_logs_checkbox.isChecked()
         self.settings.language = self.language_combo.currentData()
 
-        # Update global language
+        # Update global language and speech
         from gearledger.desktop.translations import set_current_language
+        from gearledger.speech import set_speech_language
 
         set_current_language(self.settings.language)
+        set_speech_language(self.settings.language)
 
         # Save to disk
         save_settings(self.settings)

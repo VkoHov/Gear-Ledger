@@ -50,6 +50,21 @@ def record_match_unified(
         )
 
 
+def _to_python_type(value):
+    """Convert numpy/pandas types to native Python types for JSON serialization."""
+    import numpy as np
+
+    if isinstance(value, (np.integer, np.int64, np.int32)):
+        return int(value)
+    elif isinstance(value, (np.floating, np.float64, np.float32)):
+        return float(value)
+    elif isinstance(value, np.ndarray):
+        return value.tolist()
+    elif hasattr(value, "item"):  # Generic numpy scalar
+        return value.item()
+    return value
+
+
 def _lookup_catalog_for_network(artikul: str, catalog_path: str) -> Dict[str, Any]:
     """Look up catalog data for network modes."""
     if not catalog_path or not os.path.exists(catalog_path):
@@ -58,7 +73,9 @@ def _lookup_catalog_for_network(artikul: str, catalog_path: str) -> Dict[str, An
     try:
         from .result_ledger import _lookup_catalog_data
 
-        return _lookup_catalog_data(artikul, catalog_path)
+        data = _lookup_catalog_data(artikul, catalog_path)
+        # Convert numpy types to native Python types
+        return {k: _to_python_type(v) for k, v in data.items()}
     except Exception as e:
         print(f"[ERROR] Catalog lookup failed: {e}")
         return {}
@@ -92,13 +109,13 @@ def _record_via_api(
 
     try:
         result = api_client.add_or_update_result(
-            artikul=artikul,
-            client=client,
-            quantity=qty_inc,
-            weight=weight_inc,
-            brand=brand,
-            description=description,
-            sale_price=sale_price,
+            artikul=str(artikul),
+            client=str(client),
+            quantity=int(qty_inc),
+            weight=float(weight_inc) if weight_inc else 0.0,
+            brand=str(brand) if brand else "",
+            description=str(description) if description else "",
+            sale_price=float(sale_price) if sale_price else 0.0,
         )
 
         if result.get("ok"):
@@ -141,13 +158,13 @@ def _record_to_database(
 
     try:
         result = db.add_or_update_result(
-            artikul=artikul,
-            client=client,
-            quantity=qty_inc,
-            weight=weight_inc,
-            brand=brand,
-            description=description,
-            sale_price=sale_price,
+            artikul=str(artikul),
+            client=str(client),
+            quantity=int(qty_inc),
+            weight=float(weight_inc) if weight_inc else 0.0,
+            brand=str(brand) if brand else "",
+            description=str(description) if description else "",
+            sale_price=float(sale_price) if sale_price else 0.0,
         )
 
         if result.get("ok"):

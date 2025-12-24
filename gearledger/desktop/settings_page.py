@@ -33,6 +33,8 @@ class SettingsPage(QWidget):
 
     # Signal emitted when network mode changes
     network_mode_changed = pyqtSignal(str, str)  # mode, address
+    # Signal emitted when server receives data (to refresh UI)
+    server_data_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -822,7 +824,16 @@ class SettingsPage(QWidget):
             # Start server
             port = self.server_port_spin.value()
             try:
-                self._server = start_server(port=port)
+                # Pass callback to refresh UI when data changes
+                # Use QTimer.singleShot for thread-safe signal emission
+                from PyQt6.QtCore import QTimer
+
+                self._server = start_server(
+                    port=port,
+                    on_data_changed=lambda: QTimer.singleShot(
+                        0, self.server_data_changed.emit
+                    ),
+                )
                 if self._server and self._server.is_running():
                     set_runtime_mode("server")  # Set runtime mode to server
                     url = self._server.get_server_url()

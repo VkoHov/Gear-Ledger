@@ -117,6 +117,10 @@ class SettingsWidget(QGroupBox):
         """Set callback for when invoice generation is requested."""
         self.on_generate_invoice_requested = callback
 
+    def set_results_refresh_callback(self, callback: Callable[[], None]):
+        """Set callback to force refresh of results pane."""
+        self.on_results_refresh = callback
+
     def pick_catalog_excel(self):
         """Open file dialog to select catalog Excel file."""
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
@@ -228,7 +232,7 @@ class SettingsWidget(QGroupBox):
                 self.on_results_changed(fn)
 
     def reset_results_excel(self):
-        """Reset results file to a new empty file."""
+        """Reset results file to a new empty file (or clear database in network mode)."""
         from PyQt6.QtWidgets import QMessageBox
         import datetime
         import pandas as pd
@@ -248,6 +252,59 @@ class SettingsWidget(QGroupBox):
             return
 
         try:
+            # Check if in network mode - clear database instead
+            from gearledger.data_layer import get_network_mode
+
+            mode = get_network_mode()
+
+            if mode == "server":
+                # Clear the database
+                from gearledger.database import get_database
+
+                db = get_database()
+                count = db.clear_all_results()
+                print(f"[RESET] Cleared {count} results from database")
+
+                # Force refresh results pane
+                if hasattr(self, "on_results_refresh") and self.on_results_refresh:
+                    self.on_results_refresh()
+
+                QMessageBox.information(
+                    self,
+                    tr("reset_complete"),
+                    tr("reset_complete_msg", path=f"Database ({count} items cleared)"),
+                )
+                return
+            elif mode == "client":
+                # Clear results on server via API
+                from gearledger.api_client import get_client
+
+                client = get_client()
+                if client and client.is_connected():
+                    count = client.clear_all_results()
+                    print(f"[RESET] Cleared {count} results from server")
+
+                    # Force refresh results pane
+                    if hasattr(self, "on_results_refresh") and self.on_results_refresh:
+                        self.on_results_refresh()
+
+                    QMessageBox.information(
+                        self,
+                        tr("reset_complete"),
+                        tr(
+                            "reset_complete_msg", path=f"Server ({count} items cleared)"
+                        ),
+                    )
+                    return
+                else:
+                    QMessageBox.warning(
+                        self,
+                        tr("reset_failed"),
+                        "Not connected to server",
+                    )
+                    return
+
+            # Standalone mode - create new Excel file
             # Generate new filename with timestamp
             default_filename = (
                 f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"

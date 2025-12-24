@@ -372,6 +372,7 @@ class MainWindow(QWidget):
         # Settings callbacks
         self.settings_widget.set_catalog_changed_callback(self._on_catalog_path_changed)
         self.settings_widget.set_results_changed_callback(self._on_results_path_changed)
+        self.settings_widget.set_results_refresh_callback(self.results_pane.refresh)
         self.settings_widget.set_manual_entry_requested_callback(
             self._on_manual_entry_requested
         )
@@ -817,7 +818,17 @@ class MainWindow(QWidget):
 
         settings_page.on_settings_saved = on_settings_saved
 
+        # Connect server data changed signal to refresh results pane
+        # Store reference at class level so it persists after dialog closes
+        settings_page.server_data_changed.connect(self._on_server_data_changed)
+        self._settings_page = settings_page  # Keep reference alive
+
         dlg.exec()
+
+    def _on_server_data_changed(self):
+        """Handle server data changed - refresh results pane."""
+        print("[MAIN_WINDOW] Server data changed - refreshing results pane")
+        self.results_pane.refresh()
 
     def _on_fuzzy_requested(self, candidates):
         """Handle fuzzy matching request."""

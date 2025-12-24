@@ -43,6 +43,9 @@ class GearLedgerServer:
     def _setup_routes(self):
         """Setup API routes."""
 
+        # Track data version for sync
+        self._data_version = 0
+
         @self.app.route("/api/status", methods=["GET"])
         def status():
             """Check server status."""
@@ -53,6 +56,11 @@ class GearLedgerServer:
                     "version": "1.0.0",
                 }
             )
+
+        @self.app.route("/api/sync/version", methods=["GET"])
+        def get_sync_version():
+            """Get current data version for sync detection."""
+            return jsonify({"ok": True, "version": self._data_version})
 
         @self.app.route("/api/results", methods=["GET"])
         def get_results():
@@ -97,6 +105,10 @@ class GearLedgerServer:
                 sale_price=data.get("sale_price", 0),
             )
             print(f"[SERVER] Database result: {result}")
+
+            # Increment data version for sync
+            self._data_version += 1
+            print(f"[SERVER] Data version now: {self._data_version}")
 
             # Notify about data change
             if self.on_data_changed:
@@ -147,6 +159,9 @@ class GearLedgerServer:
 
             db = self._get_db()
             count = db.clear_all_results(client)
+
+            # Increment data version for sync
+            self._data_version += 1
 
             if self.on_data_changed:
                 self.on_data_changed()

@@ -497,6 +497,12 @@ class MainWindow(QWidget):
         self.poll_fuzzy_timer = QTimer(self)
         self.poll_fuzzy_timer.timeout.connect(self._poll_fuzzy_queue)
 
+        # Sync timer for multi-device updates (polls server for changes)
+        self._sync_version = 0
+        self.sync_timer = QTimer(self)
+        self.sync_timer.timeout.connect(self._check_sync)
+        self.sync_timer.start(2000)  # Check every 2 seconds
+
     def _update_controls(self):
         """Update control states based on process status and catalog availability."""
         busy = self.process_manager.any_running
@@ -829,6 +835,43 @@ class MainWindow(QWidget):
         """Handle server data changed - refresh results pane."""
         print("[MAIN_WINDOW] Server data changed - refreshing results pane")
         self.results_pane.refresh()
+
+    def _check_sync(self):
+        """Check for data changes on server (for multi-device sync)."""
+        try:
+            from gearledger.data_layer import get_network_mode
+
+            mode = get_network_mode()
+
+            if mode == "client":
+                # In client mode, poll server for changes
+                from gearledger.api_client import get_client
+
+                client = get_client()
+                if client and client.is_connected():
+                    new_version = client.get_sync_version()
+                    if new_version > self._sync_version:
+                        print(
+                            f"[SYNC] Data changed on server (version {self._sync_version} → {new_version})"
+                        )
+                        self._sync_version = new_version
+                        self.results_pane.refresh()
+            elif mode == "server":
+                # In server mode, check local database version
+                from gearledger.server import get_server
+
+                server = get_server()
+                if server and server.is_running():
+                    new_version = server._data_version
+                    if new_version > self._sync_version:
+                        print(
+                            f"[SYNC] Local data changed (version {self._sync_version} → {new_version})"
+                        )
+                        self._sync_version = new_version
+                        self.results_pane.refresh()
+        except Exception:
+            # Silently ignore sync errors
+            pass
 
     def _on_fuzzy_requested(self, candidates):
         """Handle fuzzy matching request."""
@@ -1406,5 +1449,7 @@ class MainWindow(QWidget):
             self.poll_main_timer.stop()
         if hasattr(self, "poll_fuzzy_timer"):
             self.poll_fuzzy_timer.stop()
+        if hasattr(self, "sync_timer"):
+            self.sync_timer.stop()
 
         super().closeEvent(event)

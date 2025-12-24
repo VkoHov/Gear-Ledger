@@ -135,6 +135,20 @@ class APIClient:
         except Exception:
             return 0
 
+    def get_sync_version(self) -> int:
+        """Get current sync version from server."""
+        try:
+            response = requests.get(
+                f"{self.server_url}/api/sync/version",
+                timeout=self.timeout,
+            )
+            data = response.json()
+            if data.get("ok"):
+                return data.get("version", 0)
+            return -1
+        except Exception:
+            return -1
+
     def get_clients(self) -> List[str]:
         """Get list of unique clients."""
         try:

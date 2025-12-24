@@ -926,13 +926,13 @@ class MainWindow(QWidget):
                 return
 
             # Record the match with scale weight
-            from gearledger.result_ledger import record_match
+            from gearledger.data_layer import record_match_unified
 
             # Use scale weight if available, otherwise default to 1
             scale_weight = self.scale_widget.get_current_weight()
             weight_to_use = scale_weight if scale_weight > 0 else 1.0
 
-            rec = record_match(
+            rec = record_match_unified(
                 ledger_path,
                 artikul,
                 client,
@@ -1026,13 +1026,13 @@ class MainWindow(QWidget):
                 return
 
             # Record the match with scale weight
-            from gearledger.result_ledger import record_match
+            from gearledger.data_layer import record_match_unified
 
             # Use scale weight if available, otherwise default to 1
             scale_weight = self.scale_widget.get_current_weight()
             weight_to_use = scale_weight if scale_weight > 0 else 1.0
 
-            rec = record_match(
+            rec = record_match_unified(
                 ledger_path,
                 a,
                 c,
@@ -1102,9 +1102,9 @@ class MainWindow(QWidget):
                         return
 
                     # Record the match
-                    from gearledger.result_ledger import record_match
+                    from gearledger.data_layer import record_match_unified
 
-                    rec = record_match(
+                    rec = record_match_unified(
                         ledger_path,
                         artikul,
                         client,
@@ -1190,9 +1190,9 @@ class MainWindow(QWidget):
                         return
 
                     # Record the match with the specified weight
-                    from gearledger.result_ledger import record_match
+                    from gearledger.data_layer import record_match_unified
 
-                    rec = record_match(
+                    rec = record_match_unified(
                         ledger_path,
                         artikul,
                         client,

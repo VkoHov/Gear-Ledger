@@ -87,12 +87,17 @@ class Database:
         Add a new result or update existing one.
         If item exists for client, increment quantity (not weight).
         """
+        print(f"[DATABASE] add_or_update_result called:")
+        print(f"[DATABASE]   artikul={artikul}, client={client}")
+        print(f"[DATABASE]   quantity={quantity}, weight={weight}, price={sale_price}")
+
         conn = self._get_connection()
         cursor = conn.cursor()
         now = datetime.datetime.now().isoformat()
 
         # Normalize artikul for matching
         artikul_norm = self._normalize(artikul)
+        print(f"[DATABASE]   normalized artikul: {artikul_norm}")
 
         # Check if exists
         cursor.execute(
@@ -105,6 +110,7 @@ class Database:
             (artikul_norm, client),
         )
         existing = cursor.fetchone()
+        print(f"[DATABASE]   existing record: {dict(existing) if existing else None}")
 
         if existing:
             # Update existing - increment quantity only, keep weight
@@ -112,6 +118,9 @@ class Database:
             # Use new price if provided, else keep existing
             final_price = sale_price if sale_price > 0 else existing["sale_price"]
             total = final_price * new_quantity
+            print(
+                f"[DATABASE]   UPDATING: new_quantity={new_quantity}, price={final_price}"
+            )
 
             cursor.execute(
                 """
@@ -135,10 +144,12 @@ class Database:
                 ),
             )
             conn.commit()
+            print(f"[DATABASE]   UPDATE committed, id={existing['id']}")
             return {"ok": True, "action": "updated", "id": existing["id"]}
         else:
             # Insert new
             total = sale_price * quantity
+            print(f"[DATABASE]   INSERTING new record: total={total}")
             cursor.execute(
                 """
                 INSERT INTO results 
@@ -158,6 +169,7 @@ class Database:
                 ),
             )
             conn.commit()
+            print(f"[DATABASE]   INSERT committed, id={cursor.lastrowid}")
             return {"ok": True, "action": "inserted", "id": cursor.lastrowid}
 
     def get_all_results(self, client: str = None) -> List[Dict[str, Any]]:

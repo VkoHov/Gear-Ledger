@@ -233,6 +233,19 @@ class ResultsPane(QWidget):
 
     @staticmethod
     def _read_df_safe(path: str) -> pd.DataFrame:
+        # Check network mode first
+        try:
+            from gearledger.data_layer import get_network_mode, is_network_mode
+
+            mode = get_network_mode()
+            print(f"[RESULTS_PANE] Reading data, mode={mode}")
+            if mode in ("server", "client"):
+                print(f"[RESULTS_PANE] Using network mode: {mode}")
+                return ResultsPane._read_from_network(mode)
+        except Exception as e:
+            print(f"[RESULTS_PANE] Network mode check failed: {e}")
+
+        # Fall back to Excel file
         if not path or not os.path.exists(path):
             return pd.DataFrame(columns=COLUMNS)
         try:
@@ -250,4 +263,71 @@ class ResultsPane(QWidget):
             )
         except Exception:
             pass
+        return df
+
+    @staticmethod
+    def _read_from_network(mode: str) -> pd.DataFrame:
+        """Read results from database (server) or API (client)."""
+        print(f"[RESULTS_PANE] _read_from_network called with mode={mode}")
+        results = []
+
+        if mode == "server":
+            # Read from local database
+            try:
+                from gearledger.database import get_database
+
+                db = get_database()
+                print(f"[RESULTS_PANE] Reading from database: {db.db_path}")
+                results = db.get_all_results()
+                print(f"[RESULTS_PANE] Got {len(results)} results from database")
+            except Exception as e:
+                print(f"[RESULTS_PANE] ERROR: Failed to read from database: {e}")
+                return pd.DataFrame(columns=COLUMNS)
+        elif mode == "client":
+            # Read from remote server via API
+            try:
+                from gearledger.api_client import get_client
+
+                client = get_client()
+                print(f"[RESULTS_PANE] API client: {client}")
+                if client and client.is_connected():
+                    results = client.get_all_results()
+                    print(f"[RESULTS_PANE] Got {len(results)} results from API")
+                else:
+                    print("[RESULTS_PANE] WARN: Client not connected")
+                    return pd.DataFrame(columns=COLUMNS)
+            except Exception as e:
+                print(f"[RESULTS_PANE] ERROR: Failed to read from API: {e}")
+                return pd.DataFrame(columns=COLUMNS)
+
+        if not results:
+            return pd.DataFrame(columns=COLUMNS)
+
+        # Convert database results to DataFrame with correct column names
+        rows = []
+        for r in results:
+            rows.append(
+                {
+                    "Артикул": r.get("artikul", ""),
+                    "Клиент": r.get("client", ""),
+                    "Количество": r.get("quantity", 0),
+                    "Вес": r.get("weight", 0),
+                    "Последнее обновление": r.get("last_updated", ""),
+                    "Брэнд": r.get("brand", ""),
+                    "Описание": r.get("description", ""),
+                    "Цена продажи": r.get("sale_price", 0),
+                    "Сумма продажи": r.get("total_price", 0),
+                }
+            )
+
+        df = pd.DataFrame(rows, columns=COLUMNS)
+
+        # Coerce datetime column
+        try:
+            df["Последнее обновление"] = pd.to_datetime(
+                df["Последнее обновление"], errors="coerce"
+            )
+        except Exception:
+            pass
+
         return df

@@ -799,6 +799,7 @@ class SettingsPage(QWidget):
     def _toggle_server(self):
         """Start or stop the server."""
         from gearledger.server import start_server, stop_server, get_server
+        from gearledger.data_layer import set_runtime_mode
 
         self._server = get_server()
 
@@ -806,6 +807,7 @@ class SettingsPage(QWidget):
             # Stop server
             stop_server()
             self._server = None
+            set_runtime_mode("standalone")  # Reset runtime mode
             self.server_status_label.setText(tr("server_status_stopped"))
             self.server_status_label.setStyleSheet(
                 "color: #7f8c8d; font-style: italic;"
@@ -822,6 +824,7 @@ class SettingsPage(QWidget):
             try:
                 self._server = start_server(port=port)
                 if self._server and self._server.is_running():
+                    set_runtime_mode("server")  # Set runtime mode to server
                     url = self._server.get_server_url()
                     self.server_status_label.setText(
                         tr("server_status_running", url=url)
@@ -853,6 +856,7 @@ class SettingsPage(QWidget):
             disconnect_from_server,
             get_client,
         )
+        from gearledger.data_layer import set_runtime_mode
 
         self._client = get_client()
 
@@ -860,6 +864,7 @@ class SettingsPage(QWidget):
             # Disconnect
             disconnect_from_server()
             self._client = None
+            set_runtime_mode("standalone")  # Reset runtime mode
             self.connection_status_label.setText(tr("connection_status_disconnected"))
             self.connection_status_label.setStyleSheet(
                 "color: #7f8c8d; font-style: italic;"
@@ -884,6 +889,7 @@ class SettingsPage(QWidget):
             try:
                 self._client = connect_to_server(address)
                 if self._client:
+                    set_runtime_mode("client")  # Set runtime mode to client
                     self.connection_status_label.setText(
                         tr("connection_status_connected", address=address)
                     )

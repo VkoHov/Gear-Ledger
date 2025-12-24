@@ -10,9 +10,34 @@ from typing import Dict, Any, Optional
 from .desktop.settings_manager import load_settings
 
 
+# Runtime state - tracks actual running mode (not just settings)
+_runtime_mode: str = "standalone"  # "standalone", "server", or "client"
+
+
+def set_runtime_mode(mode: str):
+    """Set the runtime network mode."""
+    global _runtime_mode
+    print(f"[DATA_LAYER] Setting runtime mode: {mode}")
+    _runtime_mode = mode
+
+
+def get_runtime_mode() -> str:
+    """Get the current runtime mode."""
+    return _runtime_mode
+
+
 def get_network_mode() -> str:
-    """Get current network mode from settings."""
+    """Get current network mode - prefers runtime mode over settings."""
+    global _runtime_mode
+
+    # If runtime mode is set to server/client, use that
+    if _runtime_mode in ("server", "client"):
+        print(f"[DATA_LAYER] Using runtime mode: {_runtime_mode}")
+        return _runtime_mode
+
+    # Otherwise check settings
     settings = load_settings()
+    print(f"[DATA_LAYER] Using settings mode: {settings.network_mode}")
     return settings.network_mode
 
 
@@ -33,21 +58,33 @@ def record_match_unified(
     - client: Sends to remote server via API
     """
     mode = get_network_mode()
+    print(f"[DATA_LAYER] record_match_unified called:")
+    print(f"[DATA_LAYER]   mode={mode}, artikul={artikul}, client={client}")
+    print(f"[DATA_LAYER]   qty={qty_inc}, weight={weight_inc}, path={path}")
 
     if mode == "client":
-        return _record_via_api(
+        print("[DATA_LAYER] Using CLIENT mode - sending to API")
+        result = _record_via_api(
             artikul, client, qty_inc, weight_inc, catalog_path, weight_price
         )
+        print(f"[DATA_LAYER] API result: {result}")
+        return result
     elif mode == "server":
-        return _record_to_database(
+        print("[DATA_LAYER] Using SERVER mode - writing to database")
+        result = _record_to_database(
             artikul, client, qty_inc, weight_inc, catalog_path, weight_price, path
         )
+        print(f"[DATA_LAYER] Database result: {result}")
+        return result
     else:  # standalone
+        print("[DATA_LAYER] Using STANDALONE mode - writing to Excel")
         from .result_ledger import record_match
 
-        return record_match(
+        result = record_match(
             path, artikul, client, qty_inc, weight_inc, catalog_path, weight_price
         )
+        print(f"[DATA_LAYER] Excel result: {result}")
+        return result
 
 
 def _to_python_type(value):
@@ -90,10 +127,16 @@ def _record_via_api(
     weight_price: float,  # noqa: ARG001 - kept for API compatibility
 ) -> Dict[str, Any]:
     """Record match via API to remote server."""
+    print("[DATA_LAYER] _record_via_api called")
     from .api_client import get_client
 
     api_client = get_client()
+    print(f"[DATA_LAYER] API client: {api_client}")
+    if api_client:
+        print(f"[DATA_LAYER] API client connected: {api_client.is_connected()}")
+
     if not api_client or not api_client.is_connected():
+        print("[DATA_LAYER] ERROR: Not connected to server")
         return {
             "ok": False,
             "action": "failed",
@@ -106,8 +149,12 @@ def _record_via_api(
     brand = catalog_data.get("бренд", "")
     description = catalog_data.get("описание", "")
     sale_price = catalog_data.get("цена", 0)
+    print(f"[DATA_LAYER] Catalog data: brand={brand}, price={sale_price}")
 
     try:
+        print(
+            f"[DATA_LAYER] Sending to API: artikul={artikul}, client={client}, qty={qty_inc}, weight={weight_inc}"
+        )
         result = api_client.add_or_update_result(
             artikul=str(artikul),
             client=str(client),
@@ -117,6 +164,7 @@ def _record_via_api(
             description=str(description) if description else "",
             sale_price=float(sale_price) if sale_price else 0.0,
         )
+        print(f"[DATA_LAYER] API response: {result}")
 
         if result.get("ok"):
             return {
@@ -133,6 +181,7 @@ def _record_via_api(
                 "error": result.get("error", "Unknown error"),
             }
     except Exception as e:
+        print(f"[DATA_LAYER] API exception: {e}")
         return {"ok": False, "action": "failed", "path": "server", "error": str(e)}
 
 
@@ -146,17 +195,23 @@ def _record_to_database(
     path: str,  # noqa: ARG001 - kept for API compatibility
 ) -> Dict[str, Any]:
     """Record match to local SQLite database (server mode)."""
+    print("[DATA_LAYER] _record_to_database called")
     from .database import get_database
 
     db = get_database()
+    print(f"[DATA_LAYER] Database path: {db.db_path}")
 
     # Look up catalog data
     catalog_data = _lookup_catalog_for_network(artikul, catalog_path)
     brand = catalog_data.get("бренд", "")
     description = catalog_data.get("описание", "")
     sale_price = catalog_data.get("цена", 0)
+    print(f"[DATA_LAYER] Catalog data: brand={brand}, price={sale_price}")
 
     try:
+        print(
+            f"[DATA_LAYER] Writing to DB: artikul={artikul}, client={client}, qty={qty_inc}, weight={weight_inc}"
+        )
         result = db.add_or_update_result(
             artikul=str(artikul),
             client=str(client),
@@ -166,6 +221,7 @@ def _record_to_database(
             description=str(description) if description else "",
             sale_price=float(sale_price) if sale_price else 0.0,
         )
+        print(f"[DATA_LAYER] Database result: {result}")
 
         if result.get("ok"):
             return {
@@ -182,6 +238,7 @@ def _record_to_database(
                 "error": result.get("error", "Unknown error"),
             }
     except Exception as e:
+        print(f"[DATA_LAYER] Database exception: {e}")
         return {"ok": False, "action": "failed", "path": "", "error": str(e)}
 
 

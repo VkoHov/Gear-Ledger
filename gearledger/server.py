@@ -65,20 +65,28 @@ class GearLedgerServer:
         @self.app.route("/api/results", methods=["POST"])
         def add_result():
             """Add or update a result."""
+            print("[SERVER] POST /api/results received")
             data = request.get_json()
+            print(f"[SERVER] Request data: {data}")
+
             if not data:
+                print("[SERVER] ERROR: No data provided")
                 return jsonify({"ok": False, "error": "No data provided"}), 400
 
             artikul = data.get("artikul")
             client = data.get("client")
 
             if not artikul or not client:
+                print(f"[SERVER] ERROR: Missing artikul or client")
                 return (
                     jsonify({"ok": False, "error": "artikul and client required"}),
                     400,
                 )
 
+            print(f"[SERVER] Adding: artikul={artikul}, client={client}")
             db = self._get_db()
+            print(f"[SERVER] Database: {db.db_path}")
+
             result = db.add_or_update_result(
                 artikul=artikul,
                 client=client,
@@ -88,6 +96,7 @@ class GearLedgerServer:
                 description=data.get("description", ""),
                 sale_price=data.get("sale_price", 0),
             )
+            print(f"[SERVER] Database result: {result}")
 
             # Notify about data change
             if self.on_data_changed:

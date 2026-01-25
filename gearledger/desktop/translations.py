@@ -1387,6 +1387,22 @@ TRANSLATIONS = {
         "en": "Please enter the server address (e.g., 192.168.1.100:8080)",
         "ru": "Введите адрес сервера (например, 192.168.1.100:8080)",
     },
+    "discovering_servers": {
+        "en": "🔍 Discovering servers on network...",
+        "ru": "🔍 Поиск серверов в сети...",
+    },
+    "servers_found": {
+        "en": "✅ Found {count} server(s)",
+        "ru": "✅ Найдено серверов: {count}",
+    },
+    "no_servers_found": {
+        "en": "No servers found. You can enter address manually.",
+        "ru": "Серверы не найдены. Вы можете ввести адрес вручную.",
+    },
+    "refresh_server_discovery": {
+        "en": "Refresh server discovery",
+        "ru": "Обновить поиск серверов",
+    },
     "connected_msg": {
         "en": "Successfully connected to server at:\n{address}\n\nYou can now work together with other devices.",
         "ru": "Успешно подключено к серверу:\n{address}\n\nТеперь вы можете работать вместе с другими устройствами.",

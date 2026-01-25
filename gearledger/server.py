@@ -11,6 +11,7 @@ from flask_cors import CORS
 from werkzeug.serving import make_server
 
 from .database import get_database, Database
+from .network_discovery import ServerBroadcaster
 
 
 class GearLedgerServer:
@@ -40,6 +41,9 @@ class GearLedgerServer:
         self._client_timeout = (
             10  # Consider client disconnected after 10 seconds of inactivity
         )
+
+        # Network discovery broadcaster
+        self._broadcaster: Optional[ServerBroadcaster] = None
 
         self._setup_routes()
 
@@ -228,6 +232,11 @@ class GearLedgerServer:
             )
             self._thread.start()
             self._running = True
+
+            # Start broadcasting server presence
+            self._broadcaster = ServerBroadcaster(self.port)
+            self._broadcaster.start()
+
             return True
         except Exception as e:
             print(f"[ERROR] Failed to start server: {e}")
@@ -235,6 +244,11 @@ class GearLedgerServer:
 
     def stop(self):
         """Stop the server."""
+        # Stop broadcasting
+        if self._broadcaster:
+            self._broadcaster.stop()
+            self._broadcaster = None
+
         if self._server:
             self._server.shutdown()
             self._server = None

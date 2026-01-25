@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QObject
 
 from .settings_manager import Settings, save_settings, load_settings
 from .translations import tr
@@ -41,6 +41,7 @@ class SettingsPage(QWidget):
         self.settings = load_settings()
         self._server = None
         self._client = None
+        self._discovery = None
         self._setup_ui()
         self._load_settings_to_ui()
 
@@ -48,6 +49,14 @@ class SettingsPage(QWidget):
         self._client_count_timer = QTimer(self)
         self._client_count_timer.timeout.connect(self._update_client_count)
         self._client_count_timer.start(2000)  # Check every 2 seconds
+
+        # Timer to update discovered servers list
+        self._discovery_timer = QTimer(self)
+        self._discovery_timer.timeout.connect(self._update_discovered_servers)
+        self._discovery_timer.start(1000)  # Update every 1 second
+
+        # Start discovery when in client mode
+        self._start_discovery()
 
     def _setup_ui(self):
         """Set up the settings page UI."""
@@ -293,9 +302,23 @@ class SettingsPage(QWidget):
         # Client settings
         client_row = QHBoxLayout()
         client_row.addWidget(QLabel(tr("server_address_label")))
-        self.server_address_edit = QLineEdit()
-        self.server_address_edit.setPlaceholderText("192.168.1.100:8080")
-        client_row.addWidget(self.server_address_edit, 1)
+
+        # Server discovery combo box (editable to allow manual entry)
+        self.server_address_combo = QComboBox()
+        self.server_address_combo.setEditable(True)
+        self.server_address_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.server_address_combo.lineEdit().setPlaceholderText("192.168.1.100:8080")
+        self.server_address_combo.lineEdit().setText("")
+        client_row.addWidget(self.server_address_combo, 1)
+
+        # Refresh discovery button
+        self.refresh_discovery_btn = QPushButton("🔍")
+        self.refresh_discovery_btn.setToolTip(tr("refresh_server_discovery"))
+        self.refresh_discovery_btn.setStyleSheet(
+            "background-color: #95a5a6; color: white; font-weight: bold; padding: 6px 10px;"
+        )
+        self.refresh_discovery_btn.clicked.connect(self._refresh_discovery)
+        client_row.addWidget(self.refresh_discovery_btn)
 
         self.connect_btn = QPushButton(tr("connect"))
         self.connect_btn.setStyleSheet(
@@ -304,6 +327,11 @@ class SettingsPage(QWidget):
         self.connect_btn.clicked.connect(self._toggle_connection)
         client_row.addWidget(self.connect_btn)
         network_layout.addLayout(client_row)
+
+        # Discovery status
+        self.discovery_status_label = QLabel(tr("discovering_servers"))
+        self.discovery_status_label.setStyleSheet("color: #7f8c8d; font-size: 11px;")
+        network_layout.addWidget(self.discovery_status_label)
 
         # Connection status
         self.connection_status_label = QLabel(tr("connection_status_disconnected"))
@@ -443,7 +471,8 @@ class SettingsPage(QWidget):
 
         # Network settings
         self.server_port_spin.setValue(s.server_port)
-        self.server_address_edit.setText(s.server_address)
+        if s.server_address:
+            self.server_address_combo.lineEdit().setText(s.server_address)
 
         # Set network mode radio
         if s.network_mode == "server":
@@ -677,7 +706,9 @@ class SettingsPage(QWidget):
 
         # Network settings
         self.settings.server_port = self.server_port_spin.value()
-        self.settings.server_address = self.server_address_edit.text().strip()
+        self.settings.server_address = (
+            self.server_address_combo.lineEdit().text().strip()
+        )
         if self.server_radio.isChecked():
             self.settings.network_mode = "server"
         elif self.client_radio.isChecked():
@@ -777,8 +808,15 @@ class SettingsPage(QWidget):
         self.start_server_btn.setEnabled(is_server)
 
         # Client controls
-        self.server_address_edit.setEnabled(is_client)
+        self.server_address_combo.setEnabled(is_client)
+        self.refresh_discovery_btn.setEnabled(is_client)
         self.connect_btn.setEnabled(is_client)
+
+        # Start/stop discovery based on mode
+        if is_client:
+            self._start_discovery()
+        else:
+            self._stop_discovery()
 
         # Update button states based on current connection status
         if is_server and self._server and self._server.is_running():
@@ -889,7 +927,13 @@ class SettingsPage(QWidget):
             QMessageBox.information(self, tr("connection"), tr("disconnected_msg"))
         else:
             # Connect
-            address = self.server_address_edit.text().strip()
+            # Check if a server is selected from dropdown
+            current_data = self.server_address_combo.currentData()
+            if current_data:
+                address = current_data
+            else:
+                address = self.server_address_combo.lineEdit().text().strip()
+
             if not address:
                 QMessageBox.warning(self, tr("connection"), tr("enter_server_address"))
                 return
@@ -951,6 +995,88 @@ class SettingsPage(QWidget):
             self.server_status_label.setStyleSheet(
                 "color: #7f8c8d; font-style: italic;"
             )
+
+    def _start_discovery(self):
+        """Start server discovery."""
+        if self._discovery:
+            return
+
+        from gearledger.network_discovery import ServerDiscovery
+
+        def on_server_found(server):
+            """Called when a server is discovered."""
+            self._update_discovered_servers()
+
+        self._discovery = ServerDiscovery(on_server_found=on_server_found)
+        self._discovery.start()
+
+    def _stop_discovery(self):
+        """Stop server discovery."""
+        if self._discovery:
+            self._discovery.stop()
+            self._discovery = None
+
+    def _refresh_discovery(self):
+        """Manually refresh server discovery."""
+        self._update_discovered_servers()
+        if self._discovery:
+            # Restart discovery to force refresh
+            self._stop_discovery()
+            self._start_discovery()
+
+    def _update_discovered_servers(self):
+        """Update the combo box with discovered servers."""
+        if not self.client_radio.isChecked():
+            return
+
+        if not self._discovery:
+            return
+
+        discovered = self._discovery.get_discovered_servers()
+
+        # Get current selection
+        current_text = self.server_address_combo.lineEdit().text()
+
+        # Update combo box items
+        self.server_address_combo.clear()
+
+        if discovered:
+            for server in discovered:
+                display_text = f"{server.name} ({server.ip}:{server.port})"
+                self.server_address_combo.addItem(display_text, server.get_url())
+
+            # Restore selection if it matches a discovered server
+            for i in range(self.server_address_combo.count()):
+                if self.server_address_combo.itemData(i) == current_text:
+                    self.server_address_combo.setCurrentIndex(i)
+                    break
+            else:
+                # If current text doesn't match, keep it as custom entry
+                self.server_address_combo.lineEdit().setText(current_text)
+
+            self.discovery_status_label.setText(
+                tr("servers_found", count=len(discovered))
+            )
+            self.discovery_status_label.setStyleSheet(
+                "color: #27ae60; font-size: 11px;"
+            )
+        else:
+            # No servers found
+            if current_text:
+                self.server_address_combo.lineEdit().setText(current_text)
+            self.discovery_status_label.setText(tr("no_servers_found"))
+            self.discovery_status_label.setStyleSheet(
+                "color: #7f8c8d; font-size: 11px;"
+            )
+
+    def closeEvent(self, event):
+        """Clean up when widget is closed."""
+        self._stop_discovery()
+        if hasattr(self, "_client_count_timer"):
+            self._client_count_timer.stop()
+        if hasattr(self, "_discovery_timer"):
+            self._discovery_timer.stop()
+        super().closeEvent(event) if hasattr(super(), "closeEvent") else None
 
     def get_settings(self) -> Settings:
         """Get current settings (from UI, not saved yet)."""

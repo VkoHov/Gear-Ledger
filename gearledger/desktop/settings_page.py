@@ -278,7 +278,8 @@ class SettingsPage(QWidget):
 
         # Server settings
         server_row = QHBoxLayout()
-        server_row.addWidget(QLabel(tr("server_port_label")))
+        self.server_port_label = QLabel(tr("server_port_label"))
+        server_row.addWidget(self.server_port_label)
         self.server_port_spin = QSpinBox()
         self.server_port_spin.setRange(1024, 65535)
         self.server_port_spin.setValue(8080)
@@ -301,7 +302,8 @@ class SettingsPage(QWidget):
 
         # Client settings
         client_row = QHBoxLayout()
-        client_row.addWidget(QLabel(tr("server_address_label")))
+        self.server_address_label = QLabel(tr("server_address_label"))
+        client_row.addWidget(self.server_address_label)
 
         # Server discovery combo box (editable to allow manual entry)
         self.server_address_combo = QComboBox()
@@ -802,12 +804,26 @@ class SettingsPage(QWidget):
         """Update network UI based on selected mode."""
         is_server = self.server_radio.isChecked()
         is_client = self.client_radio.isChecked()
+        is_standalone = self.standalone_radio.isChecked()
 
-        # Server controls
+        # Show/hide server controls based on mode
+        self.server_port_label.setVisible(is_server)
+        self.server_port_spin.setVisible(is_server)
+        self.start_server_btn.setVisible(is_server)
+        self.server_status_label.setVisible(is_server)
+
+        # Show/hide client controls based on mode
+        self.server_address_label.setVisible(is_client)
+        self.server_address_combo.setVisible(is_client)
+        self.refresh_discovery_btn.setVisible(is_client)
+        self.connect_btn.setVisible(is_client)
+        self.connection_status_label.setVisible(is_client)
+        self.discovery_status_label.setVisible(is_client)
+
+        # Enable/disable based on mode
         self.server_port_spin.setEnabled(is_server)
         self.start_server_btn.setEnabled(is_server)
 
-        # Client controls
         self.server_address_combo.setEnabled(is_client)
         self.refresh_discovery_btn.setEnabled(is_client)
         self.connect_btn.setEnabled(is_client)
@@ -819,16 +835,26 @@ class SettingsPage(QWidget):
             self._stop_discovery()
 
         # Update button states based on current connection status
-        if is_server and self._server and self._server.is_running():
+        from gearledger.server import get_server
+
+        server = get_server()
+        if is_server and server and server.is_running():
             self.start_server_btn.setText(tr("stop_server"))
             self.start_server_btn.setStyleSheet(
                 "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
             )
+            # Update server status immediately
+            self._update_server_status()
         else:
             self.start_server_btn.setText(tr("start_server"))
             self.start_server_btn.setStyleSheet(
                 "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
             )
+            if is_standalone or not is_server:
+                self.server_status_label.setText(tr("server_status_stopped"))
+                self.server_status_label.setStyleSheet(
+                    "color: #7f8c8d; font-style: italic;"
+                )
 
         if is_client and self._client and self._client.is_connected():
             self.connect_btn.setText(tr("disconnect"))
@@ -853,16 +879,9 @@ class SettingsPage(QWidget):
             stop_server()
             self._server = None
             set_runtime_mode("standalone")  # Reset runtime mode
-            self.server_status_label.setText(tr("server_status_stopped"))
-            self.server_status_label.setStyleSheet(
-                "color: #7f8c8d; font-style: italic;"
-            )
-            self.start_server_btn.setText(tr("start_server"))
-            self.start_server_btn.setStyleSheet(
-                "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
-            )
+            # Update UI to hide server controls
+            self._update_network_ui()
             self.network_mode_changed.emit("standalone", "")
-            self._update_server_status()
             QMessageBox.information(self, tr("server"), tr("server_stopped_msg"))
         else:
             # Start server
@@ -881,11 +900,10 @@ class SettingsPage(QWidget):
                 if self._server and self._server.is_running():
                     set_runtime_mode("server")  # Set runtime mode to server
                     url = self._server.get_server_url()
+                    # Update UI to show server controls
+                    self._update_network_ui()
+                    # Update status immediately
                     self._update_server_status()
-                    self.start_server_btn.setText(tr("stop_server"))
-                    self.start_server_btn.setStyleSheet(
-                        "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
-                    )
                     self.network_mode_changed.emit("server", url)
                     QMessageBox.information(
                         self,
@@ -975,14 +993,22 @@ class SettingsPage(QWidget):
 
     def _update_client_count(self):
         """Update connected clients count display (called by timer)."""
-        if self.server_radio.isChecked() and self._server and self._server.is_running():
-            self._update_server_status()
+        if self.server_radio.isChecked():
+            # Get server instance (it might not be stored in self._server)
+            from gearledger.server import get_server
+
+            server = get_server()
+            if server and server.is_running():
+                self._update_server_status()
 
     def _update_server_status(self):
         """Update server status label with current connection count."""
-        if self._server and self._server.is_running():
-            url = self._server.get_server_url()
-            count = self._server.get_connected_clients_count()
+        from gearledger.server import get_server
+
+        server = get_server()
+        if server and server.is_running():
+            url = server.get_server_url()
+            count = server.get_connected_clients_count()
             if count > 0:
                 self.server_status_label.setText(
                     tr("server_status_running_with_clients", url=url, count=count)

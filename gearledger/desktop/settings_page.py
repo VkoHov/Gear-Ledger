@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 from .settings_manager import Settings, save_settings, load_settings
 from .translations import tr
@@ -43,6 +43,11 @@ class SettingsPage(QWidget):
         self._client = None
         self._setup_ui()
         self._load_settings_to_ui()
+
+        # Timer to update connected clients count (for server mode)
+        self._client_count_timer = QTimer(self)
+        self._client_count_timer.timeout.connect(self._update_client_count)
+        self._client_count_timer.start(2000)  # Check every 2 seconds
 
     def _setup_ui(self):
         """Set up the settings page UI."""
@@ -819,6 +824,7 @@ class SettingsPage(QWidget):
                 "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
             )
             self.network_mode_changed.emit("standalone", "")
+            self._update_server_status()
             QMessageBox.information(self, tr("server"), tr("server_stopped_msg"))
         else:
             # Start server
@@ -837,12 +843,7 @@ class SettingsPage(QWidget):
                 if self._server and self._server.is_running():
                     set_runtime_mode("server")  # Set runtime mode to server
                     url = self._server.get_server_url()
-                    self.server_status_label.setText(
-                        tr("server_status_running", url=url)
-                    )
-                    self.server_status_label.setStyleSheet(
-                        "color: #27ae60; font-weight: bold;"
-                    )
+                    self._update_server_status()
                     self.start_server_btn.setText(tr("stop_server"))
                     self.start_server_btn.setStyleSheet(
                         "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
@@ -927,6 +928,29 @@ class SettingsPage(QWidget):
                 QMessageBox.critical(
                     self, tr("connection"), tr("connection_error", error=str(e))
                 )
+
+    def _update_client_count(self):
+        """Update connected clients count display (called by timer)."""
+        if self.server_radio.isChecked() and self._server and self._server.is_running():
+            self._update_server_status()
+
+    def _update_server_status(self):
+        """Update server status label with current connection count."""
+        if self._server and self._server.is_running():
+            url = self._server.get_server_url()
+            count = self._server.get_connected_clients_count()
+            if count > 0:
+                self.server_status_label.setText(
+                    tr("server_status_running_with_clients", url=url, count=count)
+                )
+            else:
+                self.server_status_label.setText(tr("server_status_running", url=url))
+            self.server_status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+        else:
+            self.server_status_label.setText(tr("server_status_stopped"))
+            self.server_status_label.setStyleSheet(
+                "color: #7f8c8d; font-style: italic;"
+            )
 
     def get_settings(self) -> Settings:
         """Get current settings (from UI, not saved yet)."""

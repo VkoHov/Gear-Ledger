@@ -4,6 +4,7 @@ REST API server for multi-device access to Gear Ledger.
 """
 import threading
 import socket
+import time
 from typing import Optional, Callable
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -34,11 +35,33 @@ class GearLedgerServer:
         self._thread: Optional[threading.Thread] = None
         self._running = False
 
+        # Track connected clients: {client_ip: last_seen_timestamp}
+        self._connected_clients = {}
+        self._client_timeout = (
+            10  # Consider client disconnected after 10 seconds of inactivity
+        )
+
         self._setup_routes()
 
     def _get_db(self) -> Database:
         """Get database instance."""
         return get_database(self.db_path)
+
+    def _cleanup_stale_clients(self):
+        """Remove clients that haven't been seen recently."""
+        current_time = time.time()
+        stale_clients = [
+            ip
+            for ip, last_seen in self._connected_clients.items()
+            if current_time - last_seen > self._client_timeout
+        ]
+        for ip in stale_clients:
+            del self._connected_clients[ip]
+
+    def get_connected_clients_count(self) -> int:
+        """Get count of currently connected clients."""
+        self._cleanup_stale_clients()
+        return len(self._connected_clients)
 
     def _setup_routes(self):
         """Setup API routes."""
@@ -60,11 +83,26 @@ class GearLedgerServer:
         @self.app.route("/api/sync/version", methods=["GET"])
         def get_sync_version():
             """Get current data version for sync detection."""
+            # Track client connection
+            client_ip = request.remote_addr
+            self._connected_clients[client_ip] = time.time()
+            # Clean up stale clients
+            self._cleanup_stale_clients()
             return jsonify({"ok": True, "version": self._data_version})
+
+        @self.app.route("/api/clients/count", methods=["GET"])
+        def get_connected_clients_count():
+            """Get count of currently connected clients."""
+            self._cleanup_stale_clients()
+            count = len(self._connected_clients)
+            return jsonify({"ok": True, "count": count})
 
         @self.app.route("/api/results", methods=["GET"])
         def get_results():
             """Get all results."""
+            # Track client connection
+            client_ip = request.remote_addr
+            self._connected_clients[client_ip] = time.time()
             client = request.args.get("client")
             db = self._get_db()
             results = db.get_all_results(client)
@@ -73,6 +111,9 @@ class GearLedgerServer:
         @self.app.route("/api/results", methods=["POST"])
         def add_result():
             """Add or update a result."""
+            # Track client connection
+            client_ip = request.remote_addr
+            self._connected_clients[client_ip] = time.time()
             print("[SERVER] POST /api/results received")
             data = request.get_json()
             print(f"[SERVER] Request data: {data}")

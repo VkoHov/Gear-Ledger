@@ -1335,6 +1335,10 @@ TRANSLATIONS = {
         "en": "✅ Server running at: {url}",
         "ru": "✅ Сервер запущен: {url}",
     },
+    "server_status_running_with_clients": {
+        "en": "✅ Server running at: {url} | {count} device(s) connected",
+        "ru": "✅ Сервер запущен: {url} | Подключено устройств: {count}",
+    },
     "server_address_label": {
         "en": "Server Address:",
         "ru": "Адрес сервера:",

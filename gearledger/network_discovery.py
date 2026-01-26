@@ -62,7 +62,7 @@ class ServerBroadcaster:
                 pass
             self._socket = None
         if self._thread:
-            self._thread.join(timeout=1)
+            self._thread.join(timeout=2)
             self._thread = None
 
     def _broadcast_loop(self):
@@ -112,6 +112,9 @@ class ServerBroadcaster:
                             broadcast_ip = self._get_broadcast_ip(ip)
                             broadcast_addr = (broadcast_ip, DISCOVERY_PORT)
                             sock.sendto(message_json, broadcast_addr)
+                            print(
+                                f"[DISCOVERY] Broadcast sent from {ip} to {broadcast_ip}:{DISCOVERY_PORT}"
+                            )
                         except Exception as e:
                             if self._running:
                                 print(f"[DISCOVERY] Broadcast error on {ip}: {e}")
@@ -205,8 +208,9 @@ class ServerBroadcaster:
                 pass
 
         # Remove duplicates and sort
-        ips = sorted(list(set(ips)))
-        return ips if ips else ["127.0.0.1"]
+        unique_ips = list(set(ips))
+        unique_ips.sort()
+        return unique_ips if unique_ips else ["127.0.0.1"]
 
     def _get_broadcast_ip(self, ip: str) -> str:
         """Get broadcast IP for a given network IP."""
@@ -274,15 +278,19 @@ class ServerDiscovery:
     def _listen_loop(self):
         """Listen loop running in background thread."""
         try:
-            # Create UDP socket for listening
+            # Create UDP socket for listening (bind to all interfaces)
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._socket.bind(("", DISCOVERY_PORT))
+            self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self._socket.bind(("0.0.0.0", DISCOVERY_PORT))
             self._socket.settimeout(1.0)  # Timeout for checking _running flag
+
+            print(f"[DISCOVERY] Listening on port {DISCOVERY_PORT}")
 
             while self._running:
                 try:
                     data, addr = self._socket.recvfrom(1024)
+                    print(f"[DISCOVERY] Received broadcast from {addr[0]}:{addr[1]}")
                     try:
                         message = json.loads(data.decode("utf-8"))
                         if message.get("type") == "gearledger_server":
@@ -292,6 +300,10 @@ class ServerDiscovery:
                                 # Fallback to single IP for backward compatibility
                                 single_ip = message.get("ip", addr[0])
                                 ips = [single_ip]
+
+                            print(
+                                f"[DISCOVERY] Server IPs: {ips}, Port: {message.get('port', 8080)}"
+                            )
 
                             # Create server entry for each IP
                             for ip in ips:
@@ -314,9 +326,13 @@ class ServerDiscovery:
                                     if self.on_server_found and (
                                         not old_server or old_server.is_stale()
                                     ):
+                                        print(
+                                            f"[DISCOVERY] New server discovered: {server.ip}:{server.port}"
+                                        )
                                         self.on_server_found(server)
                     except (json.JSONDecodeError, KeyError) as e:
                         # Ignore invalid messages
+                        print(f"[DISCOVERY] Invalid message from {addr}: {e}")
                         pass
                 except socket.timeout:
                     # Timeout is expected, continue listening

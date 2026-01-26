@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
 )
+from PyQt6.QtGui import QFont
 
 # Import our modular components
 from .camera_widget import CameraWidget
@@ -33,7 +34,7 @@ from .translations import tr
 
 # Optional speech helpers (guarded)
 try:
-    from gearledger.speech import speak, speak_match, _spell_code
+    from gearledger.speech import speak, speak_match, speak_name, _spell_code
 except Exception:
 
     def speak(*a, **k):
@@ -42,8 +43,154 @@ except Exception:
     def speak_match(*a, **k):
         pass
 
+    def speak_name(*a, **k):
+        pass  # Speech not available, silently ignore
+
     def _spell_code(x):
         return x
+
+
+class NameConfirmationDialog(QDialog):
+    """Custom dialog for confirming user/client name after successful entry."""
+
+    def __init__(self, parent, client_name: str):
+        super().__init__(parent)
+        self.client_name = client_name
+        self._setup_ui()
+        # Speak only the client name when dialog opens
+        speak_name(client_name)
+
+    def _setup_ui(self):
+        """Set up the dialog UI with improved layout and typography."""
+        self.setWindowTitle(tr("manual_entry_success"))
+        self.setMinimumSize(700, 400)  # Increased to accommodate larger text
+        self.setModal(True)
+
+        # Center dialog on parent window
+        if self.parent():
+            parent_geometry = self.parent().geometry()
+            dialog_size = self.sizeHint()
+            x = (
+                parent_geometry.x()
+                + (parent_geometry.width() - dialog_size.width()) // 2
+            )
+            y = (
+                parent_geometry.y()
+                + (parent_geometry.height() - dialog_size.height()) // 2
+            )
+            self.move(x, y)
+
+        # Main layout with generous padding
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(24)
+        main_layout.setContentsMargins(32, 32, 32, 32)
+
+        # Client name as main headline
+        name_label = QLabel(self.client_name)
+        name_font = QFont()
+        name_font.setPointSize(84)  # Doubled from 42 to 84
+        name_font.setBold(True)
+        name_label.setFont(name_font)
+        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name_label.setWordWrap(True)
+        # Use font-size in stylesheet as well to ensure it's applied
+        name_label.setStyleSheet(
+            """
+            color: #2c3e50;
+            padding: 16px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            font-size: 84pt;
+            font-weight: bold;
+        """
+        )
+        main_layout.addWidget(name_label)
+
+        # Friendly confirmation message
+        confirmation_label = QLabel(tr("entry_saved_confirmation"))
+        confirmation_font = QFont()
+        confirmation_font.setPointSize(18)  # Increased from 14 to 18
+        confirmation_label.setFont(confirmation_font)
+        confirmation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        confirmation_label.setWordWrap(True)
+        confirmation_label.setStyleSheet("color: #5a6c7d; padding: 12px;")
+        main_layout.addWidget(confirmation_label)
+
+        # Add stretch to push buttons down
+        main_layout.addStretch()
+
+        # Button layout
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(12)
+
+        # Copy name button (optional secondary action)
+        copy_btn = QPushButton(tr("copy_name"))
+        copy_btn.setMinimumHeight(48)  # Increased from 40 to 48
+        copy_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #e9ecef;
+                color: #495057;
+                border: 1px solid #ced4da;
+                border-radius: 6px;
+                padding: 10px 20px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #dee2e6;
+            }
+            QPushButton:pressed {
+                background-color: #ced4da;
+            }
+        """
+        )
+        copy_btn.clicked.connect(self._copy_name)
+        button_layout.addWidget(copy_btn)
+
+        button_layout.addStretch()
+
+        # OK button (primary action) - detect language
+        try:
+            from gearledger.speech import get_speech_language
+
+            current_lang = get_speech_language()
+        except Exception:
+            current_lang = "en"
+        ok_text = "OK" if current_lang == "en" else "ОК"
+        ok_btn = QPushButton(ok_text)
+        ok_btn.setMinimumHeight(48)  # Increased from 40 to 48
+        ok_btn.setMinimumWidth(140)  # Increased from 120 to 140
+        ok_btn.setDefault(True)
+        ok_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #007bff;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 10px 28px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+            QPushButton:pressed {
+                background-color: #004085;
+            }
+        """
+        )
+        ok_btn.clicked.connect(self.accept)
+        button_layout.addWidget(ok_btn)
+
+        main_layout.addLayout(button_layout)
+
+    def _copy_name(self):
+        """Copy the client name to clipboard."""
+        from PyQt6.QtWidgets import QApplication
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.client_name)
 
 
 class MainWindow(QWidget):
@@ -1226,8 +1373,8 @@ class MainWindow(QWidget):
                 ledger_path = self.settings_widget.get_results_path()
 
                 if client and artikul:
-                    # Speak the match
-                    speak_match(artikul, client)
+                    # Don't speak here - dialog will speak only the client name
+                    # speak_match(artikul, client)
 
                     # Validate weight price before recording
                     if not self.settings_widget.is_weight_price_valid():
@@ -1271,19 +1418,13 @@ class MainWindow(QWidget):
                         # Clear the manual entry fields
                         self.settings_widget.clear_manual_entry()
 
-                        # Show success message
-                        from PyQt6.QtWidgets import QMessageBox
+                        # Show success message with improved dialog
+                        def show_dialog():
+                            dialog = NameConfirmationDialog(self, client)
+                            dialog.exec()
 
-                        QMessageBox.information(
-                            self,
-                            tr("manual_entry_success"),
-                            tr(
-                                "manual_entry_success_msg",
-                                artikul=artikul,
-                                client=client,
-                                weight=weight,
-                            ),
-                        )
+                        # Ensure dialog opens on main thread
+                        QTimer.singleShot(0, show_dialog)
                     else:
                         self.append_logs(
                             [tr("log_manual_entry_failed", error=rec["error"])]

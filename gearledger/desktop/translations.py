@@ -563,6 +563,22 @@ TRANSLATIONS = {
         "en": "Show or hide the logs widget in both Automated and Manual tabs",
         "ru": "Показывать или скрывать виджет логов",
     },
+    "use_openai_tts": {
+        "en": "Use OpenAI TTS (premium)",
+        "ru": "Использовать OpenAI TTS (премиум)",
+    },
+    "use_openai_tts_tooltip": {
+        "en": "Requires OPENAI_API_KEY. May incur API costs. Disabled by default for free OS voices.",
+        "ru": "Требуется OPENAI_API_KEY. Могут взиматься расходы на API. По умолчанию отключено для бесплатных системных голосов.",
+    },
+    "openai_tts_requires_key": {
+        "en": "OpenAI API Key Required",
+        "ru": "Требуется ключ OpenAI API",
+    },
+    "openai_tts_requires_key_msg": {
+        "en": "OpenAI TTS requires an API key to be set.\n\nPlease enter your OpenAI API key in the OpenAI API Configuration section above.",
+        "ru": "OpenAI TTS требует наличия ключа API.\n\nПожалуйста, введите ваш ключ OpenAI API в разделе конфигурации OpenAI API выше.",
+    },
     "pricing_configuration": {
         "en": "Pricing Configuration",
         "ru": "Конфигурация цен",
@@ -908,6 +924,14 @@ TRANSLATIONS = {
     "manual_entry_success_msg": {
         "en": "Successfully added:\n{artikul} → {client}\nWeight: {weight} kg",
         "ru": "Успешно добавлено:\n{artikul} → {client}\nВес: {weight} кг",
+    },
+    "entry_saved_confirmation": {
+        "en": "Saved successfully. You can continue.",
+        "ru": "Успешно сохранено. Можно продолжать.",
+    },
+    "copy_name": {
+        "en": "Copy Name",
+        "ru": "Копировать имя",
     },
     "manual_entry_failed": {
         "en": "Manual Entry Failed",

@@ -240,6 +240,12 @@ class SettingsPage(QWidget):
         self.show_logs_checkbox.setToolTip(tr("show_logs_tooltip"))
         ui_layout.addWidget(self.show_logs_checkbox)
 
+        # OpenAI TTS toggle
+        self.use_openai_tts_checkbox = QCheckBox(tr("use_openai_tts"))
+        self.use_openai_tts_checkbox.setToolTip(tr("use_openai_tts_tooltip"))
+        self.use_openai_tts_checkbox.stateChanged.connect(self._on_openai_tts_toggled)
+        ui_layout.addWidget(self.use_openai_tts_checkbox)
+
         layout.addWidget(ui_group)
 
         # Network Configuration
@@ -466,6 +472,7 @@ class SettingsPage(QWidget):
         self.min_fuzzy_spin.setValue(s.default_min_fuzzy)
         self.default_result_file_edit.setText(s.default_result_file or "")
         self.show_logs_checkbox.setChecked(s.show_logs)
+        self.use_openai_tts_checkbox.setChecked(s.use_openai_tts)
         # Set language combo by data value
         lang_index = self.language_combo.findData(s.language)
         if lang_index >= 0:
@@ -704,6 +711,7 @@ class SettingsPage(QWidget):
         self.settings.default_min_fuzzy = self.min_fuzzy_spin.value()
         self.settings.default_result_file = self.default_result_file_edit.text().strip()
         self.settings.show_logs = self.show_logs_checkbox.isChecked()
+        self.settings.use_openai_tts = self.use_openai_tts_checkbox.isChecked()
         self.settings.language = self.language_combo.currentData()
 
         # Network settings
@@ -1094,6 +1102,27 @@ class SettingsPage(QWidget):
             self.discovery_status_label.setStyleSheet(
                 "color: #7f8c8d; font-size: 11px;"
             )
+
+    def _on_openai_tts_toggled(self, state):
+        """Handle OpenAI TTS checkbox toggle."""
+        enabled = state == Qt.CheckState.Checked.value
+        api_key = os.environ.get("OPENAI_API_KEY") or self.api_key_edit.text().strip()
+
+        if enabled and not api_key:
+            # Warn user and uncheck
+            QMessageBox.warning(
+                self,
+                tr("openai_tts_requires_key"),
+                tr("openai_tts_requires_key_msg"),
+            )
+            self.use_openai_tts_checkbox.setChecked(False)
+            return
+
+        # Update setting immediately
+        from gearledger.desktop.settings_manager import set_use_openai_tts
+
+        set_use_openai_tts(enabled)
+        self.settings.use_openai_tts = enabled
 
     def closeEvent(self, event):
         """Clean up when widget is closed."""

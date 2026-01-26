@@ -38,6 +38,7 @@ class Settings:
     default_result_file: str = ""  # Default result file path (empty = auto-generate)
     show_logs: bool = True  # Show/hide logs widget in both tabs
     language: str = "en"  # UI language: "en" or "ru"
+    use_openai_tts: bool = False  # Use OpenAI TTS (premium) instead of OS TTS
     # Network mode settings
     network_mode: str = "standalone"  # "standalone", "server", or "client"
     server_port: int = 8080  # Port for server mode
@@ -96,3 +97,16 @@ def save_settings(s: Settings):
 def get_settings_path() -> str:
     """Get the path to the settings file (for display purposes)."""
     return CFG_PATH
+
+
+def get_use_openai_tts() -> bool:
+    """Get whether to use OpenAI TTS (premium)."""
+    settings = load_settings()
+    return settings.use_openai_tts
+
+
+def set_use_openai_tts(value: bool):
+    """Set whether to use OpenAI TTS (premium)."""
+    settings = load_settings()
+    settings.use_openai_tts = value
+    save_settings(settings)

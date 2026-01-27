@@ -56,3 +56,37 @@ Python 3.9–3.12
 macOS or Linux (Windows may work with small tweaks)
 
 (Optional) OpenAI API key for GPT ranking
+
+### Voice Support
+
+GearLedger supports multiple speech engines for voice feedback:
+
+- **OS (free)** – Uses the system TTS:
+  - macOS: `say`
+  - Windows: `pyttsx3` (SAPI5)
+- **OpenAI (premium)** – High quality cloud TTS (requires `OPENAI_API_KEY`).
+- **Piper (offline)** – Local neural TTS with Armenian support.
+
+To enable voice support:
+
+1. Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+2. (Optional) Install Piper binary:
+   - Download Piper for your platform from the official project and ensure `piper` is on your `PATH`,
+     or configure the binary path in Settings → Voice Support.
+
+3. Download Armenian voice:
+   - Open the desktop app → Settings → **Voice Support**.
+   - Select **Piper (offline)** as the speech engine.
+   - Click **Download Armenian Voice** (downloads `hy_AM-gor-medium` into the app data folder).
+
+4. Use **Test voice** to play a short Armenian phrase with the selected engine.
+
+Piper models are stored under the app data directory, e.g.:
+
+- macOS/Linux: `~/.gearledger/voices/piper/hy_AM-gor-medium/`
+- Windows: `%LOCALAPPDATA%/GearLedger/voices/piper/hy_AM-gor-medium/`

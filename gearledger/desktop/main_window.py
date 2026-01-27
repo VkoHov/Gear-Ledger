@@ -35,7 +35,16 @@ from .translations import tr
 # Optional speech helpers (guarded)
 try:
     from gearledger.speech import speak, speak_match, speak_name, _spell_code
-except Exception:
+except Exception as e:
+    # If anything goes wrong importing speech, log it so we can see why
+    # and fall back to no-op implementations instead of crashing.
+    try:
+        import traceback
+
+        print("[MAIN_WINDOW] Failed to import gearledger.speech:", e)
+        traceback.print_exc()
+    except Exception:
+        pass
 
     def speak(*a, **k):
         pass
@@ -1212,7 +1221,12 @@ class MainWindow(QWidget):
 
         if c and a:
             self.results_widget.update_fuzzy_result(c, a)
-            speak_match(a, c)
+            # Speak only the client name (via configured engine: OS/OpenAI/Piper)
+            try:
+                print(f"[SPEECH] _finish_fuzzy_process speaking client='{c}'")
+            except Exception:
+                pass
+            speak_name(c)
 
             # Validate weight price before recording
             if not self.settings_widget.is_weight_price_valid():

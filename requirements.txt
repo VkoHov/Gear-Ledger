@@ -18,6 +18,11 @@ python-Levenshtein>=0.21.0
 openai>=1.30.0
 python-dotenv>=1.0.1
 
+# Local TTS / utilities
+huggingface_hub>=0.24.0
+piper-tts>=1.2.0
+platformdirs>=4.0.0
+
 # Camera & scale (keep if you’ll use them)
 opencv-python>=4.9.0
 pyserial>=3.5

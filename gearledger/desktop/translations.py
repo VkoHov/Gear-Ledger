@@ -571,6 +571,66 @@ TRANSLATIONS = {
         "en": "Requires OPENAI_API_KEY. May incur API costs. Disabled by default for free OS voices.",
         "ru": "Требуется OPENAI_API_KEY. Могут взиматься расходы на API. По умолчанию отключено для бесплатных системных голосов.",
     },
+    "voice_support": {
+        "en": "Voice Support",
+        "ru": "Голосовая поддержка",
+    },
+    "speech_engine_label": {
+        "en": "Speech Engine:",
+        "ru": "Движок озвучивания:",
+    },
+    "speech_engine_os": {
+        "en": "OS (free)",
+        "ru": "Системный (бесплатно)",
+    },
+    "speech_engine_openai": {
+        "en": "OpenAI (premium)",
+        "ru": "OpenAI (премиум)",
+    },
+    "speech_engine_piper": {
+        "en": "Piper (offline)",
+        "ru": "Piper (офлайн)",
+    },
+    "piper_voice_label": {
+        "en": "Piper voice model id:",
+        "ru": "Модель голоса Piper:",
+    },
+    "piper_voice_help": {
+        "en": "Armenian local voice model (Piper). Requires one-time model download.",
+        "ru": "Армянский локальный голос (Piper). Требуется одноразовая загрузка модели.",
+    },
+    "piper_binary_path_label": {
+        "en": "Piper binary path (optional):",
+        "ru": "Путь к исполняемому файлу Piper (необязательно):",
+    },
+    "download_armenian_voice": {
+        "en": "Download Armenian Voice",
+        "ru": "Скачать армянский голос",
+    },
+    "test_voice": {
+        "en": "Test voice",
+        "ru": "Тест голоса",
+    },
+    "piper_download_title": {
+        "en": "Piper Voice Download",
+        "ru": "Загрузка голоса Piper",
+    },
+    "piper_download_started": {
+        "en": "Downloading Armenian Piper voice model...\nThis may take a minute depending on your connection.",
+        "ru": "Загружается армянская голосовая модель Piper...\nЭто может занять некоторое время в зависимости от соединения.",
+    },
+    "piper_download_success": {
+        "en": "Armenian Piper voice model downloaded successfully.",
+        "ru": "Армянская голосовая модель Piper успешно загружена.",
+    },
+    "piper_download_failed": {
+        "en": "Failed to download Armenian Piper voice model:\n{error}",
+        "ru": "Не удалось загрузить армянскую голосовую модель Piper:\n{error}",
+    },
+    "piper_missing_model_fallback": {
+        "en": "Piper engine selected, but the voice model was not found.\nFalling back to OS speech engine.",
+        "ru": "Выбран движок Piper, но модель голоса не найдена.\nИспользуется системный движок озвучивания.",
+    },
     "openai_tts_requires_key": {
         "en": "OpenAI API Key Required",
         "ru": "Требуется ключ OpenAI API",

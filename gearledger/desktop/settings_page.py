@@ -24,7 +24,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QObject
 
-from .settings_manager import Settings, save_settings, load_settings
+from .settings_manager import (
+    Settings,
+    save_settings,
+    load_settings,
+    get_speech_engine,
+    set_speech_engine,
+    get_piper_voice,
+    set_piper_voice,
+    get_piper_binary_path,
+    set_piper_binary_path,
+)
 from .translations import tr
 
 
@@ -42,6 +52,7 @@ class SettingsPage(QWidget):
         self._server = None
         self._client = None
         self._discovery = None
+        self._last_speech_engine = None
         self._setup_ui()
         self._load_settings_to_ui()
 
@@ -241,12 +252,85 @@ class SettingsPage(QWidget):
         ui_layout.addWidget(self.show_logs_checkbox)
 
         # OpenAI TTS toggle
-        self.use_openai_tts_checkbox = QCheckBox(tr("use_openai_tts"))
-        self.use_openai_tts_checkbox.setToolTip(tr("use_openai_tts_tooltip"))
-        self.use_openai_tts_checkbox.stateChanged.connect(self._on_openai_tts_toggled)
-        ui_layout.addWidget(self.use_openai_tts_checkbox)
-
         layout.addWidget(ui_group)
+
+        # Voice Support
+        voice_group = QGroupBox(tr("voice_support"))
+        voice_layout = QVBoxLayout(voice_group)
+
+        # Speech engine selection (OS or Piper only)
+        engine_row = QHBoxLayout()
+        engine_row.addWidget(QLabel(tr("speech_engine_label")))
+        self.speech_engine_combo = QComboBox()
+        self.speech_engine_combo.addItem(tr("speech_engine_os"), "os")
+        self.speech_engine_combo.addItem(tr("speech_engine_piper"), "piper")
+        engine_row.addWidget(self.speech_engine_combo)
+        engine_row.addStretch(1)
+        voice_layout.addLayout(engine_row)
+        self.speech_engine_combo.currentIndexChanged.connect(
+            self._on_speech_engine_changed
+        )
+
+        # Piper voice model id
+        piper_voice_row = QHBoxLayout()
+        piper_voice_row.addWidget(QLabel(tr("piper_voice_label")))
+        self.piper_voice_edit = QLineEdit()
+        self.piper_voice_edit.setPlaceholderText("hy_AM-gor-medium")
+        piper_voice_row.addWidget(self.piper_voice_edit, 1)
+        voice_layout.addLayout(piper_voice_row)
+
+        # Piper voice help text
+        piper_voice_help = QLabel(tr("piper_voice_help"))
+        piper_voice_help.setWordWrap(True)
+        piper_voice_help.setStyleSheet("color: #7f8c8d; font-size: 11px;")
+        voice_layout.addWidget(piper_voice_help)
+
+        # Piper binary status + path
+        # Detected path (read-only)
+        detected_row = QHBoxLayout()
+        detected_row.addWidget(QLabel(tr("piper_binary_path_label")))
+        self.piper_binary_detect_label = QLabel()
+        self.piper_binary_detect_label.setStyleSheet("color: #7f8c8d; font-size: 11px;")
+        detected_row.addWidget(self.piper_binary_detect_label, 1)
+        voice_layout.addLayout(detected_row)
+
+        # Override path
+        piper_bin_row = QHBoxLayout()
+        override_label = QLabel(tr("piper_binary_path_label"))
+        piper_bin_row.addWidget(override_label)
+        self.piper_binary_edit = QLineEdit()
+        piper_bin_row.addWidget(self.piper_binary_edit, 1)
+        browse_piper_btn = QPushButton("...")
+        browse_piper_btn.setFixedWidth(30)
+        browse_piper_btn.clicked.connect(self._on_browse_piper_binary)
+        piper_bin_row.addWidget(browse_piper_btn)
+        voice_layout.addLayout(piper_bin_row)
+
+        # Status chips: binary + model
+        status_row = QHBoxLayout()
+        self.piper_binary_status = QLabel()
+        self.piper_model_status = QLabel()
+        for lbl in (self.piper_binary_status, self.piper_model_status):
+            lbl.setStyleSheet("color: #7f8c8d; font-size: 11px; padding: 2px 6px;")
+        status_row.addWidget(self.piper_binary_status)
+        status_row.addWidget(self.piper_model_status)
+        status_row.addStretch(1)
+        voice_layout.addLayout(status_row)
+
+        # Download + Test buttons
+        buttons_row = QHBoxLayout()
+        self.piper_download_btn = QPushButton(tr("download_armenian_voice"))
+        self.piper_download_btn.clicked.connect(self._on_download_piper_voice)
+        buttons_row.addWidget(self.piper_download_btn)
+
+        self.piper_test_btn = QPushButton(tr("test_voice"))
+        self.piper_test_btn.clicked.connect(self._on_test_voice)
+        buttons_row.addWidget(self.piper_test_btn)
+
+        buttons_row.addStretch(1)
+        voice_layout.addLayout(buttons_row)
+
+        layout.addWidget(voice_group)
 
         # Network Configuration
         network_group = QGroupBox(tr("network_configuration"))
@@ -472,7 +556,20 @@ class SettingsPage(QWidget):
         self.min_fuzzy_spin.setValue(s.default_min_fuzzy)
         self.default_result_file_edit.setText(s.default_result_file or "")
         self.show_logs_checkbox.setChecked(s.show_logs)
-        self.use_openai_tts_checkbox.setChecked(s.use_openai_tts)
+
+        # Voice / speech settings
+        # Engine (only 'os' or 'piper' are supported now)
+        engine = getattr(s, "speech_engine", "os")
+        if engine not in ("os", "piper"):
+            engine = "os"
+        idx = self.speech_engine_combo.findData(engine)
+        if idx >= 0:
+            self.speech_engine_combo.setCurrentIndex(idx)
+        self._last_speech_engine = engine
+        # Piper voice and binary
+        self.piper_voice_edit.setText(getattr(s, "piper_voice", "hy_AM-gor-medium"))
+        self.piper_binary_edit.setText(getattr(s, "piper_binary_path", ""))
+        self._update_piper_status()
         # Set language combo by data value
         lang_index = self.language_combo.findData(s.language)
         if lang_index >= 0:
@@ -711,7 +808,14 @@ class SettingsPage(QWidget):
         self.settings.default_min_fuzzy = self.min_fuzzy_spin.value()
         self.settings.default_result_file = self.default_result_file_edit.text().strip()
         self.settings.show_logs = self.show_logs_checkbox.isChecked()
-        self.settings.use_openai_tts = self.use_openai_tts_checkbox.isChecked()
+        # Voice / speech
+        self.settings.speech_engine = self.speech_engine_combo.currentData()
+        # Keep legacy flag in sync
+        self.settings.use_openai_tts = self.settings.speech_engine == "openai"
+        self.settings.piper_voice = (
+            self.piper_voice_edit.text().strip() or "hy_AM-gor-medium"
+        )
+        self.settings.piper_binary_path = self.piper_binary_edit.text().strip()
         self.settings.language = self.language_combo.currentData()
 
         # Network settings
@@ -1118,11 +1222,151 @@ class SettingsPage(QWidget):
             self.use_openai_tts_checkbox.setChecked(False)
             return
 
-        # Update setting immediately
+        # Keep engine combo in sync
+        if enabled:
+            idx = self.speech_engine_combo.findData("openai")
+            if idx >= 0:
+                self.speech_engine_combo.setCurrentIndex(idx)
+        else:
+            # Only revert to OS if engine was openai
+            if self.speech_engine_combo.currentData() == "openai":
+                idx = self.speech_engine_combo.findData("os")
+                if idx >= 0:
+                    self.speech_engine_combo.setCurrentIndex(idx)
+
+        # Update setting immediately (backwards compatibility)
         from gearledger.desktop.settings_manager import set_use_openai_tts
 
         set_use_openai_tts(enabled)
         self.settings.use_openai_tts = enabled
+
+    def _update_piper_status(self):
+        """Update Piper binary/model status chips and detected path."""
+        try:
+            from gearledger.piper_tts import resolve_piper_binary, get_voice_files
+            from gearledger.desktop.settings_manager import get_piper_voice
+        except Exception:
+            return
+
+        # Binary
+        binary_path = resolve_piper_binary()
+        if binary_path:
+            self.piper_binary_detect_label.setText(binary_path)
+            self.piper_binary_status.setText("Piper: Found")
+            self.piper_binary_status.setStyleSheet(
+                "color: #155724; background-color: #d4edda; border-radius: 4px; padding: 2px 6px; font-size: 11px;"
+            )
+        else:
+            self.piper_binary_detect_label.setText("-")
+            self.piper_binary_status.setText("Piper: Not found")
+            self.piper_binary_status.setStyleSheet(
+                "color: #721c24; background-color: #f8d7da; border-radius: 4px; padding: 2px 6px; font-size: 11px;"
+            )
+
+        # Model
+        voice_id = self.piper_voice_edit.text().strip() or get_piper_voice()
+        model_path, config_path = get_voice_files(voice_id)
+        if os.path.isfile(model_path) and os.path.isfile(config_path):
+            self.piper_model_status.setText("Model: Installed")
+            self.piper_model_status.setStyleSheet(
+                "color: #155724; background-color: #d4edda; border-radius: 4px; padding: 2px 6px; font-size: 11px;"
+            )
+        else:
+            self.piper_model_status.setText("Model: Not installed")
+            self.piper_model_status.setStyleSheet(
+                "color: #856404; background-color: #fff3cd; border-radius: 4px; padding: 2px 6px; font-size: 11px;"
+            )
+
+    def _on_browse_piper_binary(self):
+        """Select custom Piper binary path."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("piper_binary_path_label"),
+            "",
+        )
+        if path:
+            self.piper_binary_edit.setText(path)
+            # Update status to reflect new override
+            self._update_piper_status()
+
+    def _on_download_piper_voice(self):
+        """Download Armenian Piper voice model."""
+        from PyQt6.QtWidgets import QProgressDialog
+
+        voice_id = self.piper_voice_edit.text().strip() or "hy_AM-gor-medium"
+
+        progress = QProgressDialog(tr("piper_download_started"), None, 0, 0, self)
+        progress.setWindowTitle(tr("piper_download_title"))
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.show()
+
+        def worker():
+            try:
+                from gearledger.piper_tts import download_piper_voice_model
+
+                download_piper_voice_model(voice_id)
+                QTimer.singleShot(0, self._update_piper_status)
+                QTimer.singleShot(
+                    0,
+                    lambda: QMessageBox.information(
+                        self,
+                        tr("piper_download_title"),
+                        tr("piper_download_success"),
+                    ),
+                )
+            except Exception as e:
+                QTimer.singleShot(
+                    0,
+                    lambda: QMessageBox.critical(
+                        self,
+                        tr("piper_download_title"),
+                        tr("piper_download_failed", error=str(e)),
+                    ),
+                )
+            finally:
+                QTimer.singleShot(0, progress.close)
+
+        # Run download in background thread
+        import threading
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_test_voice(self):
+        """Test the currently selected voice engine."""
+        try:
+            from gearledger.piper_tts import speak_with_piper
+        except Exception:
+            speak_with_piper = None
+
+        # Armenian sample with a few names
+        text = "Բարեւ ձեզ։ Արմեն Մկրտչյան։ " "Անահիտ Սարգսյան։ Տիգրան Հովհաննիսյան։"
+
+        used_piper = False
+        if speak_with_piper is not None:
+            try:
+                used_piper = speak_with_piper(text)
+            except Exception:
+                used_piper = False
+
+        if not used_piper:
+            # Fallback to generic speech engine
+            try:
+                from gearledger.speech import speak
+
+                speak(text)
+            except Exception:
+                pass
+
+    def _on_speech_engine_changed(self, index: int):
+        """Handle changes to the speech engine combo (OS / Piper)."""
+        engine = self.speech_engine_combo.itemData(index)
+        if engine not in ("os", "piper"):
+            engine = "os"
+        self._last_speech_engine = engine
 
     def closeEvent(self, event):
         """Clean up when widget is closed."""

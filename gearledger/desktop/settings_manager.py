@@ -38,7 +38,12 @@ class Settings:
     default_result_file: str = ""  # Default result file path (empty = auto-generate)
     show_logs: bool = True  # Show/hide logs widget in both tabs
     language: str = "en"  # UI language: "en" or "ru"
-    use_openai_tts: bool = False  # Use OpenAI TTS (premium) instead of OS TTS
+    # Deprecated: OpenAI TTS is no longer used (kept for backwards compatibility only)
+    use_openai_tts: bool = False
+    # Speech / voice settings (only OS and Piper are supported)
+    speech_engine: str = "os"  # "os" or "piper"
+    piper_voice: str = "hy_AM-gor-medium"  # Default Armenian Piper voice
+    piper_binary_path: str = ""  # Custom Piper executable path (optional)
     # Network mode settings
     network_mode: str = "standalone"  # "standalone", "server", or "client"
     server_port: int = 8080  # Port for server mode
@@ -100,13 +105,59 @@ def get_settings_path() -> str:
 
 
 def get_use_openai_tts() -> bool:
-    """Get whether to use OpenAI TTS (premium)."""
-    settings = load_settings()
-    return settings.use_openai_tts
+    """OpenAI TTS is no longer used; always return False (for backwards compatibility)."""
+    return False
 
 
 def set_use_openai_tts(value: bool):
-    """Set whether to use OpenAI TTS (premium)."""
+    """OpenAI TTS is no longer used; keep the stored flag False for backwards compatibility."""
     settings = load_settings()
-    settings.use_openai_tts = value
+    if settings.use_openai_tts:
+        settings.use_openai_tts = False
+        save_settings(settings)
+
+
+def get_speech_engine() -> str:
+    """Get current speech engine ('os' or 'piper')."""
+    settings = load_settings()
+    # Clamp to supported values; map any legacy 'openai' value back to 'os'
+    if settings.speech_engine not in ("os", "piper"):
+        return "os"
+    return settings.speech_engine
+
+
+def set_speech_engine(engine: str):
+    """Set current speech engine ('os' or 'piper')."""
+    if engine not in ("os", "piper"):
+        engine = "os"
+    settings = load_settings()
+    settings.speech_engine = engine
+    # Ensure legacy OpenAI flag is always off
+    settings.use_openai_tts = False
+    save_settings(settings)
+
+
+def get_piper_voice() -> str:
+    """Get configured Piper voice model id."""
+    settings = load_settings()
+    return settings.piper_voice or "hy_AM-gor-medium"
+
+
+def set_piper_voice(voice: str):
+    """Set Piper voice model id."""
+    settings = load_settings()
+    settings.piper_voice = voice or "hy_AM-gor-medium"
+    save_settings(settings)
+
+
+def get_piper_binary_path() -> str:
+    """Get custom Piper binary path (may be empty)."""
+    settings = load_settings()
+    return settings.piper_binary_path or ""
+
+
+def set_piper_binary_path(path: str):
+    """Set custom Piper binary path."""
+    settings = load_settings()
+    settings.piper_binary_path = path or ""
     save_settings(settings)

@@ -12,18 +12,6 @@ _ENGINE_AVAILABLE = None
 # Current speech language (synced with app language)
 _SPEECH_LANGUAGE = "en"
 
-# OpenAI TTS voice mapping - using best voices for clarity
-_OPENAI_VOICES = {
-    "en": "alloy",  # Clear, professional English voice (good for technical terms)
-    "ru": "alloy",  # OpenAI TTS supports Russian with same voice
-}
-# Alternative voices: "nova" (warmer), "echo" (clear), "fable" (expressive), "onyx" (deep), "shimmer" (soft)
-
-# OpenAI TTS model - using gpt-4o-mini-tts for better quality and expressiveness
-# Falls back to tts-1 if gpt-4o-mini-tts not available
-_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"  # Better quality, more natural
-_OPENAI_TTS_MODEL_FALLBACK = "tts-1"  # Fallback for compatibility
-
 # Preferred macOS voices (in order of preference)
 _MACOS_VOICE_PREFERENCES = {
     "en": ["Samantha", "Alex", "Victoria", "Karen", "Daniel"],
@@ -240,137 +228,23 @@ def speak(text: str):
     # Clean text for better speech
     text = _clean_text_for_speech(text)
 
-    # Check if user wants OpenAI TTS (premium)
+    # Determine speech engine
     try:
-        from gearledger.desktop.settings_manager import get_use_openai_tts
+        from gearledger.desktop.settings_manager import get_speech_engine
 
-        use_openai = get_use_openai_tts()
+        engine = get_speech_engine()
     except Exception:
-        use_openai = False
+        engine = "os"
 
-    # Try OpenAI TTS only if enabled AND API key exists
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if use_openai and api_key:
+    # Piper engine (local, offline)
+    if engine == "piper":
         try:
-            from openai import OpenAI
+            from gearledger.piper_tts import speak_with_piper
 
-            client = OpenAI(api_key=api_key)
-            voice = _OPENAI_VOICES.get(_SPEECH_LANGUAGE, "nova")
-
-            # Use wav format for best quality (can switch to opus/mp3 later for size)
-            audio_format = "wav"
-
-            # Try gpt-4o-mini-tts FIRST (best quality with instructions), then fallback
-            models_to_try = [_OPENAI_TTS_MODEL, "tts-1-hd", "tts-1"]
-            response = None
-            model_used = None
-
-            for model in models_to_try:
-                try:
-                    # Prepare kwargs
-                    kwargs = {
-                        "model": model,
-                        "voice": voice,
-                        "input": text,
-                        "response_format": audio_format,
-                    }
-
-                    # Add instructions and speed ONLY for gpt-4o-mini-tts (it supports these)
-                    if model == "gpt-4o-mini-tts":
-                        kwargs["instructions"] = (
-                            "Speak clearly, slightly slower, with natural pauses. "
-                            "Pronounce codes and numbers distinctly. "
-                            "Pronounce names naturally and clearly."
-                        )
-                        kwargs["speed"] = 0.95  # Slightly slower for clarity
-
-                    # Generate speech with streaming for better perceived quality
-                    response = client.audio.speech.create(**kwargs)
-                    model_used = model
-                    break
-                except Exception as model_error:
-                    error_str = str(model_error).lower()
-                    # If model not available, try next one
-                    if "model" in error_str or "invalid" in error_str:
-                        print(f"[SPEECH] Model {model} not available, trying next...")
-                        continue
-                    else:
-                        # Other error (API key, network, etc.) - raise it
-                        raise
-
-            if response is None:
-                raise RuntimeError("No TTS model available")
-
-            # Save to temporary file with appropriate extension
-            if audio_format == "wav":
-                suffix = ".wav"
-            elif audio_format == "opus":
-                suffix = ".opus"
-            else:
-                suffix = ".mp3"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-                tmp_path = tmp_file.name
-                response.stream_to_file(tmp_path)
-
-            # Play audio file - wait for completion to ensure it plays
-            playback_done = False
-            if sys.platform == "darwin":
-                # macOS: afplay supports wav, mp3, opus - wait for completion
-                result = subprocess.run(
-                    ["afplay", tmp_path], check=False, timeout=30, capture_output=True
-                )
-                if result.returncode != 0:
-                    stderr_msg = result.stderr.decode() if result.stderr else "unknown"
-                    print(f"[SPEECH] afplay error: {stderr_msg}")
-                else:
-                    playback_done = True
-            elif sys.platform == "win32":
-                # Windows: try blocking playback first, fallback to non-blocking
-                try:
-                    import playsound
-
-                    playsound.playsound(tmp_path, block=True)
-                    playback_done = True
-                except ImportError:
-                    # Fallback: use default player and wait much longer
-                    os.startfile(tmp_path)
-                    import time
-
-                    time.sleep(2)  # Wait for playback to start
-                    playback_done = False  # Can't reliably detect when done
-            else:
-                # Linux - try players that support wav
-                for player in ["ffplay", "mpv", "aplay", "mpg123", "mpg321"]:
-                    try:
-                        subprocess.run([player, tmp_path], check=False, timeout=30)
-                        playback_done = True
-                        break
-                    except FileNotFoundError:
-                        continue
-
-            # Clean up temp file in background (wait much longer for playback)
-            def cleanup():
-                try:
-                    import time
-
-                    # Wait longer - up to 90 seconds for longer phrases
-                    # Estimate: ~150 words per minute, so 90 sec covers ~225 words
-                    wait_time = 5 if playback_done else 90
-                    time.sleep(wait_time)
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                except Exception:
-                    pass
-
-            threading.Thread(target=cleanup, daemon=True).start()
-            print(f"[SPEECH] Played using {model_used} model, {voice} voice")
-            return
+            if speak_with_piper(text):
+                return
         except Exception as e:
-            # If OpenAI TTS fails, fall back to other methods
-            print(f"[SPEECH] OpenAI TTS failed: {e}")
-            import traceback
-
-            traceback.print_exc()
+            print(f"[SPEECH] Piper TTS failed, falling back to OS TTS: {e}")
 
     # Default: Use OS TTS (free, offline)
     # Windows: prefer pyttsx3 (SAPI5)
@@ -573,7 +447,39 @@ def speak_match(artikul: str, client: str, weight: float = None):
     code_spelled = _spell_code(artikul)
     client_clean = _clean_text_for_speech(client) if client else None
 
-    # macOS: Use split-speaking for better quality (RU + EN parts)
+    # If Piper engine is selected, speak a simple Armenian sentence with the client name.
+    try:
+        from gearledger.desktop.settings_manager import get_speech_engine
+
+        engine = get_speech_engine()
+    except Exception:
+        engine = "os"
+
+    # Debug log for engine used in speak_match
+    try:
+        print(
+            f"[SPEECH] speak_match() engine='{engine}', lang='{_SPEECH_LANGUAGE}', "
+            f"artikul='{artikul}', client='{client_clean}'"
+        )
+    except Exception:
+        pass
+
+    if engine == "piper":
+        try:
+            from gearledger.piper_tts import speak_with_piper
+        except Exception:
+            speak_with_piper = None
+
+        if speak_with_piper is not None and client_clean:
+            # Keep it short and name-focused; artikul/weight are not spoken here.
+            text = f"Արմատիկ. {client_clean}"
+            if not speak_with_piper(text):
+                # If Piper fails, fall back to normal path below
+                pass
+            else:
+                return
+
+    # macOS: Use split-speaking for better quality (RU + EN parts) for OS/OpenAI engines
     if sys.platform == "darwin":
         # Check if we should use OpenAI (if enabled)
         try:
@@ -684,20 +590,34 @@ def speak_name(name: str) -> None:
     if not cleaned_name:
         return
 
+    print(f"[SPEECH] speak_name called with '{cleaned_name}'")
+
     # Detect language (Cyrillic vs Latin)
     detected_lang = _detect_name_language(cleaned_name)
 
-    # Check if user wants OpenAI TTS (premium)
+    # Determine preferred speech engine (os / openai / piper)
     try:
-        from gearledger.desktop.settings_manager import get_use_openai_tts
+        from gearledger.desktop.settings_manager import get_speech_engine
 
-        use_openai = get_use_openai_tts()
+        engine = get_speech_engine()
     except Exception:
-        use_openai = False
+        engine = "os"
 
-    # Try OpenAI TTS only if enabled AND API key exists
+    # 1) Piper (offline, local) – preferred when explicitly selected
+    if engine == "piper":
+        try:
+            from gearledger.piper_tts import speak_with_piper
+
+            if speak_with_piper(cleaned_name):
+                return
+        except Exception as e:
+            print(f"[SPEECH] Piper TTS failed for name, falling back: {e}")
+
+        # If Piper fails, fall through to OS/OpenAI below
+
+    # 2) OpenAI TTS (premium) when engine=openai and API key present
     api_key = os.environ.get("OPENAI_API_KEY")
-    if use_openai and api_key:
+    if engine == "openai" and api_key:
         try:
             from openai import OpenAI
 
@@ -792,7 +712,7 @@ def speak_name(name: str) -> None:
             print(f"[SPEECH] OpenAI TTS failed for name: {e}")
             # Fall through to OS TTS
 
-    # Default: Use OS TTS
+    # 3) Default / fallback: Use OS TTS
     if sys.platform == "darwin":
         # macOS: Use 'say' with detected language voice
         try:
@@ -809,23 +729,23 @@ def speak_name(name: str) -> None:
             print(f"[SPEECH] macOS say failed for name: {e}")
     elif sys.platform == "win32":
         # Windows: Use pyttsx3 with detected language voice
-        engine = _get_engine_for_language(detected_lang)
-        if engine:
+        engine_obj = _get_engine_for_language(detected_lang)
+        if engine_obj:
             try:
-                engine.say(cleaned_name)
-                engine.runAndWait()
-                engine.stop()
+                engine_obj.say(cleaned_name)
+                engine_obj.runAndWait()
+                engine_obj.stop()
                 return
             except Exception as e:
                 print(f"[SPEECH] pyttsx3 failed for name: {e}")
     else:
         # Linux: Use pyttsx3
-        engine = _get_engine_for_language(detected_lang)
-        if engine:
+        engine_obj = _get_engine_for_language(detected_lang)
+        if engine_obj:
             try:
-                engine.say(cleaned_name)
-                engine.runAndWait()
-                engine.stop()
+                engine_obj.say(cleaned_name)
+                engine_obj.runAndWait()
+                engine_obj.stop()
                 return
             except Exception:
                 pass

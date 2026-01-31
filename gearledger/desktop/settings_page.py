@@ -61,13 +61,10 @@ class SettingsPage(QWidget):
         self._client_count_timer.timeout.connect(self._update_client_count)
         self._client_count_timer.start(2000)  # Check every 2 seconds
 
-        # Timer to update discovered servers list
+        # Timer for one-time discovery timeout (no continuous polling)
         self._discovery_timer = QTimer(self)
-        self._discovery_timer.timeout.connect(self._update_discovered_servers)
-        self._discovery_timer.start(1000)  # Update every 1 second
-
-        # Start discovery when in client mode
-        self._start_discovery()
+        self._discovery_timer.setSingleShot(True)  # One-time timer
+        self._discovery_timer.timeout.connect(self._on_discovery_timeout)
 
     def _setup_ui(self):
         """Set up the settings page UI."""
@@ -403,7 +400,7 @@ class SettingsPage(QWidget):
         self.server_address_combo.lineEdit().setText("")
         client_row.addWidget(self.server_address_combo, 1)
 
-        # Refresh discovery button
+        # Refresh discovery button (manual discovery - click to start/stop)
         self.refresh_discovery_btn = QPushButton("🔍")
         self.refresh_discovery_btn.setToolTip(tr("refresh_server_discovery"))
         self.refresh_discovery_btn.setStyleSheet(
@@ -940,10 +937,9 @@ class SettingsPage(QWidget):
         self.refresh_discovery_btn.setEnabled(is_client)
         self.connect_btn.setEnabled(is_client)
 
-        # Start/stop discovery based on mode
-        if is_client:
-            self._start_discovery()
-        else:
+        # Stop discovery when switching away from client mode
+        # In client mode, discovery is manual (user clicks refresh button)
+        if not is_client:
             self._stop_discovery()
 
         # Update button states based on current connection status
@@ -1135,32 +1131,67 @@ class SettingsPage(QWidget):
             )
 
     def _start_discovery(self):
-        """Start server discovery."""
+        """Start one-time server discovery."""
+        # Stop any existing discovery first
         if self._discovery:
-            return
+            self._stop_discovery()
 
         from gearledger.network_discovery import ServerDiscovery
 
         def on_server_found(server):
-            """Called when a server is discovered."""
+            """Called when a server is discovered - update list immediately."""
             self._update_discovered_servers()
 
         self._discovery = ServerDiscovery(on_server_found=on_server_found)
         self._discovery.start()
+        
+        # Update button appearance to show discovery is active
+        self.refresh_discovery_btn.setText("🔍 ...")
+        self.refresh_discovery_btn.setStyleSheet(
+            "background-color: #f39c12; color: white; font-weight: bold; padding: 6px 10px;"
+        )
+        self.refresh_discovery_btn.setEnabled(False)  # Disable while searching
+        
+        # Start one-time timer to stop discovery after 5 seconds
+        self._discovery_timer.start(5000)  # Search for 5 seconds then stop
 
     def _stop_discovery(self):
         """Stop server discovery."""
+        # Stop the timeout timer
+        if self._discovery_timer.isActive():
+            self._discovery_timer.stop()
+        
         if self._discovery:
             self._discovery.stop()
             self._discovery = None
+        
+        # Final update of discovered servers list
+        self._update_discovered_servers()
+        
+        # Update button appearance to show discovery is stopped
+        self.refresh_discovery_btn.setText("🔍")
+        self.refresh_discovery_btn.setStyleSheet(
+            "background-color: #95a5a6; color: white; font-weight: bold; padding: 6px 10px;"
+        )
+        self.refresh_discovery_btn.setEnabled(True)  # Re-enable button
 
     def _refresh_discovery(self):
-        """Manually refresh server discovery."""
-        self._update_discovered_servers()
+        """Manually trigger one-time server discovery."""
+        if not self.client_radio.isChecked():
+            return
+        
+        # If discovery is already running, stop it first
         if self._discovery:
-            # Restart discovery to force refresh
             self._stop_discovery()
+            # Small delay to ensure cleanup before starting new search
+            QTimer.singleShot(200, self._start_discovery)
+        else:
+            # Start one-time discovery
             self._start_discovery()
+    
+    def _on_discovery_timeout(self):
+        """Called when discovery timeout expires - stop discovery and update list."""
+        self._stop_discovery()
 
     def _update_discovered_servers(self):
         """Update the combo box with discovered servers."""

@@ -86,6 +86,19 @@ class GearLedgerServer:
 
         return count
 
+    def _notify_client_changed(self, count: int):
+        """Notify all registered callbacks about client count change."""
+        for callback in self._client_changed_callbacks:
+            try:
+                callback(count)
+            except Exception as e:
+                print(f"[SERVER] Error in client_changed callback: {e}")
+
+    def add_client_changed_callback(self, callback: Callable):
+        """Add a callback to be notified when client count changes."""
+        if callback and callback not in self._client_changed_callbacks:
+            self._client_changed_callbacks.append(callback)
+
     def _setup_routes(self):
         """Setup API routes."""
 

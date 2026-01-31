@@ -1055,11 +1055,40 @@ class MainWindow(QWidget):
         server = get_server()
         if server and server.is_running():
             # Add callback to update main window status when clients connect/disconnect
-            def on_client_changed_main_window(count):
-                """Update main window status when client count changes."""
-                QTimer.singleShot(0, self._update_network_status)
+            # Store reference to avoid creating duplicate callbacks
+            if not hasattr(self, "_client_changed_callback_ref"):
+
+                def on_client_changed_main_window(count):
+                    """Update main window status when client count changes."""
+                    print(
+                        f"[MAIN_WINDOW] Client count changed callback received: {count}"
+                    )
+
+                    # Use QTimer to ensure UI update happens on main thread
+                    # Pass count directly to avoid race condition
+                    def update_ui():
+                        self._update_network_status()
+                        # Force immediate visual update
+                        if hasattr(self, "network_status_label"):
+                            self.network_status_label.update()
+                            self.network_status_label.repaint()
+
+                    QTimer.singleShot(0, update_ui)
+
+                self._client_changed_callback_ref = on_client_changed_main_window
+                server.add_client_changed_callback(self._client_changed_callback_ref)
+                print(
+                    f"[MAIN_WINDOW] Registered client change callback with server (total callbacks: {len(server._client_changed_callbacks)})"
+                )
+            else:
+                print(
+                    "[MAIN_WINDOW] Callback already registered, skipping duplicate registration"
+                )
 
             server.add_client_changed_callback(on_client_changed_main_window)
+            print(
+                f"[MAIN_WINDOW] Registered client change callback with server (total callbacks: {len(server._client_changed_callbacks)})"
+            )
 
     def _on_server_data_changed(self):
         """Handle server data changed - refresh results pane."""
@@ -1088,6 +1117,9 @@ class MainWindow(QWidget):
             server = get_server()
             if server and server.is_running():
                 count = server.get_connected_clients_count()
+                print(
+                    f"[MAIN_WINDOW] _update_network_status: server mode, count={count}"
+                )
                 if count > 0:
                     status_text = (
                         f"🖥️ Server: Running ({count} client{'s' if count != 1 else ''})"
@@ -1111,6 +1143,7 @@ class MainWindow(QWidget):
             status_text = "📱 Standalone"
             bg_color = "#95a5a6"  # Gray
 
+        print(f"[MAIN_WINDOW] Updating status label to: {status_text}")
         self.network_status_label.setText(status_text)
         self.network_status_label.setStyleSheet(
             f"""
@@ -1124,6 +1157,9 @@ class MainWindow(QWidget):
             }}
         """
         )
+        # Force update the label
+        self.network_status_label.update()
+        self.network_status_label.repaint()
 
     def _on_fuzzy_requested(self, candidates):
         """Handle fuzzy matching request."""

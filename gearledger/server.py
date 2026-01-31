@@ -66,12 +66,19 @@ class GearLedgerServer:
             if current_time - last_seen > self._client_timeout
         ]
         old_count = len(self._connected_clients)
+        if stale_clients:
+            print(
+                f"[SERVER] Cleaning up {len(stale_clients)} stale client(s): {stale_clients}"
+            )
         for ip in stale_clients:
             del self._connected_clients[ip]
 
         # Notify if client count changed
         new_count = len(self._connected_clients)
         if old_count != new_count:
+            print(
+                f"[SERVER] Client count changed from {old_count} to {new_count} (cleanup)"
+            )
             self._notify_client_changed(new_count)
 
     def get_connected_clients_count(self) -> int:
@@ -88,6 +95,9 @@ class GearLedgerServer:
 
     def _notify_client_changed(self, count: int):
         """Notify all registered callbacks about client count change."""
+        print(
+            f"[SERVER] Client count changed to {count}, notifying {len(self._client_changed_callbacks)} callback(s)"
+        )
         for callback in self._client_changed_callbacks:
             try:
                 callback(count)
@@ -98,6 +108,13 @@ class GearLedgerServer:
         """Add a callback to be notified when client count changes."""
         if callback and callback not in self._client_changed_callbacks:
             self._client_changed_callbacks.append(callback)
+            print(
+                f"[SERVER] Added client_changed callback (total: {len(self._client_changed_callbacks)})"
+            )
+        else:
+            print(
+                f"[SERVER] Callback already registered or invalid (total: {len(self._client_changed_callbacks)})"
+            )
 
     def _setup_routes(self):
         """Setup API routes."""
@@ -126,9 +143,15 @@ class GearLedgerServer:
             # Clean up stale clients
             self._cleanup_stale_clients()
 
+            current_count = len(self._connected_clients)
+            print(
+                f"[SERVER] /api/sync/version - Client {client_ip}, was_new={was_new_client}, total_clients={current_count}, callbacks={len(self._client_changed_callbacks)}"
+            )
+
             # Notify if new client connected
             if was_new_client:
-                self._notify_client_changed(len(self._connected_clients))
+                print(f"[SERVER] New client connected! Total: {current_count}")
+                self._notify_client_changed(current_count)
 
             return jsonify({"ok": True, "version": self._data_version})
 

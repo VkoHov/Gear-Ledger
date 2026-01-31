@@ -325,6 +325,7 @@ def start_server(
     port: int = 8080,
     db_path: str = None,
     on_data_changed: Callable = None,
+    on_client_changed: Callable = None,
 ) -> GearLedgerServer:
     """Start the server."""
     global _server_instance

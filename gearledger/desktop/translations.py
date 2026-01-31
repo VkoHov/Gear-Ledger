@@ -331,6 +331,10 @@ TRANSLATIONS = {
         "en": "Results (Excel):",
         "ru": "Результаты (Excel):",
     },
+    "refresh_server_data": {
+        "en": "🔄 Refresh",
+        "ru": "🔄 Обновить",
+    },
     # ============ Catalog Required Dialog ============
     "catalog_required_title": {
         "en": "Gear Ledger - Catalog Required",
@@ -1484,8 +1488,8 @@ TRANSLATIONS = {
         "ru": "Серверы не найдены. Вы можете ввести адрес вручную.",
     },
     "refresh_server_discovery": {
-        "en": "Refresh server discovery",
-        "ru": "Обновить поиск серверов",
+        "en": "Search for servers on network (click to start/stop)",
+        "ru": "Поиск серверов в сети (нажмите для запуска/остановки)",
     },
     "connected_msg": {
         "en": "Successfully connected to server at:\n{address}\n\nYou can now work together with other devices.",

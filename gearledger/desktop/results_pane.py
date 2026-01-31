@@ -11,7 +11,7 @@ from PyQt6.QtCore import (
     QModelIndex,
     pyqtSignal,
 )
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableView, QLabel, QHeaderView
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableView, QLabel, QHeaderView, QPushButton
 from PyQt6.QtGui import QFont, QPalette
 
 from gearledger.result_ledger import COLUMNS
@@ -102,6 +102,9 @@ class ResultsPane(QWidget):
         super().__init__(parent)
         self.ledger_path = ledger_path
 
+        # Create header layout with label and refresh button
+        header_layout = QHBoxLayout()
+        
         # Create styled label
         self.label = QLabel(tr("results_excel"))
         self.label.setStyleSheet(
@@ -116,6 +119,34 @@ class ResultsPane(QWidget):
             }
         """
         )
+        header_layout.addWidget(self.label)
+        
+        # Add refresh button (visible only in client mode)
+        self.refresh_btn = QPushButton(tr("refresh_server_data"))
+        self.refresh_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+            QPushButton:pressed {
+                background-color: #21618c;
+            }
+        """
+        )
+        self.refresh_btn.clicked.connect(self.refresh)
+        header_layout.addStretch()
+        header_layout.addWidget(self.refresh_btn)
+        
+        # Initially hide the button (will be shown in client mode)
+        self.refresh_btn.setVisible(False)
 
         # Create styled table
         self.table = QTableView(self)
@@ -195,12 +226,15 @@ class ResultsPane(QWidget):
         # Load actual data after a short delay (non-blocking)
         if ledger_path:
             QTimer.singleShot(200, self.refresh)
+        
+        # Update refresh button visibility based on initial mode
+        QTimer.singleShot(300, self.update_refresh_button_visibility)
 
         # Create main layout with styling
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(8)
-        lay.addWidget(self.label)
+        lay.addLayout(header_layout)
         lay.addWidget(self.table)
 
         if self.ledger_path:
@@ -230,6 +264,18 @@ class ResultsPane(QWidget):
             self.model.set_dataframe(df)
         except Exception:
             pass
+
+    def update_refresh_button_visibility(self):
+        """Update refresh button visibility based on network mode."""
+        try:
+            from gearledger.data_layer import get_network_mode
+
+            mode = get_network_mode()
+            # Show refresh button only in client mode
+            self.refresh_btn.setVisible(mode == "client")
+        except Exception:
+            # If we can't determine mode, hide the button to be safe
+            self.refresh_btn.setVisible(False)
 
     @staticmethod
     def _read_df_safe(path: str) -> pd.DataFrame:

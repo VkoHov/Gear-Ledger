@@ -232,6 +232,9 @@ class MainWindow(QWidget):
 
         # Apply initial logs visibility setting
         self._update_logs_visibility()
+        
+        # Initialize sync timer based on current network mode
+        QTimer.singleShot(500, self._update_sync_timer)
 
     def _set_window_icon(self):
         """Set the window icon from icon.ico or icon.png file if available."""
@@ -654,10 +657,13 @@ class MainWindow(QWidget):
         self.poll_fuzzy_timer.timeout.connect(self._poll_fuzzy_queue)
 
         # Sync timer for multi-device updates (polls server for changes)
+        # Note: In client mode, we disable automatic polling to avoid slowness
+        # User must manually refresh via the refresh button
         self._sync_version = 0
         self.sync_timer = QTimer(self)
         self.sync_timer.timeout.connect(self._check_sync)
-        self.sync_timer.start(2000)  # Check every 2 seconds
+        # Start timer only if not in client mode (will be updated when mode changes)
+        self._update_sync_timer()
 
     def _update_controls(self):
         """Update control states based on process status and catalog availability."""
@@ -983,6 +989,8 @@ class MainWindow(QWidget):
         # Connect server data changed signal to refresh results pane
         # Store reference at class level so it persists after dialog closes
         settings_page.server_data_changed.connect(self._on_server_data_changed)
+        # Connect network mode changed to update sync timer
+        settings_page.network_mode_changed.connect(self._on_network_mode_changed)
         self._settings_page = settings_page  # Keep reference alive
 
         dlg.exec()
@@ -992,6 +1000,13 @@ class MainWindow(QWidget):
         print("[MAIN_WINDOW] Server data changed - refreshing results pane")
         self.results_pane.refresh()
 
+    def _on_network_mode_changed(self, mode: str, address: str):
+        """Handle network mode change - update sync timer and results pane refresh button."""
+        print(f"[MAIN_WINDOW] Network mode changed to: {mode}")
+        self._update_sync_timer()
+        # Update results pane to show/hide refresh button based on mode
+        self.results_pane.update_refresh_button_visibility()
+
     def _check_sync(self):
         """Check for data changes on server (for multi-device sync)."""
         try:
@@ -999,20 +1014,11 @@ class MainWindow(QWidget):
 
             mode = get_network_mode()
 
+            # Skip automatic polling in client mode (user must manually refresh)
             if mode == "client":
-                # In client mode, poll server for changes
-                from gearledger.api_client import get_client
+                return
 
-                client = get_client()
-                if client and client.is_connected():
-                    new_version = client.get_sync_version()
-                    if new_version > self._sync_version:
-                        print(
-                            f"[SYNC] Data changed on server (version {self._sync_version} → {new_version})"
-                        )
-                        self._sync_version = new_version
-                        self.results_pane.refresh()
-            elif mode == "server":
+            if mode == "server":
                 # In server mode, check local database version
                 from gearledger.server import get_server
 
@@ -1028,6 +1034,25 @@ class MainWindow(QWidget):
         except Exception:
             # Silently ignore sync errors
             pass
+
+    def _update_sync_timer(self):
+        """Update sync timer based on current network mode."""
+        try:
+            from gearledger.data_layer import get_network_mode
+
+            mode = get_network_mode()
+            # Only enable automatic sync in server mode
+            # In client mode, user must manually refresh to avoid slowness
+            if mode == "server":
+                if not self.sync_timer.isActive():
+                    self.sync_timer.start(2000)  # Check every 2 seconds
+            else:
+                if self.sync_timer.isActive():
+                    self.sync_timer.stop()
+        except Exception:
+            # If we can't determine mode, stop the timer to be safe
+            if self.sync_timer.isActive():
+                self.sync_timer.stop()
 
     def _on_fuzzy_requested(self, candidates):
         """Handle fuzzy matching request."""

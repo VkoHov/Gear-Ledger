@@ -233,6 +233,9 @@ class MainWindow(QWidget):
         # Apply initial logs visibility setting
         self._update_logs_visibility()
 
+        # Register client change callback if server is already running
+        QTimer.singleShot(100, self._register_server_callbacks)
+
     def _set_window_icon(self):
         """Set the window icon from icon.ico or icon.png file if available."""
         # Try multiple possible locations for icon files
@@ -1018,6 +1021,7 @@ class MainWindow(QWidget):
     def _open_network_settings(self):
         """Open the network settings dialog."""
         from .network_settings_dialog import NetworkSettingsDialog
+        from gearledger.server import get_server
 
         dlg = NetworkSettingsDialog(self)
 
@@ -1027,8 +1031,35 @@ class MainWindow(QWidget):
 
         dlg.exec()
 
+        # Register main window callback with server for client change notifications
+        # This ensures we get updates even when dialog is closed
+        server = get_server()
+        if server and server.is_running():
+            # Add callback to update main window status when clients connect/disconnect
+            def on_client_changed_main_window(count):
+                """Update main window status when client count changes."""
+                QTimer.singleShot(0, self._update_network_status)
+
+            server.add_client_changed_callback(on_client_changed_main_window)
+
+        # Register callback with server (in case it was just started)
+        self._register_server_callbacks()
+
         # Update status after dialog closes (in case settings changed)
         self._update_network_status()
+
+    def _register_server_callbacks(self):
+        """Register main window callbacks with server for client change notifications."""
+        from gearledger.server import get_server
+
+        server = get_server()
+        if server and server.is_running():
+            # Add callback to update main window status when clients connect/disconnect
+            def on_client_changed_main_window(count):
+                """Update main window status when client count changes."""
+                QTimer.singleShot(0, self._update_network_status)
+
+            server.add_client_changed_callback(on_client_changed_main_window)
 
     def _on_server_data_changed(self):
         """Handle server data changed - refresh results pane."""

@@ -29,7 +29,10 @@ class GearLedgerServer:
         self.port = port
         self.db_path = db_path
         self.on_data_changed = on_data_changed
-        self.on_client_changed = on_client_changed
+        # Support multiple client change callbacks
+        self._client_changed_callbacks = []
+        if on_client_changed:
+            self._client_changed_callbacks.append(on_client_changed)
 
         self.app = Flask(__name__)
         CORS(self.app)  # Enable cross-origin requests
@@ -68,8 +71,8 @@ class GearLedgerServer:
 
         # Notify if client count changed
         new_count = len(self._connected_clients)
-        if old_count != new_count and self.on_client_changed:
-            self.on_client_changed(new_count)
+        if old_count != new_count:
+            self._notify_client_changed(new_count)
 
     def get_connected_clients_count(self) -> int:
         """Get count of currently connected clients."""
@@ -77,8 +80,8 @@ class GearLedgerServer:
         count = len(self._connected_clients)
 
         # Notify if client count changed
-        if count != self._last_client_count and self.on_client_changed:
-            self.on_client_changed(count)
+        if count != self._last_client_count:
+            self._notify_client_changed(count)
         self._last_client_count = count
 
         return count
@@ -111,8 +114,8 @@ class GearLedgerServer:
             self._cleanup_stale_clients()
 
             # Notify if new client connected
-            if was_new_client and self.on_client_changed:
-                self.on_client_changed(len(self._connected_clients))
+            if was_new_client:
+                self._notify_client_changed(len(self._connected_clients))
 
             return jsonify({"ok": True, "version": self._data_version})
 
@@ -132,8 +135,8 @@ class GearLedgerServer:
             self._connected_clients[client_ip] = time.time()
 
             # Notify if new client connected
-            if was_new_client and self.on_client_changed:
-                self.on_client_changed(len(self._connected_clients))
+            if was_new_client:
+                self._notify_client_changed(len(self._connected_clients))
 
             client = request.args.get("client")
             db = self._get_db()
@@ -149,8 +152,8 @@ class GearLedgerServer:
             self._connected_clients[client_ip] = time.time()
 
             # Notify if new client connected
-            if was_new_client and self.on_client_changed:
-                self.on_client_changed(len(self._connected_clients))
+            if was_new_client:
+                self._notify_client_changed(len(self._connected_clients))
             print("[SERVER] POST /api/results received")
             data = request.get_json()
             print(f"[SERVER] Request data: {data}")

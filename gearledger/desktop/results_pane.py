@@ -11,7 +11,15 @@ from PyQt6.QtCore import (
     QModelIndex,
     pyqtSignal,
 )
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableView, QLabel, QHeaderView, QPushButton
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QTableView,
+    QLabel,
+    QHeaderView,
+    QPushButton,
+)
 from PyQt6.QtGui import QFont, QPalette
 
 from gearledger.result_ledger import COLUMNS
@@ -104,7 +112,7 @@ class ResultsPane(QWidget):
 
         # Create header layout with label and refresh button
         header_layout = QHBoxLayout()
-        
+
         # Create styled label
         self.label = QLabel(tr("results_excel"))
         self.label.setStyleSheet(
@@ -120,7 +128,7 @@ class ResultsPane(QWidget):
         """
         )
         header_layout.addWidget(self.label)
-        
+
         # Add refresh button (visible only in client mode)
         self.refresh_btn = QPushButton(tr("refresh_server_data"))
         self.refresh_btn.setStyleSheet(
@@ -144,7 +152,7 @@ class ResultsPane(QWidget):
         self.refresh_btn.clicked.connect(self.refresh)
         header_layout.addStretch()
         header_layout.addWidget(self.refresh_btn)
-        
+
         # Initially hide the button (will be shown in client mode)
         self.refresh_btn.setVisible(False)
 
@@ -226,7 +234,7 @@ class ResultsPane(QWidget):
         # Load actual data after a short delay (non-blocking)
         if ledger_path:
             QTimer.singleShot(200, self.refresh)
-        
+
         # Update refresh button visibility based on initial mode
         QTimer.singleShot(300, self.update_refresh_button_visibility)
 
@@ -281,15 +289,14 @@ class ResultsPane(QWidget):
     def _read_df_safe(path: str) -> pd.DataFrame:
         # Check network mode first
         try:
-            from gearledger.data_layer import get_network_mode, is_network_mode
+            from gearledger.data_layer import get_network_mode
 
             mode = get_network_mode()
-            print(f"[RESULTS_PANE] Reading data, mode={mode}")
             if mode in ("server", "client"):
-                print(f"[RESULTS_PANE] Using network mode: {mode}")
                 return ResultsPane._read_from_network(mode)
         except Exception as e:
-            print(f"[RESULTS_PANE] Network mode check failed: {e}")
+            # Silently fall back to file reading if network mode check fails
+            pass
 
         # Fall back to Excel file
         if not path or not os.path.exists(path):

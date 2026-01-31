@@ -37,7 +37,7 @@ def get_network_mode() -> str:
 
     # Otherwise check settings
     settings = load_settings()
-    print(f"[DATA_LAYER] Using settings mode: {settings.network_mode}")
+    # Removed verbose logging - this function is called frequently by timers
     return settings.network_mode
 
 

@@ -53,18 +53,15 @@ class SettingsPage(QWidget):
         self._client = None
         self._discovery = None
         self._last_speech_engine = None
-        self._setup_ui()
-        self._load_settings_to_ui()
 
-        # Timer to update connected clients count (for server mode)
-        self._client_count_timer = QTimer(self)
-        self._client_count_timer.timeout.connect(self._update_client_count)
-        self._client_count_timer.start(2000)  # Check every 2 seconds
-
+        # Initialize timers before setup (needed by _stop_discovery)
         # Timer for one-time discovery timeout (no continuous polling)
         self._discovery_timer = QTimer(self)
         self._discovery_timer.setSingleShot(True)  # One-time timer
         self._discovery_timer.timeout.connect(self._on_discovery_timeout)
+
+        self._setup_ui()
+        self._load_settings_to_ui()
 
     def _setup_ui(self):
         """Set up the settings page UI."""
@@ -1010,7 +1007,7 @@ class SettingsPage(QWidget):
                     url = self._server.get_server_url()
                     # Update UI to show server controls
                     self._update_network_ui()
-                    # Update status immediately
+                    # Update status immediately (client count will update on connect/disconnect events)
                     self._update_server_status()
                     self.network_mode_changed.emit("server", url)
                     QMessageBox.information(
@@ -1099,16 +1096,6 @@ class SettingsPage(QWidget):
                     self, tr("connection"), tr("connection_error", error=str(e))
                 )
 
-    def _update_client_count(self):
-        """Update connected clients count display (called by timer)."""
-        if self.server_radio.isChecked():
-            # Get server instance (it might not be stored in self._server)
-            from gearledger.server import get_server
-
-            server = get_server()
-            if server and server.is_running():
-                self._update_server_status()
-
     def _update_server_status(self):
         """Update server status label with current connection count."""
         from gearledger.server import get_server
@@ -1132,6 +1119,7 @@ class SettingsPage(QWidget):
 
     def _start_discovery(self):
         """Start one-time server discovery."""
+        print("[DISCOVERY] _start_discovery() called - starting one-time server search")
         # Stop any existing discovery first
         if self._discovery:
             self._stop_discovery()
@@ -1140,46 +1128,53 @@ class SettingsPage(QWidget):
 
         def on_server_found(server):
             """Called when a server is discovered - update list immediately."""
+            print(
+                f"[DISCOVERY] Server found: {server.ip}:{server.port} - updating list"
+            )
             self._update_discovered_servers()
 
         self._discovery = ServerDiscovery(on_server_found=on_server_found)
         self._discovery.start()
-        
+        print("[DISCOVERY] Discovery started, will run for 5 seconds")
+
         # Update button appearance to show discovery is active
         self.refresh_discovery_btn.setText("🔍 ...")
         self.refresh_discovery_btn.setStyleSheet(
             "background-color: #f39c12; color: white; font-weight: bold; padding: 6px 10px;"
         )
         self.refresh_discovery_btn.setEnabled(False)  # Disable while searching
-        
+
         # Start one-time timer to stop discovery after 5 seconds
         self._discovery_timer.start(5000)  # Search for 5 seconds then stop
+        print("[DISCOVERY] Timer started - will stop discovery in 5 seconds")
 
     def _stop_discovery(self):
         """Stop server discovery."""
-        # Stop the timeout timer
-        if self._discovery_timer.isActive():
+        # Stop the timeout timer (if it exists)
+        if hasattr(self, "_discovery_timer") and self._discovery_timer.isActive():
             self._discovery_timer.stop()
-        
+
         if self._discovery:
+            print("[DISCOVERY] Stopping active server discovery")
             self._discovery.stop()
             self._discovery = None
-        
+
         # Final update of discovered servers list
-        self._update_discovered_servers()
-        
-        # Update button appearance to show discovery is stopped
-        self.refresh_discovery_btn.setText("🔍")
-        self.refresh_discovery_btn.setStyleSheet(
-            "background-color: #95a5a6; color: white; font-weight: bold; padding: 6px 10px;"
-        )
-        self.refresh_discovery_btn.setEnabled(True)  # Re-enable button
+        if hasattr(self, "refresh_discovery_btn"):
+            self._update_discovered_servers()
+
+            # Update button appearance to show discovery is stopped
+            self.refresh_discovery_btn.setText("🔍")
+            self.refresh_discovery_btn.setStyleSheet(
+                "background-color: #95a5a6; color: white; font-weight: bold; padding: 6px 10px;"
+            )
+            self.refresh_discovery_btn.setEnabled(True)  # Re-enable button
 
     def _refresh_discovery(self):
         """Manually trigger one-time server discovery."""
         if not self.client_radio.isChecked():
             return
-        
+
         # If discovery is already running, stop it first
         if self._discovery:
             self._stop_discovery()
@@ -1188,9 +1183,12 @@ class SettingsPage(QWidget):
         else:
             # Start one-time discovery
             self._start_discovery()
-    
+
     def _on_discovery_timeout(self):
         """Called when discovery timeout expires - stop discovery and update list."""
+        print(
+            "[TIMER] _on_discovery_timeout() called - discovery timeout reached, stopping discovery"
+        )
         self._stop_discovery()
 
     def _update_discovered_servers(self):
@@ -1202,6 +1200,8 @@ class SettingsPage(QWidget):
             return
 
         discovered = self._discovery.get_discovered_servers()
+        if discovered:
+            print(f"[DISCOVERY] Found {len(discovered)} server(s)")
 
         # Get current selection
         current_text = self.server_address_combo.lineEdit().text()
@@ -1402,8 +1402,6 @@ class SettingsPage(QWidget):
     def closeEvent(self, event):
         """Clean up when widget is closed."""
         self._stop_discovery()
-        if hasattr(self, "_client_count_timer"):
-            self._client_count_timer.stop()
         if hasattr(self, "_discovery_timer"):
             self._discovery_timer.stop()
         super().closeEvent(event) if hasattr(super(), "closeEvent") else None

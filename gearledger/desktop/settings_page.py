@@ -1131,7 +1131,9 @@ class SettingsPage(QWidget):
             print(
                 f"[DISCOVERY] Server found: {server.ip}:{server.port} - updating list"
             )
-            self._update_discovered_servers()
+            # Update UI on main thread (callback is called from background thread)
+            # Use a small delay to allow multiple servers to be discovered before updating
+            QTimer.singleShot(100, self._update_discovered_servers)
 
         self._discovery = ServerDiscovery(on_server_found=on_server_found)
         self._discovery.start()
@@ -1200,28 +1202,55 @@ class SettingsPage(QWidget):
             return
 
         discovered = self._discovery.get_discovered_servers()
-        if discovered:
-            print(f"[DISCOVERY] Found {len(discovered)} server(s)")
+        print(
+            f"[DISCOVERY] _update_discovered_servers() - checking for servers, found: {len(discovered) if discovered else 0}"
+        )
 
         # Get current selection
-        current_text = self.server_address_combo.lineEdit().text()
+        current_text = self.server_address_combo.lineEdit().text().strip()
+        print(f"[DISCOVERY] Current field text: '{current_text}'")
 
         # Update combo box items
         self.server_address_combo.clear()
+        print(
+            f"[DISCOVERY] Cleared combo box, now adding {len(discovered) if discovered else 0} server(s)"
+        )
 
         if discovered:
             for server in discovered:
                 display_text = f"{server.name} ({server.ip}:{server.port})"
-                self.server_address_combo.addItem(display_text, server.get_url())
+                server_url = server.get_url()
+                print(
+                    f"[DISCOVERY] Adding server to combo: {display_text} -> {server_url}"
+                )
+                self.server_address_combo.addItem(display_text, server_url)
 
-            # Restore selection if it matches a discovered server
-            for i in range(self.server_address_combo.count()):
-                if self.server_address_combo.itemData(i) == current_text:
-                    self.server_address_combo.setCurrentIndex(i)
-                    break
+            # Auto-select first server if field is empty, otherwise restore selection
+            if not current_text:
+                # Field is empty - auto-select first discovered server
+                first_server_url = discovered[0].get_url()
+                self.server_address_combo.setCurrentIndex(0)
+                # Explicitly set the text in the lineEdit to ensure it updates
+                self.server_address_combo.lineEdit().setText(first_server_url)
+                if len(discovered) == 1:
+                    print(f"[DISCOVERY] Auto-selected server: {first_server_url}")
+                else:
+                    print(
+                        f"[DISCOVERY] Auto-selected first server ({len(discovered)} found): {first_server_url}"
+                    )
+                    print(f"[DISCOVERY] Other servers available in dropdown")
             else:
-                # If current text doesn't match, keep it as custom entry
-                self.server_address_combo.lineEdit().setText(current_text)
+                # Try to restore selection if it matches a discovered server
+                found_match = False
+                for i in range(self.server_address_combo.count()):
+                    if self.server_address_combo.itemData(i) == current_text:
+                        self.server_address_combo.setCurrentIndex(i)
+                        found_match = True
+                        break
+
+                if not found_match:
+                    # If current text doesn't match, keep it as custom entry
+                    self.server_address_combo.lineEdit().setText(current_text)
 
             self.discovery_status_label.setText(
                 tr("servers_found", count=len(discovered))

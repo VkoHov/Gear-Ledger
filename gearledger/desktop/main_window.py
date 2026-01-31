@@ -1084,8 +1084,6 @@ class MainWindow(QWidget):
                 print(
                     "[MAIN_WINDOW] Callback already registered, skipping duplicate registration"
                 )
-
-            server.add_client_changed_callback(on_client_changed_main_window)
             print(
                 f"[MAIN_WINDOW] Registered client change callback with server (total callbacks: {len(server._client_changed_callbacks)})"
             )

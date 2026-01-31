@@ -45,8 +45,10 @@ class GearLedgerServer:
         self._connected_clients = {}
         self._last_client_count = 0
         self._client_timeout = (
-            10  # Consider client disconnected after 10 seconds of inactivity
+            5  # Consider client disconnected after 5 seconds of inactivity
         )
+        # Timer to periodically check for stale clients and notify
+        self._stale_check_timer = None
 
         # Network discovery broadcaster
         self._broadcaster: Optional[ServerBroadcaster] = None
@@ -309,10 +311,30 @@ class GearLedgerServer:
             self._broadcaster = ServerBroadcaster(self.port)
             self._broadcaster.start()
 
+            # Start periodic stale client check
+            self._start_stale_client_check()
+
             return True
         except Exception as e:
             print(f"[ERROR] Failed to start server: {e}")
             return False
+
+    def _start_stale_client_check(self):
+        """Start periodic check for stale clients."""
+
+        def check_stale():
+            if self._running:
+                self._cleanup_stale_clients()
+                # Restart timer to continue checking
+                if self._running:
+                    self._stale_check_timer = threading.Timer(2.0, check_stale)
+                    self._stale_check_timer.daemon = True
+                    self._stale_check_timer.start()
+
+        if self._running:
+            self._stale_check_timer = threading.Timer(2.0, check_stale)
+            self._stale_check_timer.daemon = True
+            self._stale_check_timer.start()
 
     def stop(self):
         """Stop the server."""
@@ -320,6 +342,11 @@ class GearLedgerServer:
         if self._broadcaster:
             self._broadcaster.stop()
             self._broadcaster = None
+
+        # Stop stale client check timer
+        if self._stale_check_timer:
+            self._stale_check_timer.cancel()
+            self._stale_check_timer = None
 
         if self._server:
             self._server.shutdown()

@@ -23,11 +23,13 @@ class GearLedgerServer:
         port: int = 8080,
         db_path: str = None,
         on_data_changed: Callable = None,
+        on_client_changed: Callable = None,
     ):
         self.host = host
         self.port = port
         self.db_path = db_path
         self.on_data_changed = on_data_changed
+        self.on_client_changed = on_client_changed
 
         self.app = Flask(__name__)
         CORS(self.app)  # Enable cross-origin requests
@@ -38,6 +40,7 @@ class GearLedgerServer:
 
         # Track connected clients: {client_ip: last_seen_timestamp}
         self._connected_clients = {}
+        self._last_client_count = 0
         self._client_timeout = (
             10  # Consider client disconnected after 10 seconds of inactivity
         )
@@ -59,13 +62,26 @@ class GearLedgerServer:
             for ip, last_seen in self._connected_clients.items()
             if current_time - last_seen > self._client_timeout
         ]
+        old_count = len(self._connected_clients)
         for ip in stale_clients:
             del self._connected_clients[ip]
+
+        # Notify if client count changed
+        new_count = len(self._connected_clients)
+        if old_count != new_count and self.on_client_changed:
+            self.on_client_changed(new_count)
 
     def get_connected_clients_count(self) -> int:
         """Get count of currently connected clients."""
         self._cleanup_stale_clients()
-        return len(self._connected_clients)
+        count = len(self._connected_clients)
+
+        # Notify if client count changed
+        if count != self._last_client_count and self.on_client_changed:
+            self.on_client_changed(count)
+        self._last_client_count = count
+
+        return count
 
     def _setup_routes(self):
         """Setup API routes."""
@@ -89,9 +105,15 @@ class GearLedgerServer:
             """Get current data version for sync detection."""
             # Track client connection
             client_ip = request.remote_addr
+            was_new_client = client_ip not in self._connected_clients
             self._connected_clients[client_ip] = time.time()
             # Clean up stale clients
             self._cleanup_stale_clients()
+
+            # Notify if new client connected
+            if was_new_client and self.on_client_changed:
+                self.on_client_changed(len(self._connected_clients))
+
             return jsonify({"ok": True, "version": self._data_version})
 
         @self.app.route("/api/clients/count", methods=["GET"])
@@ -106,7 +128,13 @@ class GearLedgerServer:
             """Get all results."""
             # Track client connection
             client_ip = request.remote_addr
+            was_new_client = client_ip not in self._connected_clients
             self._connected_clients[client_ip] = time.time()
+
+            # Notify if new client connected
+            if was_new_client and self.on_client_changed:
+                self.on_client_changed(len(self._connected_clients))
+
             client = request.args.get("client")
             db = self._get_db()
             results = db.get_all_results(client)
@@ -117,7 +145,12 @@ class GearLedgerServer:
             """Add or update a result."""
             # Track client connection
             client_ip = request.remote_addr
+            was_new_client = client_ip not in self._connected_clients
             self._connected_clients[client_ip] = time.time()
+
+            # Notify if new client connected
+            if was_new_client and self.on_client_changed:
+                self.on_client_changed(len(self._connected_clients))
             print("[SERVER] POST /api/results received")
             data = request.get_json()
             print(f"[SERVER] Request data: {data}")
@@ -299,7 +332,9 @@ def start_server(
     if _server_instance and _server_instance.is_running():
         _server_instance.stop()
 
-    _server_instance = GearLedgerServer(host, port, db_path, on_data_changed)
+    _server_instance = GearLedgerServer(
+        host, port, db_path, on_data_changed, on_client_changed
+    )
     _server_instance.start()
     return _server_instance
 

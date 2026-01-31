@@ -556,9 +556,45 @@ class MainWindow(QWidget):
         # Root layout
         outer = QVBoxLayout()
 
-        # Add settings button at the top
+        # Add settings buttons at the top
         settings_btn_layout = QHBoxLayout()
         settings_btn_layout.addStretch(1)
+
+        # Network status label (shows current mode and connection status)
+        self.network_status_label = QLabel("")
+        self.network_status_label.setStyleSheet(
+            """
+            QLabel {
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+        """
+        )
+        self._update_network_status()
+        settings_btn_layout.addWidget(self.network_status_label)
+
+        # Network settings button
+        self.network_settings_btn = QPushButton("🌐 " + tr("network_configuration"))
+        self.network_settings_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+        """
+        )
+        self.network_settings_btn.clicked.connect(self._open_network_settings)
+        settings_btn_layout.addWidget(self.network_settings_btn)
+
+        # Settings button
         self.settings_btn = QPushButton(tr("settings_button"))
         self.settings_btn.setStyleSheet(
             """
@@ -977,25 +1013,86 @@ class MainWindow(QWidget):
 
         settings_page.on_settings_saved = on_settings_saved
 
-        # Connect server data changed signal to refresh results pane
-        # Store reference at class level so it persists after dialog closes
-        settings_page.server_data_changed.connect(self._on_server_data_changed)
-        # Connect network mode changed to update sync timer
-        settings_page.network_mode_changed.connect(self._on_network_mode_changed)
-        self._settings_page = settings_page  # Keep reference alive
+        dlg.exec()
+
+    def _open_network_settings(self):
+        """Open the network settings dialog."""
+        from .network_settings_dialog import NetworkSettingsDialog
+
+        dlg = NetworkSettingsDialog(self)
+
+        # Connect signals
+        dlg.network_mode_changed.connect(self._on_network_mode_changed)
+        dlg.server_data_changed.connect(self._on_server_data_changed)
 
         dlg.exec()
+
+        # Update status after dialog closes (in case settings changed)
+        self._update_network_status()
 
     def _on_server_data_changed(self):
         """Handle server data changed - refresh results pane."""
         print("[MAIN_WINDOW] Server data changed - refreshing results pane")
         self.results_pane.refresh()
+        # Update network status (client count may have changed)
+        self._update_network_status()
 
     def _on_network_mode_changed(self, mode: str, address: str):
         """Handle network mode change - update results pane refresh button."""
         print(f"[MAIN_WINDOW] Network mode changed to: {mode}")
         # Update results pane to show/hide refresh button based on mode
         self.results_pane.update_refresh_button_visibility()
+        # Update network status label
+        self._update_network_status()
+
+    def _update_network_status(self):
+        """Update the network status label showing current mode and connection status."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.server import get_server
+        from gearledger.api_client import get_client
+
+        mode = get_network_mode()
+
+        if mode == "server":
+            server = get_server()
+            if server and server.is_running():
+                count = server.get_connected_clients_count()
+                if count > 0:
+                    status_text = (
+                        f"🖥️ Server: Running ({count} client{'s' if count != 1 else ''})"
+                    )
+                    bg_color = "#27ae60"  # Green
+                else:
+                    status_text = "🖥️ Server: Running (0 clients)"
+                    bg_color = "#f39c12"  # Orange
+            else:
+                status_text = "🖥️ Server: Stopped"
+                bg_color = "#95a5a6"  # Gray
+        elif mode == "client":
+            client = get_client()
+            if client and client.is_connected():
+                status_text = "💻 Client: Connected"
+                bg_color = "#27ae60"  # Green
+            else:
+                status_text = "💻 Client: Disconnected"
+                bg_color = "#e74c3c"  # Red
+        else:
+            status_text = "📱 Standalone"
+            bg_color = "#95a5a6"  # Gray
+
+        self.network_status_label.setText(status_text)
+        self.network_status_label.setStyleSheet(
+            f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: white;
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+        """
+        )
 
     def _on_fuzzy_requested(self, candidates):
         """Handle fuzzy matching request."""

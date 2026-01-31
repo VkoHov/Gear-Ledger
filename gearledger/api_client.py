@@ -22,14 +22,29 @@ class APIClient:
         self._connected = False
 
     def check_connection(self) -> bool:
-        """Check if server is reachable."""
+        """Check if server is reachable and register as connected client."""
         try:
+            # First check server status
             response = requests.get(
                 f"{self.server_url}/api/status",
                 timeout=self.timeout,
             )
-            self._connected = response.status_code == 200
-            return self._connected
+            if response.status_code != 200:
+                self._connected = False
+                return False
+
+            # Register as connected client by calling sync/version endpoint
+            # This allows server to track connected clients
+            try:
+                requests.get(
+                    f"{self.server_url}/api/sync/version",
+                    timeout=self.timeout,
+                )
+            except Exception:
+                pass  # Ignore errors, but still mark as connected if status worked
+
+            self._connected = True
+            return True
         except Exception:
             self._connected = False
             return False

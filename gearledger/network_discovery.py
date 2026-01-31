@@ -104,6 +104,8 @@ class ServerBroadcaster:
             message_json = json.dumps(message).encode("utf-8")
 
             # Broadcast on each interface
+            # Log once on startup, then reduce verbosity
+            logged_startup = False
             while self._running:
                 try:
                     for sock, ip in sockets:
@@ -112,12 +114,16 @@ class ServerBroadcaster:
                             broadcast_ip = self._get_broadcast_ip(ip)
                             broadcast_addr = (broadcast_ip, DISCOVERY_PORT)
                             sock.sendto(message_json, broadcast_addr)
-                            print(
-                                f"[DISCOVERY] Broadcast sent from {ip} to {broadcast_ip}:{DISCOVERY_PORT}"
-                            )
+                            # Only log on first broadcast to reduce spam
+                            if not logged_startup:
+                                print(
+                                    f"[DISCOVERY] Broadcasting server presence from {ip}"
+                                )
                         except Exception as e:
                             if self._running:
                                 print(f"[DISCOVERY] Broadcast error on {ip}: {e}")
+                    if not logged_startup:
+                        logged_startup = True
                     time.sleep(BROADCAST_INTERVAL)
                 except Exception as e:
                     if self._running:

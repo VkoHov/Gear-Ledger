@@ -206,7 +206,7 @@ def _record_to_database(
     brand = ""
     description = ""
     sale_price = 0.0
-    
+
     if catalog_path and os.path.exists(catalog_path):
         catalog_data = _lookup_catalog_for_network(artikul, catalog_path)
         brand = catalog_data.get("бренд", "")
@@ -214,8 +214,12 @@ def _record_to_database(
         sale_price = catalog_data.get("цена", 0)
         print(f"[DATA_LAYER] Catalog data found: brand={brand}, price={sale_price}")
     else:
-        print(f"[DATA_LAYER] WARNING: Catalog path is empty or doesn't exist: {catalog_path}")
-        print(f"[DATA_LAYER] Will write result without catalog data (brand/price will be empty)")
+        print(
+            f"[DATA_LAYER] WARNING: Catalog path is empty or doesn't exist: {catalog_path}"
+        )
+        print(
+            f"[DATA_LAYER] Will write result without catalog data (brand/price will be empty)"
+        )
 
     try:
         print(
@@ -249,6 +253,7 @@ def _record_to_database(
     except Exception as e:
         print(f"[DATA_LAYER] Database exception: {e}")
         import traceback
+
         traceback.print_exc()
         return {"ok": False, "action": "failed", "path": "", "error": str(e)}
 

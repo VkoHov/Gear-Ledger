@@ -1080,6 +1080,7 @@ class MainWindow(QWidget):
 
                 def on_client_changed_main_window(count):
                     """Update main window status when client count changes."""
+
                     # Use QTimer to ensure UI update happens on main thread
                     # Pass count directly to avoid race condition
                     def update_ui():

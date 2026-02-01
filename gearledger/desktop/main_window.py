@@ -235,6 +235,8 @@ class MainWindow(QWidget):
 
         # Register client change callback if server is already running
         QTimer.singleShot(100, self._register_server_callbacks)
+        # Auto-set uploaded catalog if server is running but no catalog is selected
+        QTimer.singleShot(200, self._auto_set_uploaded_catalog)
 
         # Initialize sync version and sync catalog from server on startup if in client mode
         QTimer.singleShot(300, self._initialize_sync_version)
@@ -1123,6 +1125,35 @@ class MainWindow(QWidget):
                 server.on_data_changed = on_data_changed
                 self._data_changed_callback_registered = True
                 print("[MAIN_WINDOW] Registered data changed callback with server")
+
+    def _auto_set_uploaded_catalog(self):
+        """Automatically set uploaded catalog as active if server is running but no catalog is selected."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.server import get_server
+
+        mode = get_network_mode()
+        if mode != "server":
+            return
+
+        server = get_server()
+        if not server or not server.is_running():
+            return
+
+        # Check if catalog is already set in settings
+        current_catalog = self.settings_widget.catalog_edit.text().strip()
+        if current_catalog and os.path.exists(current_catalog):
+            # Catalog is already set, no need to auto-set
+            return
+
+        # Check if there's an uploaded catalog
+        uploaded_catalog = server._get_catalog_path()
+        if uploaded_catalog and os.path.exists(uploaded_catalog):
+            # Set the uploaded catalog as the active catalog
+            print(f"[MAIN_WINDOW] Auto-setting uploaded catalog: {uploaded_catalog}")
+            self.settings_widget.catalog_edit.setText(uploaded_catalog)
+            # Trigger catalog path change to enable functionality
+            if hasattr(self, "_on_catalog_path_changed"):
+                self._on_catalog_path_changed(uploaded_catalog)
 
     def _sync_catalog_from_server(self):
         """Download catalog from server if in client mode."""

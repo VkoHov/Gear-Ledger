@@ -48,7 +48,7 @@ class GearLedgerServer:
         self._connected_clients = {}
         self._last_client_count = 0
         self._client_timeout = (
-            5  # Consider client disconnected after 5 seconds of inactivity
+            10  # Consider client disconnected after 10 seconds of inactivity
         )
         # Timer to periodically check for stale clients and notify
         self._stale_check_timer = None
@@ -100,9 +100,11 @@ class GearLedgerServer:
 
     def _notify_client_changed(self, count: int):
         """Notify all registered callbacks about client count change."""
-        print(
-            f"[SERVER] Client count changed to {count}, notifying {len(self._client_changed_callbacks)} callback(s)"
-        )
+        # Only log if there are callbacks to avoid spam
+        if self._client_changed_callbacks:
+            print(
+                f"[SERVER] Client count changed to {count}, notifying {len(self._client_changed_callbacks)} callback(s)"
+            )
         for callback in self._client_changed_callbacks:
             try:
                 callback(count)

@@ -1080,10 +1080,6 @@ class MainWindow(QWidget):
 
                 def on_client_changed_main_window(count):
                     """Update main window status when client count changes."""
-                    print(
-                        f"[MAIN_WINDOW] Client count changed callback received: {count}"
-                    )
-
                     # Use QTimer to ensure UI update happens on main thread
                     # Pass count directly to avoid race condition
                     def update_ui():
@@ -1104,9 +1100,6 @@ class MainWindow(QWidget):
                 print(
                     "[MAIN_WINDOW] Callback already registered, skipping duplicate registration"
                 )
-            print(
-                f"[MAIN_WINDOW] Registered client change callback with server (total callbacks: {len(server._client_changed_callbacks)})"
-            )
 
     def _sync_catalog_from_server(self):
         """Download catalog from server if in client mode."""
@@ -1293,9 +1286,6 @@ class MainWindow(QWidget):
             server = get_server()
             if server and server.is_running():
                 count = server.get_connected_clients_count()
-                print(
-                    f"[MAIN_WINDOW] _update_network_status: server mode, count={count}"
-                )
                 if count > 0:
                     status_text = (
                         f"🖥️ Server: Running ({count} client{'s' if count != 1 else ''})"

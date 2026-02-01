@@ -32,7 +32,7 @@ def get_network_mode() -> str:
 
     # If runtime mode is set to server/client, use that
     if _runtime_mode in ("server", "client"):
-        print(f"[DATA_LAYER] Using runtime mode: {_runtime_mode}")
+        # Removed verbose logging - this function is called frequently by timers
         return _runtime_mode
 
     # Otherwise check settings

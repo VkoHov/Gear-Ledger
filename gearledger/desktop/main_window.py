@@ -710,6 +710,8 @@ class MainWindow(QWidget):
         self._sync_version = 0
         self._sync_check_timer = QTimer(self)
         self._sync_check_timer.timeout.connect(self._check_server_sync_version)
+        # Flag to prevent concurrent catalog sync requests
+        self._syncing_catalog = False
         # Start sync checking only in client mode (will be updated when mode changes)
         self._update_sync_timer()
 
@@ -1120,6 +1122,12 @@ class MainWindow(QWidget):
         if not client or not client.is_connected():
             return
 
+        # Prevent concurrent catalog sync requests
+        if self._syncing_catalog:
+            print("[MAIN_WINDOW] Catalog sync already in progress, skipping")
+            return
+
+        self._syncing_catalog = True
         try:
             # Check if catalog exists on server
             print("[MAIN_WINDOW] Checking catalog info from server...")
@@ -1157,7 +1165,7 @@ class MainWindow(QWidget):
                 print("[MAIN_WINDOW] No local catalog cache, will download")
 
             if needs_update:
-                print(f"[MAIN_WINDOW] Downloading catalog from server...")
+                print("[MAIN_WINDOW] Downloading catalog from server...")
                 result = client.download_catalog(cached_catalog)
                 if result.get("ok"):
                     print(f"[MAIN_WINDOW] ✓ Catalog downloaded: {cached_catalog}")
@@ -1166,7 +1174,7 @@ class MainWindow(QWidget):
                         self.settings_widget.update_catalog_ui_for_mode()
                         # Trigger catalog path change to enable functionality
                         self._on_catalog_path_changed(cached_catalog)
-                    print(f"[MAIN_WINDOW] Catalog UI updated after download")
+                    print("[MAIN_WINDOW] Catalog UI updated after download")
                 else:
                     print(
                         f"[MAIN_WINDOW] ✗ Failed to download catalog: {result.get('error')}"
@@ -1175,9 +1183,11 @@ class MainWindow(QWidget):
                 # Even if no download needed, update UI to show current status
                 if hasattr(self, "settings_widget"):
                     self.settings_widget.update_catalog_ui_for_mode()
-                    print(f"[MAIN_WINDOW] Catalog UI updated (no download needed)")
+                    print("[MAIN_WINDOW] Catalog UI updated (no download needed)")
         except Exception as e:
             print(f"[MAIN_WINDOW] Error syncing catalog: {e}")
+        finally:
+            self._syncing_catalog = False
 
     def _update_sync_timer(self):
         """Start/stop sync version checking timer based on network mode."""
@@ -1269,22 +1279,6 @@ class MainWindow(QWidget):
         if mode == "client":
             # Initialize sync version and sync catalog when switching to client mode
             QTimer.singleShot(300, self._initialize_sync_version)
-            QTimer.singleShot(
-                500,
-                lambda: (
-                    self._sync_catalog_from_server(),
-                    (
-                        self.settings_widget.update_catalog_ui_for_mode()
-                        if hasattr(self, "settings_widget")
-                        else None
-                    ),
-                ),
-            )
-        # Update catalog UI and sync catalog if switching to client mode
-        if hasattr(self, "settings_widget"):
-            self.settings_widget.update_catalog_ui_for_mode()
-        if mode == "client":
-            # Sync catalog when switching to client mode
             QTimer.singleShot(500, self._sync_catalog_from_server)
 
     def _update_network_status(self):

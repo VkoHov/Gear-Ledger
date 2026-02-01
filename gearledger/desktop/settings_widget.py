@@ -490,6 +490,8 @@ class SettingsWidget(QGroupBox):
         import requests
 
         try:
+            # Use localhost when uploading from server to itself
+            server_url = f"http://127.0.0.1:{server.port}"
             with open(catalog_path, "rb") as f:
                 files = {
                     "file": (
@@ -499,7 +501,7 @@ class SettingsWidget(QGroupBox):
                     )
                 }
                 response = requests.post(
-                    f"{server.get_server_url()}/api/catalog",
+                    f"{server_url}/api/catalog",
                     files=files,
                     timeout=30,
                 )

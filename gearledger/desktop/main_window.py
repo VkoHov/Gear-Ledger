@@ -1069,7 +1069,7 @@ class MainWindow(QWidget):
         self._update_network_status()
 
     def _register_server_callbacks(self):
-        """Register main window callbacks with server for client change notifications."""
+        """Register main window callbacks with server for client change and data change notifications."""
         from gearledger.server import get_server
 
         server = get_server()
@@ -1101,6 +1101,28 @@ class MainWindow(QWidget):
                 print(
                     "[MAIN_WINDOW] Callback already registered, skipping duplicate registration"
                 )
+
+            # Register data changed callback to refresh results pane when clients send data
+            if not hasattr(self, "_data_changed_callback_registered"):
+                # Store the existing callback if any (from NetworkSettingsDialog)
+                existing_callback = server.on_data_changed
+
+                def on_data_changed():
+                    """Refresh results pane when data changes on server."""
+                    # Call existing callback first (if any) to maintain signal emission
+                    if existing_callback:
+                        try:
+                            existing_callback()
+                        except Exception as e:
+                            print(f"[MAIN_WINDOW] Error in existing data changed callback: {e}")
+                    # Refresh results pane
+                    # Use QTimer to ensure UI update happens on main thread
+                    # Add small delay to ensure database write is visible
+                    QTimer.singleShot(150, self.results_pane.refresh)
+
+                server.on_data_changed = on_data_changed
+                self._data_changed_callback_registered = True
+                print("[MAIN_WINDOW] Registered data changed callback with server")
 
     def _sync_catalog_from_server(self):
         """Download catalog from server if in client mode."""

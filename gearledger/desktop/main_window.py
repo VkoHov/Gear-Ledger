@@ -235,6 +235,13 @@ class MainWindow(QWidget):
 
         # Register client change callback if server is already running
         QTimer.singleShot(100, self._register_server_callbacks)
+        
+        # Initialize sync version and sync catalog from server on startup if in client mode
+        QTimer.singleShot(300, self._initialize_sync_version)
+        QTimer.singleShot(500, lambda: (
+            self._sync_catalog_from_server(),
+            self.settings_widget.update_catalog_ui_for_mode() if hasattr(self, "settings_widget") else None
+        ))
 
     def _set_window_icon(self):
         """Set the window icon from icon.ico or icon.png file if available."""
@@ -692,8 +699,12 @@ class MainWindow(QWidget):
         self.poll_fuzzy_timer = QTimer(self)
         self.poll_fuzzy_timer.timeout.connect(self._poll_fuzzy_queue)
 
-        # Sync version tracking (no timer needed - we use server_data_changed signal)
+        # Sync version tracking for catalog sync in client mode
         self._sync_version = 0
+        self._sync_check_timer = QTimer(self)
+        self._sync_check_timer.timeout.connect(self._check_server_sync_version)
+        # Start sync checking only in client mode (will be updated when mode changes)
+        self._update_sync_timer()
 
     def _update_controls(self):
         """Update control states based on process status and catalog availability."""
@@ -1088,9 +1099,118 @@ class MainWindow(QWidget):
                 f"[MAIN_WINDOW] Registered client change callback with server (total callbacks: {len(server._client_changed_callbacks)})"
             )
 
+    def _sync_catalog_from_server(self):
+        """Download catalog from server if in client mode."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.api_client import get_client
+        from gearledger.desktop.settings_manager import APP_DIR
+        
+        mode = get_network_mode()
+        if mode != "client":
+            return
+        
+        client = get_client()
+        if not client or not client.is_connected():
+            return
+        
+        try:
+            # Check if catalog exists on server
+            info = client.get_catalog_info()
+            if not info.get("ok") or not info.get("exists"):
+                print("[MAIN_WINDOW] No catalog on server")
+                return
+            
+            # Download catalog to cache
+            catalog_cache_dir = os.path.join(APP_DIR, "catalog_cache")
+            os.makedirs(catalog_cache_dir, exist_ok=True)
+            cached_catalog = os.path.join(catalog_cache_dir, "server_catalog.xlsx")
+            
+            # Check if we need to update (compare modification time)
+            server_modified = info.get("modified", 0)
+            needs_update = True
+            if os.path.exists(cached_catalog):
+                local_modified = os.path.getmtime(cached_catalog)
+                if server_modified <= local_modified:
+                    needs_update = False
+                    print("[MAIN_WINDOW] Catalog is up to date")
+            
+            if needs_update:
+                print(f"[MAIN_WINDOW] Downloading catalog from server...")
+                result = client.download_catalog(cached_catalog)
+                if result.get("ok"):
+                    print(f"[MAIN_WINDOW] ✓ Catalog downloaded: {cached_catalog}")
+                    # Update catalog UI to show status
+                    if hasattr(self, "settings_widget"):
+                        self.settings_widget.update_catalog_ui_for_mode()
+                        # Trigger catalog path change to enable functionality
+                        self._on_catalog_path_changed(cached_catalog)
+                else:
+                    print(f"[MAIN_WINDOW] ✗ Failed to download catalog: {result.get('error')}")
+        except Exception as e:
+            print(f"[MAIN_WINDOW] Error syncing catalog: {e}")
+
+    def _update_sync_timer(self):
+        """Start/stop sync version checking timer based on network mode."""
+        from gearledger.data_layer import get_network_mode
+        
+        mode = get_network_mode()
+        if mode == "client":
+            # In client mode, poll server for data changes every 2 seconds
+            if not self._sync_check_timer.isActive():
+                self._sync_check_timer.start(2000)  # Check every 2 seconds
+                print("[MAIN_WINDOW] Started sync version polling in client mode (every 2 seconds)")
+        else:
+            # In server/standalone mode, stop polling
+            if self._sync_check_timer.isActive():
+                self._sync_check_timer.stop()
+                print("[MAIN_WINDOW] Stopped sync version polling (not in client mode)")
+
+    def _initialize_sync_version(self):
+        """Initialize sync version from server if in client mode."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.api_client import get_client
+        
+        mode = get_network_mode()
+        if mode != "client":
+            return
+        
+        client = get_client()
+        if client and client.is_connected():
+            try:
+                self._sync_version = client.get_sync_version()
+                print(f"[MAIN_WINDOW] Initialized sync version: {self._sync_version}")
+            except Exception as e:
+                print(f"[MAIN_WINDOW] Error initializing sync version: {e}")
+
+    def _check_server_sync_version(self):
+        """Check server sync version and sync catalog if changed (client mode only)."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.api_client import get_client
+        
+        mode = get_network_mode()
+        if mode != "client":
+            return
+        
+        client = get_client()
+        if not client or not client.is_connected():
+            return
+        
+        try:
+            new_version = client.get_sync_version()
+            if new_version != -1 and new_version != self._sync_version:
+                print(f"[MAIN_WINDOW] 🔄 Server data version changed: {self._sync_version} -> {new_version}")
+                self._sync_version = new_version
+                # Sync catalog when version changes (catalog may have been uploaded)
+                self._sync_catalog_from_server()
+        except Exception as e:
+            print(f"[MAIN_WINDOW] Error checking sync version: {e}")
+
     def _on_server_data_changed(self):
-        """Handle server data changed - refresh results pane."""
-        print("[MAIN_WINDOW] Server data changed - refreshing results pane")
+        """Handle server data changed - refresh results pane and sync catalog."""
+        print("[MAIN_WINDOW] Server data changed - refreshing results pane and syncing catalog")
+        # Sync catalog from server (if in client mode)
+        self._sync_catalog_from_server()
+        # Refresh results pane
         self.results_pane.refresh()
         # Update network status (client count may have changed)
         self._update_network_status()
@@ -1102,6 +1222,24 @@ class MainWindow(QWidget):
         self.results_pane.update_refresh_button_visibility()
         # Update network status label
         self._update_network_status()
+        # Update sync timer based on mode
+        self._update_sync_timer()
+        # Update catalog UI and sync catalog if switching to client mode
+        if hasattr(self, "settings_widget"):
+            self.settings_widget.update_catalog_ui_for_mode()
+        if mode == "client":
+            # Initialize sync version and sync catalog when switching to client mode
+            QTimer.singleShot(300, self._initialize_sync_version)
+            QTimer.singleShot(500, lambda: (
+                self._sync_catalog_from_server(),
+                self.settings_widget.update_catalog_ui_for_mode() if hasattr(self, "settings_widget") else None
+            ))
+        # Update catalog UI and sync catalog if switching to client mode
+        if hasattr(self, "settings_widget"):
+            self.settings_widget.update_catalog_ui_for_mode()
+        if mode == "client":
+            # Sync catalog when switching to client mode
+            QTimer.singleShot(500, self._sync_catalog_from_server)
 
     def _update_network_status(self):
         """Update the network status label showing current mode and connection status."""

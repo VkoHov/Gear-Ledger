@@ -45,6 +45,17 @@ class SettingsWidget(QGroupBox):
         catalog_layout.addWidget(self.btn_catalog)
         layout.addLayout(catalog_layout)
 
+        # Catalog info (client mode only - shows server catalog status)
+        catalog_info_layout = QHBoxLayout()
+        self.catalog_info_label = QLabel("")
+        self.catalog_info_label.setWordWrap(True)
+        self.catalog_info_label.setStyleSheet(
+            "color: #7f8c8d; font-size: 11px; padding: 4px;"
+        )
+        self.catalog_info_label.setVisible(False)  # Only visible in client mode
+        catalog_info_layout.addWidget(self.catalog_info_label, 1)
+        layout.addLayout(catalog_info_layout)
+
         # Results Excel file
         results_layout = QHBoxLayout()
         results_layout.addWidget(QLabel(tr("results_excel_ledger")))
@@ -216,6 +227,14 @@ class SettingsWidget(QGroupBox):
             self.catalog_edit.setText(fn)
             if self.on_catalog_changed:
                 self.on_catalog_changed(fn)
+
+            # Automatically upload to server if in server mode
+            from gearledger.data_layer import get_network_mode
+
+            mode = get_network_mode()
+            if mode == "server":
+                # Upload catalog to server automatically
+                self._upload_catalog_to_server_auto(fn)
 
     def pick_results_excel(self):
         """Open file dialog to select results Excel file."""
@@ -429,7 +448,122 @@ class SettingsWidget(QGroupBox):
 
     def get_catalog_path(self) -> str:
         """Get the current catalog file path."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.api_client import get_client
+        from gearledger.desktop.settings_manager import APP_DIR
+
+        mode = get_network_mode()
+
+        # In client mode, use server catalog if available
+        if mode == "client":
+            client = get_client()
+            if client and client.is_connected():
+                # Check if we have a cached server catalog
+                catalog_cache_dir = os.path.join(APP_DIR, "catalog_cache")
+                os.makedirs(catalog_cache_dir, exist_ok=True)
+                cached_catalog = os.path.join(catalog_cache_dir, "server_catalog.xlsx")
+
+                # If cached catalog exists, use it
+                if os.path.exists(cached_catalog):
+                    return cached_catalog
+
+            # Fallback to local catalog if server catalog not available
+            return self.catalog_edit.text().strip()
+
+        # In server/standalone mode, use local catalog
         return self.catalog_edit.text().strip()
+
+    def _upload_catalog_to_server_auto(self, catalog_path: str):
+        """Automatically upload catalog file to server (called when catalog is selected in server mode)."""
+        from gearledger.server import get_server
+
+        if not catalog_path or not os.path.exists(catalog_path):
+            return
+
+        server = get_server()
+        if not server or not server.is_running():
+            print(
+                "[SETTINGS] Server is not running, cannot upload catalog automatically"
+            )
+            return
+
+        import requests
+
+        try:
+            with open(catalog_path, "rb") as f:
+                files = {
+                    "file": (
+                        os.path.basename(catalog_path),
+                        f,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                }
+                response = requests.post(
+                    f"{server.get_server_url()}/api/catalog",
+                    files=files,
+                    timeout=30,
+                )
+                result = response.json()
+
+                if result.get("ok"):
+                    print(
+                        f"[SETTINGS] ✓ Catalog uploaded to server automatically: {result.get('filename')}"
+                    )
+                else:
+                    print(
+                        f"[SETTINGS] ✗ Failed to upload catalog: {result.get('error', 'Unknown error')}"
+                    )
+        except Exception as e:
+            print(f"[SETTINGS] Error uploading catalog automatically: {e}")
+
+    def update_catalog_ui_for_mode(self):
+        """Update catalog UI based on network mode."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.api_client import get_client
+
+        mode = get_network_mode()
+
+        if mode == "client":
+            # In client mode: hide catalog selection, show server catalog status
+            if hasattr(self, "catalog_label"):
+                self.catalog_label.setVisible(False)
+            self.catalog_edit.setVisible(False)
+            self.btn_catalog.setVisible(False)
+            self.catalog_info_label.setVisible(True)
+
+            # Update catalog status from server
+            client = get_client()
+            if client and client.is_connected():
+                info = client.get_catalog_info()
+                if info.get("ok") and info.get("exists"):
+                    filename = info.get("filename", "catalog.xlsx")
+                    size = info.get("size", 0)
+                    size_mb = size / (1024 * 1024) if size > 0 else 0
+                    self.catalog_info_label.setText(
+                        f"📋 Catalog from server: {filename} ({size_mb:.2f} MB)"
+                    )
+                    self.catalog_info_label.setStyleSheet(
+                        "color: #27ae60; font-size: 11px; padding: 4px;"
+                    )
+                else:
+                    self.catalog_info_label.setText(
+                        "📋 No catalog on server. Please upload on server."
+                    )
+                    self.catalog_info_label.setStyleSheet(
+                        "color: #7f8c8d; font-size: 11px; padding: 4px;"
+                    )
+            else:
+                self.catalog_info_label.setText("📋 Not connected to server")
+                self.catalog_info_label.setStyleSheet(
+                    "color: #e74c3c; font-size: 11px; padding: 4px;"
+                )
+        else:
+            # In server/standalone mode: show catalog selection, hide status
+            if hasattr(self, "catalog_label"):
+                self.catalog_label.setVisible(True)
+            self.catalog_edit.setVisible(True)
+            self.btn_catalog.setVisible(True)
+            self.catalog_info_label.setVisible(False)
 
     def get_results_path(self) -> str:
         """Get the current results file path. Uses default from settings if not set."""

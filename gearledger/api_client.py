@@ -208,3 +208,82 @@ def disconnect_from_server():
 def is_connected() -> bool:
     """Check if connected to a server."""
     return _client_instance is not None and _client_instance.is_connected()
+
+
+# Add catalog methods to APIClient
+def _add_catalog_methods():
+    """Add catalog methods to APIClient class."""
+    import os
+    
+    def get_catalog_info(self) -> Dict[str, Any]:
+        """Get catalog metadata from server."""
+        try:
+            response = requests.get(
+                f"{self.server_url}/api/catalog/info",
+                timeout=self.timeout,
+            )
+            data = response.json()
+            if data.get("ok"):
+                return data
+            return {"ok": False, "error": "Failed to get catalog info"}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "exists": False}
+
+    def download_catalog(self, local_path: str) -> Dict[str, Any]:
+        """Download catalog file from server to local path."""
+        try:
+            response = requests.get(
+                f"{self.server_url}/api/catalog",
+                timeout=self.timeout,
+                stream=True,
+            )
+            if response.status_code == 200:
+                with open(local_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                return {"ok": True, "path": local_path}
+            else:
+                data = (
+                    response.json()
+                    if response.headers.get("content-type", "").startswith(
+                        "application/json"
+                    )
+                    else {}
+                )
+                return {
+                    "ok": False,
+                    "error": data.get("error", "Failed to download catalog"),
+                }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def upload_catalog(self, file_path: str) -> Dict[str, Any]:
+        """Upload a catalog file to the server."""
+        try:
+            if not os.path.exists(file_path):
+                return {"ok": False, "error": "File not found"}
+
+            with open(file_path, "rb") as f:
+                files = {
+                    "file": (
+                        os.path.basename(file_path),
+                        f,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                }
+                response = requests.post(
+                    f"{self.server_url}/api/catalog",
+                    files=files,
+                    timeout=30,
+                )
+            return response.json()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # Add methods to APIClient class
+    APIClient.get_catalog_info = get_catalog_info
+    APIClient.download_catalog = download_catalog
+    APIClient.upload_catalog = upload_catalog
+
+# Initialize catalog methods
+_add_catalog_methods()

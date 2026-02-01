@@ -5,13 +5,16 @@ REST API server for multi-device access to Gear Ledger.
 import threading
 import socket
 import time
+import os
+from pathlib import Path
 from typing import Optional, Callable
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from werkzeug.serving import make_server
 
 from .database import get_database, Database
 from .network_discovery import ServerBroadcaster
+from .desktop.settings_manager import APP_DIR
 
 
 class GearLedgerServer:
@@ -294,6 +297,83 @@ class GearLedgerServer:
             clients = db.get_clients()
             return jsonify({"ok": True, "clients": clients})
 
+        @self.app.route("/api/catalog/info", methods=["GET"])
+        def get_catalog_info():
+            """Get catalog metadata (filename, size, date)."""
+            catalog_path = self._get_catalog_path()
+            if catalog_path and os.path.exists(catalog_path):
+                stat = os.stat(catalog_path)
+                return jsonify(
+                    {
+                        "ok": True,
+                        "filename": os.path.basename(catalog_path),
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                        "exists": True,
+                    }
+                )
+            return jsonify({"ok": True, "exists": False})
+
+        @self.app.route("/api/catalog", methods=["GET"])
+        def get_catalog():
+            """Download the catalog file."""
+            catalog_path = self._get_catalog_path()
+            if catalog_path and os.path.exists(catalog_path):
+                return send_file(
+                    catalog_path,
+                    as_attachment=True,
+                    download_name=os.path.basename(catalog_path),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            return jsonify({"ok": False, "error": "Catalog not found"}), 404
+
+        @self.app.route("/api/catalog", methods=["POST"])
+        def upload_catalog():
+            """Upload a catalog file to the server."""
+            if "file" not in request.files:
+                return jsonify({"ok": False, "error": "No file provided"}), 400
+
+            file = request.files["file"]
+            if file.filename == "":
+                return jsonify({"ok": False, "error": "No file selected"}), 400
+
+            try:
+                # Get catalog directory
+                catalog_dir = Path(APP_DIR) / "catalogs"
+                catalog_dir.mkdir(parents=True, exist_ok=True)
+
+                # Save uploaded file with timestamp
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # Preserve original extension
+                original_ext = os.path.splitext(file.filename)[1] or ".xlsx"
+                filename = f"catalog_{timestamp}{original_ext}"
+                catalog_path = catalog_dir / filename
+
+                # Save the file
+                file.save(str(catalog_path))
+                print(f"[SERVER] Catalog file uploaded: {catalog_path}")
+
+                # Increment data version to notify clients
+                self._data_version += 1
+                print(f"[SERVER] Catalog uploaded, data version now: {self._data_version}")
+
+                # Notify about data change (catalog uploaded)
+                if self.on_data_changed:
+                    self.on_data_changed()
+
+                return jsonify(
+                    {
+                        "ok": True,
+                        "filename": filename,
+                        "path": str(catalog_path),
+                        "version": self._data_version,
+                    }
+                )
+            except Exception as e:
+                print(f"[SERVER] Error uploading catalog: {e}")
+                return jsonify({"ok": False, "error": str(e)}), 500
+
     def start(self) -> bool:
         """Start the server in a background thread."""
         if self._running:
@@ -318,6 +398,20 @@ class GearLedgerServer:
         except Exception as e:
             print(f"[ERROR] Failed to start server: {e}")
             return False
+
+    def _get_catalog_path(self) -> Optional[str]:
+        """Get path to stored catalog file."""
+        catalog_dir = Path(APP_DIR) / "catalogs"
+        catalog_dir.mkdir(parents=True, exist_ok=True)
+
+        # Look for the most recent catalog file (supports .xlsx, .xls)
+        catalog_files = list(catalog_dir.glob("catalog_*.*"))
+        # Filter to only Excel files
+        catalog_files = [f for f in catalog_files if f.suffix.lower() in [".xlsx", ".xls"]]
+        if catalog_files:
+            # Return most recently modified
+            return str(max(catalog_files, key=lambda p: p.stat().st_mtime))
+        return None
 
     def _start_stale_client_check(self):
         """Start periodic check for stale clients."""

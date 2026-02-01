@@ -1122,9 +1122,14 @@ class MainWindow(QWidget):
 
         try:
             # Check if catalog exists on server
+            print("[MAIN_WINDOW] Checking catalog info from server...")
             info = client.get_catalog_info()
+            print(f"[MAIN_WINDOW] Catalog info: {info}")
             if not info.get("ok") or not info.get("exists"):
                 print("[MAIN_WINDOW] No catalog on server")
+                # Update UI to show no catalog
+                if hasattr(self, "settings_widget"):
+                    self.settings_widget.update_catalog_ui_for_mode()
                 return
 
             # Download catalog to cache
@@ -1137,9 +1142,19 @@ class MainWindow(QWidget):
             needs_update = True
             if os.path.exists(cached_catalog):
                 local_modified = os.path.getmtime(cached_catalog)
-                if server_modified <= local_modified:
+                # Update if server catalog is newer (server_modified > local_modified)
+                if server_modified > local_modified:
+                    needs_update = True
+                    print(
+                        f"[MAIN_WINDOW] Server catalog is newer (server: {server_modified}, local: {local_modified})"
+                    )
+                else:
                     needs_update = False
-                    print("[MAIN_WINDOW] Catalog is up to date")
+                    print(
+                        f"[MAIN_WINDOW] Catalog is up to date (server: {server_modified}, local: {local_modified})"
+                    )
+            else:
+                print("[MAIN_WINDOW] No local catalog cache, will download")
 
             if needs_update:
                 print(f"[MAIN_WINDOW] Downloading catalog from server...")
@@ -1151,10 +1166,16 @@ class MainWindow(QWidget):
                         self.settings_widget.update_catalog_ui_for_mode()
                         # Trigger catalog path change to enable functionality
                         self._on_catalog_path_changed(cached_catalog)
+                    print(f"[MAIN_WINDOW] Catalog UI updated after download")
                 else:
                     print(
                         f"[MAIN_WINDOW] ✗ Failed to download catalog: {result.get('error')}"
                     )
+            else:
+                # Even if no download needed, update UI to show current status
+                if hasattr(self, "settings_widget"):
+                    self.settings_widget.update_catalog_ui_for_mode()
+                    print(f"[MAIN_WINDOW] Catalog UI updated (no download needed)")
         except Exception as e:
             print(f"[MAIN_WINDOW] Error syncing catalog: {e}")
 
@@ -1215,6 +1236,9 @@ class MainWindow(QWidget):
                 self._sync_version = new_version
                 # Sync catalog when version changes (catalog may have been uploaded)
                 self._sync_catalog_from_server()
+                # Update catalog UI to show new catalog status
+                if hasattr(self, "settings_widget"):
+                    self.settings_widget.update_catalog_ui_for_mode()
         except Exception as e:
             print(f"[MAIN_WINDOW] Error checking sync version: {e}")
 

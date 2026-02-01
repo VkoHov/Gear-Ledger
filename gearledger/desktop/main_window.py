@@ -1116,7 +1116,9 @@ class MainWindow(QWidget):
                         try:
                             existing_callback()
                         except Exception as e:
-                            print(f"[MAIN_WINDOW] Error in existing data changed callback: {e}")
+                            print(
+                                f"[MAIN_WINDOW] Error in existing data changed callback: {e}"
+                            )
                     # Refresh results pane
                     # Use QTimer to ensure UI update happens on main thread
                     # Add small delay to ensure database write is visible

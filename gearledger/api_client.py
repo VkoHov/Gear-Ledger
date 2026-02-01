@@ -214,7 +214,7 @@ def is_connected() -> bool:
 def _add_catalog_methods():
     """Add catalog methods to APIClient class."""
     import os
-    
+
     def get_catalog_info(self) -> Dict[str, Any]:
         """Get catalog metadata from server."""
         try:
@@ -284,6 +284,7 @@ def _add_catalog_methods():
     APIClient.get_catalog_info = get_catalog_info
     APIClient.download_catalog = download_catalog
     APIClient.upload_catalog = upload_catalog
+
 
 # Initialize catalog methods
 _add_catalog_methods()

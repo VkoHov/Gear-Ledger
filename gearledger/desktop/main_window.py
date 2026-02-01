@@ -1523,13 +1523,16 @@ class MainWindow(QWidget):
             scale_weight = self.scale_widget.get_current_weight()
             weight_to_use = scale_weight if scale_weight > 0 else 1.0
 
+            catalog_path = self.settings_widget.get_catalog_path()
+            print(f"[MAIN_WINDOW] Recording match: artikul={a}, client={c}, catalog_path={catalog_path}")
+            
             rec = record_match_unified(
                 ledger_path,
                 a,
                 c,
                 qty_inc=1,
                 weight_inc=weight_to_use,
-                catalog_path=self.settings_widget.get_catalog_path(),
+                catalog_path=catalog_path,
                 weight_price=self.settings_widget.get_weight_price(),
             )
             if rec["ok"]:

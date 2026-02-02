@@ -284,14 +284,82 @@ class GearLedgerServer:
             db = self._get_db()
             print(f"[SERVER] Database: {db.db_path}")
 
+            # Look up catalog data to enrich the result
+            # Use in-memory uploaded catalog if available, otherwise try file from settings
+            from gearledger.result_ledger import _lookup_catalog_data
+            from gearledger.data_layer import _to_python_type
+
+            catalog_data = {}
+            catalog_bytes = self.get_uploaded_catalog_data()
+
+            if catalog_bytes:
+                print(
+                    f"[SERVER] Using in-memory catalog (size: {len(catalog_bytes)} bytes)"
+                )
+                data = _lookup_catalog_data(artikul, catalog_bytes=catalog_bytes)
+                if data:
+                    # Convert numpy types to native Python types
+                    catalog_data = {k: _to_python_type(v) for k, v in data.items()}
+                    print(f"[SERVER] Found catalog data: {catalog_data}")
+                else:
+                    print(f"[SERVER] No catalog entry found for artikul: {artikul}")
+            else:
+                # Try to get catalog path from settings as fallback
+                from gearledger.desktop.settings_widget import get_settings_widget
+
+                settings_widget = get_settings_widget()
+                if settings_widget:
+                    catalog_path = settings_widget.get_catalog_path()
+                    if catalog_path and os.path.exists(catalog_path):
+                        print(f"[SERVER] Using catalog file: {catalog_path}")
+                        data = _lookup_catalog_data(artikul, catalog_path=catalog_path)
+                        if data:
+                            catalog_data = {
+                                k: _to_python_type(v) for k, v in data.items()
+                            }
+                            print(f"[SERVER] Found catalog data: {catalog_data}")
+                        else:
+                            print(
+                                f"[SERVER] No catalog entry found for artikul: {artikul}"
+                            )
+                    else:
+                        print("[SERVER] No catalog file available")
+                else:
+                    print(
+                        "[SERVER] No settings widget available, cannot get catalog path"
+                    )
+
+            print(f"[SERVER] Catalog lookup result: {catalog_data}")
+
+            # Use catalog data to populate fields (prefer catalog data over client-provided data)
+            brand = (
+                catalog_data.get("бренд", "") if catalog_data else data.get("brand", "")
+            )
+            description = (
+                catalog_data.get("описание", "")
+                if catalog_data
+                else data.get("description", "")
+            )
+            sale_price = (
+                catalog_data.get("цена", 0)
+                if catalog_data
+                else data.get("sale_price", 0)
+            )
+
+            # If catalog provided data, log it
+            if catalog_data:
+                print(f"[SERVER] Using catalog data: brand={brand}, price={sale_price}")
+            else:
+                print("[SERVER] No catalog data found, using client-provided data")
+
             result = db.add_or_update_result(
                 artikul=artikul,
                 client=client,
                 quantity=data.get("quantity", 1),
                 weight=data.get("weight", 0),
-                brand=data.get("brand", ""),
-                description=data.get("description", ""),
-                sale_price=data.get("sale_price", 0),
+                brand=brand,
+                description=description,
+                sale_price=sale_price,
             )
             print(f"[SERVER] Database result: {result}")
 

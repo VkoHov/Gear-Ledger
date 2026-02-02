@@ -481,10 +481,45 @@ class SettingsWidget(QGroupBox):
         if mode == "server":
             server = get_server()
             if server and server.is_running():
-                if server.get_uploaded_catalog_data() is not None:
-                    # Catalog is in memory, return empty to indicate use in-memory catalog
-                    # The data layer will automatically use the in-memory catalog
-                    return ""
+                catalog_bytes = server.get_uploaded_catalog_data()
+                if catalog_bytes is not None:
+                    # Catalog is in memory, save it to a temporary cache file for search functions
+                    # Search functions (run_fuzzy_match, process_image) need a file path, not bytes
+                    from gearledger.desktop.settings_manager import APP_DIR
+
+                    catalog_cache_dir = os.path.join(APP_DIR, "catalog_cache")
+                    os.makedirs(catalog_cache_dir, exist_ok=True)
+                    cached_catalog = os.path.join(
+                        catalog_cache_dir, "server_catalog.xlsx"
+                    )
+
+                    # Save in-memory catalog to cache file if it doesn't exist or is outdated
+                    # Check modification time to avoid unnecessary writes
+                    needs_write = True
+                    if os.path.exists(cached_catalog):
+                        # Compare with server's upload time
+                        upload_time = server._catalog_upload_time or 0
+                        local_modified = os.path.getmtime(cached_catalog)
+                        if upload_time <= local_modified:
+                            needs_write = False
+
+                    if needs_write:
+                        try:
+                            with open(cached_catalog, "wb") as f:
+                                f.write(catalog_bytes)
+                            print(
+                                f"[SETTINGS] Saved in-memory catalog to cache: {cached_catalog}"
+                            )
+                        except Exception as e:
+                            print(f"[SETTINGS] Failed to save catalog cache: {e}")
+                            # Fall back to file from settings if cache write fails
+                            local_catalog = self.catalog_edit.text().strip()
+                            if local_catalog and os.path.exists(local_catalog):
+                                return local_catalog
+                            return ""
+
+                    # Return cached file path for search functions
+                    return cached_catalog
                 else:
                     # No uploaded catalog, use the catalog file from settings
                     local_catalog = self.catalog_edit.text().strip()

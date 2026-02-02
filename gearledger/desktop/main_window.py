@@ -1175,8 +1175,12 @@ class MainWindow(QWidget):
             # Catalog is in memory, server will automatically use it for lookups
             print("[MAIN_WINDOW] Uploaded catalog available in memory")
 
-    def _sync_catalog_from_server(self):
-        """Download catalog from server if in client mode."""
+    def _sync_catalog_from_server(self, force: bool = False):
+        """Download catalog from server if in client mode.
+
+        Args:
+            force: If True, always download even if cached file exists and appears up to date.
+        """
         from gearledger.data_layer import get_network_mode
         from gearledger.api_client import get_client
         from gearledger.desktop.settings_manager import APP_DIR
@@ -1213,10 +1217,10 @@ class MainWindow(QWidget):
             os.makedirs(catalog_cache_dir, exist_ok=True)
             cached_catalog = os.path.join(catalog_cache_dir, "server_catalog.xlsx")
 
-            # Check if we need to update (compare modification time)
+            # Check if we need to update (compare modification time, unless forced)
             server_modified = info.get("modified", 0)
-            needs_update = True
-            if os.path.exists(cached_catalog):
+            needs_update = force
+            if not force and os.path.exists(cached_catalog):
                 local_modified = os.path.getmtime(cached_catalog)
                 # Update if server catalog is newer (server_modified > local_modified)
                 if server_modified > local_modified:
@@ -1230,7 +1234,12 @@ class MainWindow(QWidget):
                         f"[MAIN_WINDOW] Catalog is up to date (server: {server_modified}, local: {local_modified})"
                     )
             else:
-                print("[MAIN_WINDOW] No local catalog cache, will download")
+                if force:
+                    print(
+                        "[MAIN_WINDOW] Force download requested, will download catalog"
+                    )
+                else:
+                    print("[MAIN_WINDOW] No local catalog cache, will download")
 
             if needs_update:
                 print("[MAIN_WINDOW] Downloading catalog from server...")
@@ -1318,8 +1327,8 @@ class MainWindow(QWidget):
         )
 
         self._sync_version = event.get("version", self._sync_version)
-        # Sync catalog from server
-        self._sync_catalog_from_server()
+        # Force sync catalog from server (don't check modification time, always download)
+        self._sync_catalog_from_server(force=True)
         # Update catalog UI
         if hasattr(self, "settings_widget"):
             self.settings_widget.update_catalog_ui_for_mode()

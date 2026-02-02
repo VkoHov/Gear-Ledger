@@ -535,7 +535,9 @@ class SettingsWidget(QGroupBox):
         """Automatically upload catalog file to server (called when catalog is selected in server mode)."""
         from gearledger.server import get_server
 
+        print(f"[SETTINGS] Auto-upload catalog called with path: {catalog_path}")
         if not catalog_path or not os.path.exists(catalog_path):
+            print(f"[SETTINGS] Catalog path invalid or doesn't exist: {catalog_path}")
             return
 
         server = get_server()
@@ -550,6 +552,7 @@ class SettingsWidget(QGroupBox):
         try:
             # Use localhost when uploading from server to itself
             server_url = f"http://127.0.0.1:{server.port}"
+            print(f"[SETTINGS] Uploading catalog to {server_url}/api/catalog")
             with open(catalog_path, "rb") as f:
                 files = {
                     "file": (
@@ -564,6 +567,7 @@ class SettingsWidget(QGroupBox):
                     timeout=30,
                 )
                 result = response.json()
+                print(f"[SETTINGS] Upload response: {result}")
 
                 if result.get("ok"):
                     print(
@@ -575,6 +579,9 @@ class SettingsWidget(QGroupBox):
                     )
         except Exception as e:
             print(f"[SETTINGS] Error uploading catalog automatically: {e}")
+            import traceback
+
+            traceback.print_exc()
 
     def update_catalog_ui_for_mode(self, catalog_info: dict = None):
         """Update catalog UI based on network mode.

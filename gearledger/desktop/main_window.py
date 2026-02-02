@@ -1152,7 +1152,10 @@ class MainWindow(QWidget):
 
     def _auto_set_uploaded_catalog(self):
         """
-        Automatically use uploaded catalog if server is running and catalog is uploaded.
+        Automatically upload catalog to server memory if:
+        1. Server is running
+        2. A catalog file is selected in settings
+        3. No catalog is currently in server memory
 
         When a catalog is uploaded, it's stored in memory only.
         The server will automatically use the uploaded catalog via get_catalog_path()
@@ -1168,12 +1171,24 @@ class MainWindow(QWidget):
 
         server = get_server()
         if not server or not server.is_running():
+            print("[MAIN_WINDOW] Server not running, cannot auto-upload catalog")
             return
 
-        # Check if there's an uploaded catalog in memory
+        # Check if there's already an uploaded catalog in memory
         if server.get_uploaded_catalog_data() is not None:
-            # Catalog is in memory, server will automatically use it for lookups
-            print("[MAIN_WINDOW] Uploaded catalog available in memory")
+            # Catalog is already in memory, no need to upload
+            print("[MAIN_WINDOW] Uploaded catalog already available in memory")
+            return
+
+        # Check if a catalog file is selected in settings
+        if hasattr(self, "settings_widget"):
+            catalog_path = self.settings_widget.catalog_edit.text().strip()
+            if catalog_path and os.path.exists(catalog_path):
+                print(f"[MAIN_WINDOW] Auto-uploading catalog to server: {catalog_path}")
+                # Upload the catalog file to server memory
+                self.settings_widget._upload_catalog_to_server_auto(catalog_path)
+            else:
+                print("[MAIN_WINDOW] No catalog file selected in settings")
 
     def _sync_catalog_from_server(self, force: bool = False):
         """Download catalog from server if in client mode.
@@ -1431,6 +1446,11 @@ class MainWindow(QWidget):
             # Update catalog UI
             if hasattr(self, "settings_widget"):
                 self.settings_widget.update_catalog_ui_for_mode()
+
+            # If server mode, auto-upload catalog if one is selected and server is running
+            if mode == "server":
+                # Delay to ensure server is fully started
+                QTimer.singleShot(500, self._auto_set_uploaded_catalog)
 
     def _initialize_client_connection(self):
         """Initialize client connection sequentially: connect, SSE, sync version, catalog."""

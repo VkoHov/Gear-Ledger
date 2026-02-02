@@ -200,13 +200,23 @@ class GearLedgerServer:
                         "version": self._data_version,
                     }
                     # Include catalog info if catalog is already uploaded
+                    print(
+                        f"[SERVER] Checking for catalog in SSE connection: _catalog_data is {'not None' if self._catalog_data is not None else 'None'}"
+                    )
                     if self._catalog_data is not None:
+                        print(
+                            f"[SERVER] Catalog found: {self._catalog_filename}, size: {len(self._catalog_data)} bytes"
+                        )
                         connection_event["catalog"] = {
                             "filename": self._catalog_filename,
                             "size": len(self._catalog_data),
                             "version": self._data_version,
                             "exists": True,
                         }
+                    else:
+                        print(
+                            "[SERVER] No catalog in memory - catalog info not included in connected event"
+                        )
                     try:
                         yield f"data: {json.dumps(connection_event)}\n\n"
                     except OSError:
@@ -480,7 +490,13 @@ class GearLedgerServer:
         @self.app.route("/api/catalog/info", methods=["GET"])
         def get_catalog_info():
             """Get catalog metadata (filename, size, date)."""
+            print(
+                f"[SERVER] /api/catalog/info called: _catalog_data is {'not None' if self._catalog_data is not None else 'None'}"
+            )
             if self._catalog_data is not None:
+                print(
+                    f"[SERVER] Returning catalog info: {self._catalog_filename}, size: {len(self._catalog_data)}"
+                )
                 return jsonify(
                     {
                         "ok": True,
@@ -490,6 +506,7 @@ class GearLedgerServer:
                         "exists": True,
                     }
                 )
+            print("[SERVER] No catalog in memory - returning exists: False")
             return jsonify({"ok": True, "exists": False})
 
         @self.app.route("/api/catalog", methods=["GET"])

@@ -367,34 +367,41 @@ class GearLedgerServer:
             else:
                 print("[SERVER] No catalog data found, using client-provided data")
 
-            result = db.add_or_update_result(
-                artikul=artikul,
-                client=client,
-                quantity=data.get("quantity", 1),
-                weight=data.get("weight", 0),
-                brand=brand,
-                description=description,
-                sale_price=sale_price,
-            )
-            print(f"[SERVER] Database result: {result}")
+            try:
+                result = db.add_or_update_result(
+                    artikul=artikul,
+                    client=client,
+                    quantity=data.get("quantity", 1),
+                    weight=data.get("weight", 0),
+                    brand=brand,
+                    description=description,
+                    sale_price=sale_price,
+                )
+                print(f"[SERVER] Database result: {result}")
 
-            # Increment data version for sync
-            self._data_version += 1
-            print(f"[SERVER] Data version now: {self._data_version}")
+                # Increment data version for sync
+                self._data_version += 1
+                print(f"[SERVER] Data version now: {self._data_version}")
 
-            # Send SSE event to all connected clients
-            self._broadcast_sse_event(
-                {
-                    "type": "results_changed",
-                    "version": self._data_version,
-                }
-            )
+                # Send SSE event to all connected clients
+                self._broadcast_sse_event(
+                    {
+                        "type": "results_changed",
+                        "version": self._data_version,
+                    }
+                )
 
-            # Notify about data change
-            if self.on_data_changed:
-                self.on_data_changed()
+                # Notify about data change
+                if self.on_data_changed:
+                    self.on_data_changed()
 
-            return jsonify(result)
+                return jsonify(result)
+            except Exception as e:
+                print(f"[SERVER] ERROR in add_result: {e}")
+                import traceback
+
+                traceback.print_exc()
+                return jsonify({"ok": False, "error": str(e)}), 500
 
         @self.app.route("/api/results/<int:result_id>", methods=["GET"])
         def get_result(result_id):

@@ -78,7 +78,31 @@ class APIClient:
                 },
                 timeout=self.timeout,
             )
-            return response.json()
+            # Check response status and content type
+            if response.status_code != 200:
+                return {
+                    "ok": False,
+                    "error": f"Server returned status {response.status_code}: {response.text[:200]}",
+                }
+            
+            # Check if response has content
+            if not response.text or not response.text.strip():
+                return {
+                    "ok": False,
+                    "error": "Server returned empty response",
+                }
+            
+            # Try to parse JSON
+            try:
+                return response.json()
+            except ValueError as e:
+                # Response is not valid JSON
+                return {
+                    "ok": False,
+                    "error": f"Invalid JSON response: {str(e)}. Response: {response.text[:200]}",
+                }
+        except requests.exceptions.RequestException as e:
+            return {"ok": False, "error": f"Request failed: {str(e)}"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

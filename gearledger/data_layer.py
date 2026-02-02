@@ -108,7 +108,7 @@ def _lookup_catalog_for_network(
     """
     Look up catalog data for network modes.
 
-    In server mode, checks for in-memory uploaded catalog first.
+    In server mode, ALWAYS checks for in-memory uploaded catalog first (even if catalog_path is provided).
     Falls back to file path if no in-memory catalog is available.
     """
     try:
@@ -122,23 +122,33 @@ def _lookup_catalog_for_network(
             from .server import get_server
 
             server = get_server()
-            if server and server.is_running():
-                catalog_bytes = server.get_uploaded_catalog_data()
-                if catalog_bytes:
-                    print(
-                        f"[DATA_LAYER] Using in-memory uploaded catalog for lookup (size: {len(catalog_bytes)} bytes)"
-                    )
+            if server:
+                if server.is_running():
+                    catalog_bytes = server.get_uploaded_catalog_data()
+                    if catalog_bytes:
+                        print(
+                            f"[DATA_LAYER] Using in-memory uploaded catalog for lookup (size: {len(catalog_bytes)} bytes)"
+                        )
+                    else:
+                        print(
+                            "[DATA_LAYER] No in-memory catalog, will use file path if provided"
+                        )
                 else:
-                    print(
-                        f"[DATA_LAYER] No in-memory catalog, will use file path if provided"
-                    )
+                    print("[DATA_LAYER] Server instance found but not running")
+            else:
+                print("[DATA_LAYER] Server instance not found via get_server()")
 
-        # Use in-memory catalog if available, otherwise use file path
+        # ALWAYS prioritize in-memory catalog in server mode, even if catalog_path is provided
+        # This ensures the server uses the uploaded catalog instead of the file
         if catalog_bytes is not None:
-            print(f"[DATA_LAYER] Looking up {artikul} in in-memory catalog")
+            print(
+                f"[DATA_LAYER] Looking up {artikul} in in-memory catalog (ignoring catalog_path={catalog_path})"
+            )
             data = _lookup_catalog_data(artikul, catalog_bytes=catalog_bytes)
         elif catalog_path and os.path.exists(catalog_path):
-            print(f"[DATA_LAYER] Looking up {artikul} in catalog file: {catalog_path}")
+            print(
+                f"[DATA_LAYER] No in-memory catalog available, looking up {artikul} in catalog file: {catalog_path}"
+            )
             data = _lookup_catalog_data(artikul, catalog_path=catalog_path)
         else:
             print(
@@ -240,12 +250,13 @@ def _record_to_database(
     print(f"[DATA_LAYER] Database path: {db.db_path}")
 
     # Look up catalog data (even if catalog_path is empty, we still write the result)
-    # In server mode, will use in-memory uploaded catalog if available
+    # In server mode, ALWAYS prioritize in-memory uploaded catalog, even if catalog_path is provided
     print(f"[DATA_LAYER] Catalog path for lookup: {catalog_path}")
 
-    # In server mode, also check for in-memory catalog if catalog_path is empty
+    # In server mode, ALWAYS check for in-memory catalog first (regardless of catalog_path)
+    # This ensures the server uses the uploaded catalog instead of the file
     mode = get_network_mode()
-    if mode == "server" and (not catalog_path or catalog_path == ""):
+    if mode == "server":
         from .server import get_server
 
         server = get_server()
@@ -253,10 +264,16 @@ def _record_to_database(
             catalog_bytes = server.get_uploaded_catalog_data()
             if catalog_bytes:
                 print(
-                    f"[DATA_LAYER] Using in-memory uploaded catalog (size: {len(catalog_bytes)} bytes)"
+                    f"[DATA_LAYER] Server mode: Found in-memory catalog (size: {len(catalog_bytes)} bytes), will use it instead of file path"
                 )
+                # Override catalog_path to empty to force use of in-memory catalog
+                catalog_path = ""
             else:
-                print(f"[DATA_LAYER] No in-memory catalog, catalog_path is empty")
+                print(
+                    "[DATA_LAYER] Server mode: No in-memory catalog available, will use file path if provided"
+                )
+        else:
+            print("[DATA_LAYER] Server mode: Server instance not found or not running")
 
     brand = ""
     description = ""
@@ -271,10 +288,10 @@ def _record_to_database(
         print(f"[DATA_LAYER] Catalog data found: brand={brand}, price={sale_price}")
     else:
         print(
-            f"[DATA_LAYER] WARNING: No catalog data found (no uploaded catalog or file path)"
+            "[DATA_LAYER] WARNING: No catalog data found (no uploaded catalog or file path)"
         )
         print(
-            f"[DATA_LAYER] Will write result without catalog data (brand/price will be empty)"
+            "[DATA_LAYER] Will write result without catalog data (brand/price will be empty)"
         )
 
     try:

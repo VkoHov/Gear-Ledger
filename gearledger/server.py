@@ -195,19 +195,34 @@ class GearLedgerServer:
 
                 try:
                     # Send initial connection event
-                    yield f"data: {json.dumps({'type': 'connected', 'version': self._data_version})}\n\n"
+                    try:
+                        yield f"data: {json.dumps({'type': 'connected', 'version': self._data_version})}\n\n"
+                    except OSError:
+                        # Client disconnected immediately, exit silently
+                        return
 
                     # Keep connection alive and send events
                     while True:
                         try:
                             # Wait for event with timeout to keep connection alive
                             event = client_queue.get(timeout=30)
-                            yield f"data: {json.dumps(event)}\n\n"
+                            try:
+                                yield f"data: {json.dumps(event)}\n\n"
+                            except OSError:
+                                # Client disconnected, exit silently
+                                break
                         except queue.Empty:
                             # Send keepalive ping
-                            yield ": keepalive\n\n"
+                            try:
+                                yield ": keepalive\n\n"
+                            except OSError:
+                                # Client disconnected, exit silently
+                                break
                 except GeneratorExit:
-                    # Client disconnected
+                    # Client disconnected normally
+                    pass
+                except OSError:
+                    # Client disconnected unexpectedly, exit silently
                     pass
                 finally:
                     # Remove client from list

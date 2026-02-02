@@ -106,8 +106,62 @@ class ServerBroadcaster:
             # Broadcast on each interface
             # Log once on startup, then reduce verbosity
             logged_startup = False
+            # Track failed sockets to remove them
+            failed_sockets = {}
+            last_error_log = {}  # Rate limit error messages
+            error_log_interval = 30  # Log errors at most once per 30 seconds
+
             while self._running:
                 try:
+                    # Remove failed sockets that have been failing for too long
+                    current_time = time.time()
+                    sockets_to_remove = []
+                    for (sock, ip), fail_time in failed_sockets.items():
+                        if (
+                            current_time - fail_time > 60
+                        ):  # Remove after 60 seconds of failures
+                            sockets_to_remove.append((sock, ip))
+
+                    for sock, ip in sockets_to_remove:
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+                        sockets.remove((sock, ip))
+                        failed_sockets.pop((sock, ip), None)
+                        last_error_log.pop(ip, None)
+                        print(f"[DISCOVERY] Removed failed interface: {ip}")
+
+                    if not sockets:
+                        print(
+                            "[DISCOVERY] No working interfaces, will retry network detection"
+                        )
+                        time.sleep(BROADCAST_INTERVAL)
+                        # Re-detect network interfaces
+                        try:
+                            local_ips = self._get_all_local_ips()
+                            for ip in local_ips:
+                                # Check if we already have a socket for this IP
+                                if not any(sock_ip == ip for _, sock_ip in sockets):
+                                    try:
+                                        sock = socket.socket(
+                                            socket.AF_INET, socket.SOCK_DGRAM
+                                        )
+                                        sock.setsockopt(
+                                            socket.SOL_SOCKET, socket.SO_BROADCAST, 1
+                                        )
+                                        sock.setsockopt(
+                                            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+                                        )
+                                        sock.bind((ip, 0))
+                                        sockets.append((sock, ip))
+                                        print(f"[DISCOVERY] Added interface: {ip}")
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                        continue
+
                     for sock, ip in sockets:
                         try:
                             # Get broadcast address for this network
@@ -119,16 +173,52 @@ class ServerBroadcaster:
                                 print(
                                     f"[DISCOVERY] Broadcasting server presence from {ip}"
                                 )
+                            # Clear failure tracking on success
+                            failed_sockets.pop((sock, ip), None)
+                        except (OSError, socket.error) as e:
+                            # Track failed socket
+                            if (sock, ip) not in failed_sockets:
+                                failed_sockets[(sock, ip)] = current_time
+
+                            # Rate limit error messages (log at most once per 30 seconds per IP)
+                            if (
+                                ip not in last_error_log
+                                or (current_time - last_error_log[ip])
+                                > error_log_interval
+                            ):
+                                if self._running:
+                                    # Only log specific errors, not all of them
+                                    err_msg = str(e)
+                                    if (
+                                        "Can't assign requested address" not in err_msg
+                                        or ip not in last_error_log
+                                    ):
+                                        print(
+                                            f"[DISCOVERY] Broadcast error on {ip}: {e}"
+                                        )
+                                    last_error_log[ip] = current_time
                         except Exception as e:
-                            if self._running:
-                                print(f"[DISCOVERY] Broadcast error on {ip}: {e}")
+                            # Track failed socket
+                            if (sock, ip) not in failed_sockets:
+                                failed_sockets[(sock, ip)] = current_time
+
+                            # Rate limit error messages
+                            if (
+                                ip not in last_error_log
+                                or (current_time - last_error_log[ip])
+                                > error_log_interval
+                            ):
+                                if self._running:
+                                    print(f"[DISCOVERY] Broadcast error on {ip}: {e}")
+                                    last_error_log[ip] = current_time
+
                     if not logged_startup:
                         logged_startup = True
                     time.sleep(BROADCAST_INTERVAL)
                 except Exception as e:
                     if self._running:
                         print(f"[DISCOVERY] Broadcast error: {e}")
-                    break
+                    time.sleep(BROADCAST_INTERVAL)  # Continue instead of breaking
         except Exception as e:
             print(f"[DISCOVERY] Broadcast setup error: {e}")
         finally:

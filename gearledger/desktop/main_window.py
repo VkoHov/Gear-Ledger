@@ -239,20 +239,8 @@ class MainWindow(QWidget):
         # Auto-set uploaded catalog if server is running but no catalog is selected
         QTimer.singleShot(200, self._auto_set_uploaded_catalog)
 
-        # Initialize SSE connection and sync catalog from server on startup if in client mode
-        QTimer.singleShot(300, self._initialize_sync_version)
-        QTimer.singleShot(400, self._update_sse_connection)  # Start SSE connection
-        QTimer.singleShot(
-            500,
-            lambda: (
-                self._sync_catalog_from_server(),
-                (
-                    self.settings_widget.update_catalog_ui_for_mode()
-                    if hasattr(self, "settings_widget")
-                    else None
-                ),
-            ),
-        )
+        # Initialize client connection sequentially on startup if in client mode
+        QTimer.singleShot(300, self._initialize_client_connection)
 
     def _set_window_icon(self):
         """Set the window icon from icon.ico or icon.png file if available."""
@@ -716,6 +704,8 @@ class MainWindow(QWidget):
         self._sse_client: Optional[Any] = None
         # Flag to prevent concurrent catalog sync requests
         self._syncing_catalog = False
+        # Flag to track if client is fully initialized (to avoid re-initialization on reconnection)
+        self._client_initialized = False
         # Start SSE connection in client mode (will be updated when mode changes)
         self._update_sse_connection()
 
@@ -1249,30 +1239,23 @@ class MainWindow(QWidget):
             self._syncing_catalog = False
 
     def _update_sse_connection(self):
-        """Start/stop SSE connection based on network mode."""
+        """
+        Start/stop SSE connection based on network mode.
+
+        Note: This method is kept for backward compatibility but now uses
+        the sequential initialization flow via _initialize_client_connection().
+        """
         from gearledger.data_layer import get_network_mode
-        from gearledger.api_client import get_client
 
         mode = get_network_mode()
         if mode == "client":
-            # In client mode, connect to SSE stream for real-time events
-            client = get_client()
-            if client and client.is_connected() and not self._sse_client:
-                server_url = client.server_url
-                print(f"[MAIN_WINDOW] Starting SSE connection to {server_url}")
-
-                # Create and start SSE client
-                self._sse_client = SSEClientThread(server_url, timeout=10)
-                self._sse_client.catalog_uploaded.connect(self._on_sse_catalog_uploaded)
-                self._sse_client.results_changed.connect(self._on_sse_results_changed)
-                self._sse_client.connected.connect(self._on_sse_connected)
-                self._sse_client.disconnected.connect(self._on_sse_disconnected)
-                self._sse_client.error_occurred.connect(self._on_sse_error)
-                self._sse_client.start()
+            # Use the new sequential initialization
+            self._initialize_client_connection()
         else:
             # In server/standalone mode, stop SSE connection
             if self._sse_client:
                 print("[MAIN_WINDOW] Stopping SSE connection (not in client mode)")
+                self.append_logs(["🔌 Disconnecting from server..."])
                 self._sse_client.stop()
                 self._sse_client = None
 
@@ -1295,7 +1278,15 @@ class MainWindow(QWidget):
 
     def _on_sse_catalog_uploaded(self, event: dict):
         """Handle SSE catalog uploaded event."""
+        filename = event.get("filename", "catalog")
+        size = event.get("size", 0)
         print(f"[MAIN_WINDOW] 🔄 Catalog uploaded event received: {event}")
+
+        # Show user-friendly message
+        self.append_logs(
+            [f"📦 New catalog received from server: {filename} ({size:,} bytes)"]
+        )
+
         self._sync_version = event.get("version", self._sync_version)
         # Sync catalog from server
         self._sync_catalog_from_server()
@@ -1307,21 +1298,41 @@ class MainWindow(QWidget):
         """Handle SSE results changed event."""
         print(f"[MAIN_WINDOW] 🔄 Results changed event received: {event}")
         self._sync_version = event.get("version", self._sync_version)
+        # Show user-friendly message
+        self.append_logs(["🔄 Server results updated - refreshing..."])
         # Refresh results pane to show updated data
         QTimer.singleShot(150, self.results_pane.refresh)
 
     def _on_sse_connected(self):
-        """Handle SSE connection established."""
-        print("[MAIN_WINDOW] ✓ SSE connection established")
+        """Handle SSE connection established (for reconnections after initial setup)."""
+        print("[MAIN_WINDOW] ✓ SSE connection re-established")
+        # Show user-friendly message for reconnections
+        self.append_logs(
+            [
+                "✅ Real-time sync reconnected",
+                "   Receiving updates from server again",
+            ]
+        )
 
     def _on_sse_disconnected(self):
         """Handle SSE connection lost."""
         print("[MAIN_WINDOW] ✗ SSE connection lost, will attempt to reconnect")
+        # Show user-friendly message
+        self.append_logs(
+            [
+                "⚠️ Connection lost - attempting to reconnect...",
+                "   Updates may be delayed until connection is restored",
+            ]
+        )
         # SSE client will automatically retry in background thread
 
     def _on_sse_error(self, error: str):
         """Handle SSE error."""
         print(f"[MAIN_WINDOW] SSE error: {error}")
+        # Only show error message for unexpected errors
+        # Timeouts and connection errors are handled by disconnected signal
+        if "Unexpected error" in error:
+            self.append_logs([f"❌ SSE error: {error}"])
         # SSE client will automatically retry in background thread
 
     def _on_server_data_changed(self):
@@ -1343,15 +1354,157 @@ class MainWindow(QWidget):
         self.results_pane.update_refresh_button_visibility()
         # Update network status label
         self._update_network_status()
-        # Update SSE connection based on mode
-        self._update_sse_connection()
-        # Update catalog UI and sync catalog if switching to client mode
+
+        if mode == "client":
+            # Initialize client connection sequentially
+            self._initialize_client_connection()
+        else:
+            # In server/standalone mode, stop SSE connection
+            if self._sse_client:
+                self.append_logs(["🔌 Disconnecting from server..."])
+                self._sse_client.stop()
+                self._sse_client = None
+            # Reset initialization flag
+            self._client_initialized = False
+            # Update catalog UI
+            if hasattr(self, "settings_widget"):
+                self.settings_widget.update_catalog_ui_for_mode()
+
+    def _initialize_client_connection(self):
+        """Initialize client connection sequentially: connect, SSE, sync version, catalog."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.api_client import get_client
+
+        mode = get_network_mode()
+        if mode != "client":
+            return
+
+        client = get_client()
+        if not client or not client.is_connected():
+            self.append_logs(["⚠️ Client not connected - cannot initialize"])
+            return
+
+        # Step 1: Show connection message
+        self.append_logs(
+            ["🔌 Initializing client connection...", f"   Server: {client.server_url}"]
+        )
+
+        # Step 2: Initialize sync version
+        QTimer.singleShot(100, lambda: self._initialize_sync_version_step())
+
+    def _initialize_sync_version_step(self):
+        """Step 2: Initialize sync version, then proceed to SSE connection."""
+        from gearledger.api_client import get_client
+
+        client = get_client()
+        if not client or not client.is_connected():
+            return
+
+        try:
+            self._sync_version = client.get_sync_version()
+            print(f"[MAIN_WINDOW] Initialized sync version: {self._sync_version}")
+            self.append_logs([f"✓ Sync version initialized: {self._sync_version}"])
+        except Exception as e:
+            print(f"[MAIN_WINDOW] Error initializing sync version: {e}")
+            self.append_logs([f"⚠️ Failed to get sync version: {e}"])
+
+        # Step 3: Start SSE connection
+        QTimer.singleShot(100, lambda: self._start_sse_connection_step())
+
+    def _start_sse_connection_step(self):
+        """Step 3: Start SSE connection and wait for it to be established."""
+        from gearledger.api_client import get_client
+
+        client = get_client()
+        if not client or not client.is_connected():
+            return
+
+        # Only start if not already started
+        if self._sse_client:
+            # Already connected, proceed to catalog sync
+            QTimer.singleShot(100, lambda: self._sync_catalog_step())
+            return
+
+        server_url = client.server_url
+        print(f"[MAIN_WINDOW] Starting SSE connection to {server_url}")
+
+        # Show user-friendly message
+        self.append_logs(
+            [
+                "🔌 Connecting to server for real-time updates...",
+                f"   Server: {server_url}",
+            ]
+        )
+
+        # Create and start SSE client
+        self._sse_client = SSEClientThread(server_url, timeout=10)
+        self._sse_client.catalog_uploaded.connect(self._on_sse_catalog_uploaded)
+        self._sse_client.results_changed.connect(self._on_sse_results_changed)
+        self._sse_client.connected.connect(self._on_sse_connected_and_ready)
+        self._sse_client.disconnected.connect(self._on_sse_disconnected)
+        self._sse_client.error_occurred.connect(self._on_sse_error)
+        self._sse_client.start()
+
+        # Wait for SSE connection to be established before proceeding
+        # The _on_sse_connected_and_ready will continue the initialization
+
+    def _on_sse_connected_and_ready(self):
+        """Called when SSE is connected - continue with catalog sync if initializing."""
+        print("[MAIN_WINDOW] ✓ SSE connection established")
+
+        # Check if this is initial connection or reconnection
+        if not self._client_initialized:
+            # Initial connection - continue with sequential initialization
+            # Show user-friendly message
+            self.append_logs(
+                [
+                    "✅ Real-time sync connected",
+                    "   You will receive instant updates when server data changes",
+                ]
+            )
+            # Step 4: Sync catalog
+            QTimer.singleShot(200, lambda: self._sync_catalog_step())
+        else:
+            # Reconnection after being disconnected - just show reconnected message
+            self.append_logs(
+                [
+                    "✅ Real-time sync reconnected",
+                    "   Receiving updates from server again",
+                ]
+            )
+
+    def _sync_catalog_step(self):
+        """Step 4: Sync catalog from server, then mark client as ready."""
+        from gearledger.api_client import get_client
+
+        client = get_client()
+        if not client or not client.is_connected():
+            return
+
+        self.append_logs(["📥 Syncing catalog from server..."])
+
+        # Sync catalog (this will update UI when done)
+        self._sync_catalog_from_server()
+
+        # Step 5: Update UI and mark as ready
+        QTimer.singleShot(500, lambda: self._finalize_client_connection())
+
+    def _finalize_client_connection(self):
+        """Step 5: Finalize client connection - update UI and mark as ready."""
+        # Update catalog UI
         if hasattr(self, "settings_widget"):
             self.settings_widget.update_catalog_ui_for_mode()
-        if mode == "client":
-            # Initialize sync version and sync catalog when switching to client mode
-            QTimer.singleShot(300, self._initialize_sync_version)
-            QTimer.singleShot(500, self._sync_catalog_from_server)
+
+        # Mark client as initialized
+        self._client_initialized = True
+
+        # Show ready message
+        self.append_logs(
+            [
+                "✅ Client connection initialized successfully",
+                "   Ready to receive updates from server",
+            ]
+        )
 
     def _update_network_status(self):
         """Update the network status label showing current mode and connection status."""

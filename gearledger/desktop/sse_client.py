@@ -87,17 +87,19 @@ class SSEClientThread(QThread):
             except requests.exceptions.Timeout:
                 if not self._should_stop:
                     print("[SSE_CLIENT] Connection timeout, will retry")
-                    self.error_occurred.emit("Connection timeout")
+                    # Don't emit error for timeout - disconnected signal will handle it
                     self.msleep(5000)  # Wait 5 seconds before retry
             except requests.exceptions.ConnectionError as e:
                 if not self._should_stop:
                     print(f"[SSE_CLIENT] Connection error: {e}, will retry")
-                    self.error_occurred.emit(f"Connection error: {e}")
+                    # Don't emit error for connection errors - disconnected signal will handle it
                     self.msleep(5000)  # Wait 5 seconds before retry
             except Exception as e:
                 if not self._should_stop:
                     print(f"[SSE_CLIENT] Error: {e}, will retry")
-                    self.error_occurred.emit(f"Error: {e}")
+                    # Only emit error for unexpected errors
+                    if "Read timed out" not in str(e) and "Connection" not in str(e):
+                        self.error_occurred.emit(f"Unexpected error: {e}")
                     self.msleep(5000)  # Wait 5 seconds before retry
         
         self._running = False

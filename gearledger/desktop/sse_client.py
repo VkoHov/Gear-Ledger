@@ -19,13 +19,13 @@ class SSEClientThread(QThread):
     disconnected = pyqtSignal()  # Emitted when connection is lost
     error_occurred = pyqtSignal(str)  # Emitted when an error occurs
 
-    def __init__(self, server_url: str, timeout: int = 10):
+    def __init__(self, server_url: str, timeout: int = 60):
         """
         Initialize SSE client.
 
         Args:
             server_url: Server URL (e.g., "http://192.168.1.100:8080")
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (default 60, must be longer than server keepalive interval of 30s)
         """
         super().__init__()
         self.server_url = server_url.rstrip("/")

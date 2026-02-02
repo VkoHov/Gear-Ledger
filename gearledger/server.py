@@ -205,14 +205,15 @@ class GearLedgerServer:
                     while True:
                         try:
                             # Wait for event with timeout to keep connection alive
-                            event = client_queue.get(timeout=30)
+                            # Use 20 seconds to send keepalive more frequently (before client timeout)
+                            event = client_queue.get(timeout=20)
                             try:
                                 yield f"data: {json.dumps(event)}\n\n"
                             except OSError:
                                 # Client disconnected, exit silently
                                 break
                         except queue.Empty:
-                            # Send keepalive ping
+                            # Send keepalive ping every 20 seconds to prevent client timeout
                             try:
                                 yield ": keepalive\n\n"
                             except OSError:

@@ -1503,7 +1503,8 @@ class MainWindow(QWidget):
         )
 
         # Create and start SSE client
-        self._sse_client = SSEClientThread(server_url, timeout=10)
+        # Use 60 second timeout (longer than server keepalive interval of 20 seconds)
+        self._sse_client = SSEClientThread(server_url, timeout=60)
         self._sse_client.catalog_uploaded.connect(self._on_sse_catalog_uploaded)
         self._sse_client.results_changed.connect(self._on_sse_results_changed)
         self._sse_client.connected.connect(self._on_sse_connected_and_ready)

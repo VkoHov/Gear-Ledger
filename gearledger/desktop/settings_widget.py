@@ -711,7 +711,21 @@ class SettingsWidget(QGroupBox):
             widget.setEnabled(enabled)
 
     def validate_catalog(self) -> bool:
-        """Validate that catalog file exists."""
+        """Validate that catalog file exists or in-memory catalog is available."""
+        from gearledger.data_layer import get_network_mode
+        from gearledger.server import get_server
+
+        mode = get_network_mode()
+
+        # In server mode, check for in-memory catalog first
+        if mode == "server":
+            server = get_server()
+            if server and server.is_running():
+                if server.get_uploaded_catalog_data() is not None:
+                    # In-memory catalog is available
+                    return True
+
+        # Check for file-based catalog
         catalog = self.get_catalog_path()
         return bool(catalog and os.path.exists(catalog))
 

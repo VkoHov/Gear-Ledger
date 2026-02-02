@@ -2022,8 +2022,6 @@ class MainWindow(QWidget):
             self.poll_main_timer.stop()
         if hasattr(self, "poll_fuzzy_timer"):
             self.poll_fuzzy_timer.stop()
-        if hasattr(self, "sync_timer"):
-            self.sync_timer.stop()
         # Stop sync check timer to prevent network requests during shutdown
         if hasattr(self, "_sync_check_timer") and self._sync_check_timer.isActive():
             self._sync_check_timer.stop()

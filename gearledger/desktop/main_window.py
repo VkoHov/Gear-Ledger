@@ -1158,6 +1158,7 @@ class MainWindow(QWidget):
         from gearledger.data_layer import get_network_mode
         from gearledger.api_client import get_client
         from gearledger.desktop.settings_manager import APP_DIR
+        import requests
 
         mode = get_network_mode()
         if mode != "client":
@@ -1229,6 +1230,17 @@ class MainWindow(QWidget):
                 if hasattr(self, "settings_widget"):
                     self.settings_widget.update_catalog_ui_for_mode()
                     print("[MAIN_WINDOW] Catalog UI updated (no download needed)")
+        except KeyboardInterrupt:
+            # App is being terminated, silently exit
+            return
+        except (
+            requests.exceptions.RequestException,
+            ConnectionError,
+            TimeoutError,
+        ) as e:
+            # Network errors - server may be down or unreachable
+            # Don't spam logs during shutdown
+            pass
         except Exception as e:
             print(f"[MAIN_WINDOW] Error syncing catalog: {e}")
         finally:
@@ -1273,6 +1285,7 @@ class MainWindow(QWidget):
         """Check server sync version and sync catalog if changed (client mode only)."""
         from gearledger.data_layer import get_network_mode
         from gearledger.api_client import get_client
+        import requests
 
         mode = get_network_mode()
         if mode != "client":
@@ -1294,7 +1307,19 @@ class MainWindow(QWidget):
                 # Update catalog UI to show new catalog status
                 if hasattr(self, "settings_widget"):
                     self.settings_widget.update_catalog_ui_for_mode()
+        except KeyboardInterrupt:
+            # App is being terminated, silently exit
+            return
+        except (
+            requests.exceptions.RequestException,
+            ConnectionError,
+            TimeoutError,
+        ) as e:
+            # Network errors - server may be down or unreachable
+            # Don't spam logs, just silently handle
+            pass
         except Exception as e:
+            # Other errors - log but don't crash
             print(f"[MAIN_WINDOW] Error checking sync version: {e}")
 
     def _on_server_data_changed(self):
@@ -1999,5 +2024,8 @@ class MainWindow(QWidget):
             self.poll_fuzzy_timer.stop()
         if hasattr(self, "sync_timer"):
             self.sync_timer.stop()
+        # Stop sync check timer to prevent network requests during shutdown
+        if hasattr(self, "_sync_check_timer") and self._sync_check_timer.isActive():
+            self._sync_check_timer.stop()
 
         super().closeEvent(event)

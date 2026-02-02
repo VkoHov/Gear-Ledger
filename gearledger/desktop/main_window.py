@@ -1316,14 +1316,15 @@ class MainWindow(QWidget):
                 print(f"[MAIN_WINDOW] Error initializing sync version: {e}")
 
     def _on_sse_catalog_uploaded(self, event: dict):
-        """Handle SSE catalog uploaded event."""
+        """Handle SSE catalog uploaded event (can be new upload or existing catalog on connection)."""
         filename = event.get("filename", "catalog")
         size = event.get("size", 0)
         print(f"[MAIN_WINDOW] 🔄 Catalog uploaded event received: {event}")
 
-        # Show user-friendly message
+        # Check if this is from initial connection (event might have a flag, or we can infer from context)
+        # For now, we'll use a generic message that works for both cases
         self.append_logs(
-            [f"📦 New catalog received from server: {filename} ({size:,} bytes)"]
+            [f"📦 Catalog available on server: {filename} ({size:,} bytes)"]
         )
 
         self._sync_version = event.get("version", self._sync_version)

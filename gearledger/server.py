@@ -194,9 +194,21 @@ class GearLedgerServer:
                     )
 
                 try:
-                    # Send initial connection event
+                    # Send initial connection event with catalog info if available
+                    connection_event = {
+                        "type": "connected",
+                        "version": self._data_version,
+                    }
+                    # Include catalog info if catalog is already uploaded
+                    if self._catalog_data is not None:
+                        connection_event["catalog"] = {
+                            "filename": self._catalog_filename,
+                            "size": len(self._catalog_data),
+                            "version": self._data_version,
+                            "exists": True,
+                        }
                     try:
-                        yield f"data: {json.dumps({'type': 'connected', 'version': self._data_version})}\n\n"
+                        yield f"data: {json.dumps(connection_event)}\n\n"
                     except OSError:
                         # Client disconnected immediately, exit silently
                         return

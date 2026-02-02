@@ -1321,18 +1321,27 @@ class MainWindow(QWidget):
         size = event.get("size", 0)
         print(f"[MAIN_WINDOW] 🔄 Catalog uploaded event received: {event}")
 
-        # Check if this is from initial connection (event might have a flag, or we can infer from context)
-        # For now, we'll use a generic message that works for both cases
+        # Show user-friendly message
         self.append_logs(
             [f"📦 Catalog available on server: {filename} ({size:,} bytes)"]
         )
 
         self._sync_version = event.get("version", self._sync_version)
-        # Force sync catalog from server (don't check modification time, always download)
-        self._sync_catalog_from_server(force=True)
-        # Update catalog UI
+
+        # Update catalog UI immediately with info from event (before downloading)
         if hasattr(self, "settings_widget"):
-            self.settings_widget.update_catalog_ui_for_mode()
+            # Pass catalog info directly to avoid extra API call
+            catalog_info = {
+                "filename": filename,
+                "size": size,
+                "exists": True,
+                "ok": True,
+            }
+            self.settings_widget.update_catalog_ui_for_mode(catalog_info=catalog_info)
+
+        # Force sync catalog from server (don't check modification time, always download)
+        # This will download the catalog file
+        self._sync_catalog_from_server(force=True)
 
     def _on_sse_results_changed(self, event: dict):
         """Handle SSE results changed event."""

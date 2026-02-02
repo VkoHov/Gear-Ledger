@@ -129,6 +129,9 @@ class SSEClientThread(QThread):
                     if "catalog" in event:
                         # Server has a catalog, emit as catalog_uploaded event
                         # so the UI can update to show the catalog filename
+                        print(
+                            f"[SSE_CLIENT] Connected event includes catalog info: {event['catalog']}"
+                        )
                         catalog_event = {
                             "type": "catalog_uploaded",
                             "filename": event["catalog"].get("filename", "catalog"),
@@ -137,7 +140,14 @@ class SSEClientThread(QThread):
                                 "version", event.get("version", 0)
                             ),
                         }
+                        print(
+                            f"[SSE_CLIENT] Emitting catalog_uploaded event: {catalog_event}"
+                        )
                         self.catalog_uploaded.emit(catalog_event)
+                    else:
+                        print(
+                            "[SSE_CLIENT] Connected event received, but no catalog info"
+                        )
                 else:
                     print(f"[SSE_CLIENT] Unknown event type: {event_type}")
         except json.JSONDecodeError as e:

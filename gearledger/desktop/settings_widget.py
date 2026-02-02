@@ -576,8 +576,13 @@ class SettingsWidget(QGroupBox):
         except Exception as e:
             print(f"[SETTINGS] Error uploading catalog automatically: {e}")
 
-    def update_catalog_ui_for_mode(self):
-        """Update catalog UI based on network mode."""
+    def update_catalog_ui_for_mode(self, catalog_info: dict = None):
+        """Update catalog UI based on network mode.
+
+        Args:
+            catalog_info: Optional catalog info dict with 'filename', 'size', 'exists' keys.
+                         If provided, uses this instead of making API call.
+        """
         from gearledger.data_layer import get_network_mode
         from gearledger.api_client import get_client
 
@@ -591,32 +596,49 @@ class SettingsWidget(QGroupBox):
             self.btn_catalog.setVisible(False)
             self.catalog_info_label.setVisible(True)
 
-            # Update catalog status from server
-            client = get_client()
-            if client and client.is_connected():
-                info = client.get_catalog_info()
-                if info.get("ok") and info.get("exists"):
-                    filename = info.get("filename", "catalog.xlsx")
-                    size = info.get("size", 0)
-                    size_mb = size / (1024 * 1024) if size > 0 else 0
-                    self.catalog_info_label.setText(
-                        f"📋 Catalog from server: {filename} ({size_mb:.2f} MB)"
-                    )
-                    self.catalog_info_label.setStyleSheet(
-                        "color: #27ae60; font-size: 11px; padding: 4px;"
-                    )
-                else:
-                    self.catalog_info_label.setText(
-                        "📋 No catalog on server. Please upload on server."
-                    )
-                    self.catalog_info_label.setStyleSheet(
-                        "color: #7f8c8d; font-size: 11px; padding: 4px;"
-                    )
-            else:
-                self.catalog_info_label.setText("📋 Not connected to server")
-                self.catalog_info_label.setStyleSheet(
-                    "color: #e74c3c; font-size: 11px; padding: 4px;"
+            # Use provided catalog info or fetch from server
+            if catalog_info and catalog_info.get("exists"):
+                # Use provided catalog info (from SSE event)
+                filename = catalog_info.get("filename", "catalog.xlsx")
+                size = catalog_info.get("size", 0)
+                size_mb = size / (1024 * 1024) if size > 0 else 0
+                self.catalog_info_label.setText(
+                    f"📋 Catalog from server: {filename} ({size_mb:.2f} MB)"
                 )
+                self.catalog_info_label.setStyleSheet(
+                    "color: #27ae60; font-size: 11px; padding: 4px;"
+                )
+            else:
+                # Fetch catalog status from server (fallback if no info provided)
+                client = get_client()
+                if client and client.is_connected():
+                    if not catalog_info:  # Only make API call if we don't have info
+                        info = client.get_catalog_info()
+                    else:
+                        info = catalog_info
+
+                    if info.get("ok") and info.get("exists"):
+                        filename = info.get("filename", "catalog.xlsx")
+                        size = info.get("size", 0)
+                        size_mb = size / (1024 * 1024) if size > 0 else 0
+                        self.catalog_info_label.setText(
+                            f"📋 Catalog from server: {filename} ({size_mb:.2f} MB)"
+                        )
+                        self.catalog_info_label.setStyleSheet(
+                            "color: #27ae60; font-size: 11px; padding: 4px;"
+                        )
+                    else:
+                        self.catalog_info_label.setText(
+                            "📋 No catalog on server. Please upload on server."
+                        )
+                        self.catalog_info_label.setStyleSheet(
+                            "color: #7f8c8d; font-size: 11px; padding: 4px;"
+                        )
+                else:
+                    self.catalog_info_label.setText("📋 Not connected to server")
+                    self.catalog_info_label.setStyleSheet(
+                        "color: #e74c3c; font-size: 11px; padding: 4px;"
+                    )
         else:
             # In server/standalone mode: show catalog selection, hide status
             if hasattr(self, "catalog_label"):

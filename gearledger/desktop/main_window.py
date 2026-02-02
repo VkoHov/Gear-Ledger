@@ -1946,12 +1946,13 @@ class MainWindow(QWidget):
         from gearledger.pipeline import run_fuzzy_match
         from gearledger.config import DEFAULT_MIN_FUZZY
 
-        catalog = self.settings_widget.get_catalog_path()
-        if not catalog or not os.path.exists(catalog):
+        if not self.settings_widget.validate_catalog():
             from PyQt6.QtWidgets import QMessageBox
 
             QMessageBox.critical(self, tr("error"), tr("choose_valid_catalog"))
             return
+
+        catalog = self.settings_widget.get_catalog_path()
 
         self.append_logs([tr("log_searching_manual_code", code=code)])
 
@@ -2041,12 +2042,13 @@ class MainWindow(QWidget):
         from gearledger.pipeline import run_fuzzy_match
         from gearledger.config import DEFAULT_MIN_FUZZY
 
-        catalog = self.settings_widget.get_catalog_path()
-        if not catalog or not os.path.exists(catalog):
+        if not self.settings_widget.validate_catalog():
             from PyQt6.QtWidgets import QMessageBox
 
             QMessageBox.critical(self, tr("error"), tr("choose_valid_catalog"))
             return
+
+        catalog = self.settings_widget.get_catalog_path()
 
         self.append_logs([tr("log_manual_entry", code=part_code, weight=weight)])
 
@@ -2187,13 +2189,16 @@ class MainWindow(QWidget):
             )
             return
 
-        if not catalog_path or not os.path.exists(catalog_path):
+        if not self.settings_widget.validate_catalog():
             QMessageBox.critical(
                 self,
                 tr("generate_invoice_title"),
                 tr("choose_valid_catalog_first"),
             )
             return
+
+        # Get catalog path (may be empty if using in-memory catalog)
+        catalog_path = self.settings_widget.get_catalog_path()
 
         # Validate weight price
         if not self.settings_widget.is_weight_price_valid():

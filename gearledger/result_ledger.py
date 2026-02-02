@@ -63,13 +63,36 @@ def record_match(
     description = ""
     catalog_price = 0  # Store catalog price separately from calculated price
 
-    if catalog_path and os.path.exists(catalog_path):
-        catalog_data = _lookup_catalog_data(artikul, catalog_path)
+    # Check for in-memory catalog in server mode
+    catalog_bytes = None
+    if not catalog_path or not os.path.exists(catalog_path):
+        from gearledger.data_layer import get_network_mode
+        mode = get_network_mode()
+        if mode == "server":
+            from gearledger.server import get_server
+            server = get_server()
+            if server and server.is_running():
+                catalog_bytes = server.get_uploaded_catalog_data()
+
+    if catalog_bytes is not None:
+        # Use in-memory catalog
+        catalog_data = _lookup_catalog_data(artikul, catalog_bytes=catalog_bytes)
         if catalog_data:
             brand = catalog_data.get("бренд", "")
             description = catalog_data.get("описание", "")
             catalog_price = catalog_data.get("цена", 0)
-            # Info: print what we found
+            print(
+                f"[INFO] Found catalog data for {artikul}: brand={brand}, catalog_price={catalog_price}"
+            )
+        else:
+            print(f"[INFO] No catalog data found for {artikul}")
+    elif catalog_path and os.path.exists(catalog_path):
+        # Use file-based catalog
+        catalog_data = _lookup_catalog_data(artikul, catalog_path=catalog_path)
+        if catalog_data:
+            brand = catalog_data.get("бренд", "")
+            description = catalog_data.get("описание", "")
+            catalog_price = catalog_data.get("цена", 0)
             print(
                 f"[INFO] Found catalog data for {artikul}: brand={brand}, catalog_price={catalog_price}"
             )
@@ -173,17 +196,39 @@ def record_match(
         return {"ok": False, "action": action, "path": path, "error": str(e)}
 
 
-def _lookup_catalog_data(artikul: str, catalog_path: str) -> Dict[str, any]:
-    """Look up additional data from catalog by artikul."""
+def _lookup_catalog_data(artikul: str, catalog_path: str = None, catalog_bytes: bytes = None) -> Dict[str, any]:
+    """
+    Look up additional data from catalog by artikul.
+    
+    Accepts either a file path (catalog_path) or in-memory bytes (catalog_bytes).
+    If both are provided, catalog_bytes takes precedence.
+    """
     try:
-        # Try to read with different engines for .xls and .xlsx files
-        try:
-            catalog_df = pd.read_excel(catalog_path, engine="openpyxl")
-        except:
+        # Read from bytes if provided, otherwise from file path
+        if catalog_bytes is not None:
+            from io import BytesIO
+            catalog_file = BytesIO(catalog_bytes)
+            # Try to read with different engines for .xls and .xlsx files
             try:
-                catalog_df = pd.read_excel(catalog_path, engine="xlrd")
+                catalog_df = pd.read_excel(catalog_file, engine="openpyxl")
             except:
-                catalog_df = pd.read_excel(catalog_path)
+                try:
+                    catalog_file.seek(0)  # Reset for next attempt
+                    catalog_df = pd.read_excel(catalog_file, engine="xlrd")
+                except:
+                    catalog_file.seek(0)  # Reset for next attempt
+                    catalog_df = pd.read_excel(catalog_file)
+        elif catalog_path:
+            # Try to read with different engines for .xls and .xlsx files
+            try:
+                catalog_df = pd.read_excel(catalog_path, engine="openpyxl")
+            except:
+                try:
+                    catalog_df = pd.read_excel(catalog_path, engine="xlrd")
+                except:
+                    catalog_df = pd.read_excel(catalog_path)
+        else:
+            return {}
 
         # Detect column names
         col_mapping = {}

@@ -447,9 +447,16 @@ class SettingsWidget(QGroupBox):
             self.on_manual_entry_requested(part_code, weight)
 
     def get_catalog_path(self) -> str:
-        """Get the current catalog file path."""
+        """
+        Get the current catalog file path.
+
+        In server mode with uploaded catalog, returns empty string (catalog is in memory).
+        In client mode, returns cached catalog path if available.
+        Otherwise returns local catalog path from settings.
+        """
         from gearledger.data_layer import get_network_mode
         from gearledger.api_client import get_client
+        from gearledger.server import get_server
         from gearledger.desktop.settings_manager import APP_DIR
 
         mode = get_network_mode()
@@ -470,7 +477,16 @@ class SettingsWidget(QGroupBox):
             # Fallback to local catalog if server catalog not available
             return self.catalog_edit.text().strip()
 
-        # In server/standalone mode, use local catalog
+        # In server mode, if catalog is uploaded (in memory), return empty string
+        # The data layer will automatically use the in-memory catalog
+        if mode == "server":
+            server = get_server()
+            if server and server.is_running():
+                if server.get_uploaded_catalog_data() is not None:
+                    # Catalog is in memory, return empty to indicate use in-memory catalog
+                    return ""
+
+        # In standalone mode or if no uploaded catalog, use local catalog
         return self.catalog_edit.text().strip()
 
     def _upload_catalog_to_server_auto(self, catalog_path: str):

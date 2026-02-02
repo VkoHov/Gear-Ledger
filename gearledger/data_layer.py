@@ -102,15 +102,34 @@ def _to_python_type(value):
     return value
 
 
-def _lookup_catalog_for_network(artikul: str, catalog_path: str) -> Dict[str, Any]:
-    """Look up catalog data for network modes."""
-    if not catalog_path or not os.path.exists(catalog_path):
-        return {}
-
+def _lookup_catalog_for_network(artikul: str, catalog_path: str = None) -> Dict[str, Any]:
+    """
+    Look up catalog data for network modes.
+    
+    In server mode, checks for in-memory uploaded catalog first.
+    Falls back to file path if no in-memory catalog is available.
+    """
     try:
         from .result_ledger import _lookup_catalog_data
-
-        data = _lookup_catalog_data(artikul, catalog_path)
+        
+        # Check if we're in server mode and have an uploaded catalog in memory
+        mode = get_network_mode()
+        catalog_bytes = None
+        
+        if mode == "server":
+            from .server import get_server
+            server = get_server()
+            if server and server.is_running():
+                catalog_bytes = server.get_uploaded_catalog_data()
+        
+        # Use in-memory catalog if available, otherwise use file path
+        if catalog_bytes is not None:
+            data = _lookup_catalog_data(artikul, catalog_bytes=catalog_bytes)
+        elif catalog_path and os.path.exists(catalog_path):
+            data = _lookup_catalog_data(artikul, catalog_path=catalog_path)
+        else:
+            return {}
+        
         # Convert numpy types to native Python types
         return {k: _to_python_type(v) for k, v in data.items()}
     except Exception as e:
@@ -202,20 +221,22 @@ def _record_to_database(
     print(f"[DATA_LAYER] Database path: {db.db_path}")
 
     # Look up catalog data (even if catalog_path is empty, we still write the result)
+    # In server mode, will use in-memory uploaded catalog if available
     print(f"[DATA_LAYER] Catalog path for lookup: {catalog_path}")
     brand = ""
     description = ""
     sale_price = 0.0
 
-    if catalog_path and os.path.exists(catalog_path):
-        catalog_data = _lookup_catalog_for_network(artikul, catalog_path)
+    # Try to look up catalog data (will use in-memory catalog in server mode if available)
+    catalog_data = _lookup_catalog_for_network(artikul, catalog_path)
+    if catalog_data:
         brand = catalog_data.get("бренд", "")
         description = catalog_data.get("описание", "")
         sale_price = catalog_data.get("цена", 0)
         print(f"[DATA_LAYER] Catalog data found: brand={brand}, price={sale_price}")
     else:
         print(
-            f"[DATA_LAYER] WARNING: Catalog path is empty or doesn't exist: {catalog_path}"
+            f"[DATA_LAYER] WARNING: No catalog data found (no uploaded catalog or file path)"
         )
         print(
             f"[DATA_LAYER] Will write result without catalog data (brand/price will be empty)"

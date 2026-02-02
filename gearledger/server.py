@@ -56,6 +56,11 @@ class GearLedgerServer:
         # Network discovery broadcaster
         self._broadcaster: Optional[ServerBroadcaster] = None
 
+        # In-memory catalog storage (no permanent file storage)
+        self._catalog_data: Optional[bytes] = None
+        self._catalog_filename: Optional[str] = None
+        self._catalog_upload_time: Optional[float] = None
+
         self._setup_routes()
 
     def _get_db(self) -> Database:
@@ -302,15 +307,13 @@ class GearLedgerServer:
         @self.app.route("/api/catalog/info", methods=["GET"])
         def get_catalog_info():
             """Get catalog metadata (filename, size, date)."""
-            catalog_path = self._get_catalog_path()
-            if catalog_path and os.path.exists(catalog_path):
-                stat = os.stat(catalog_path)
+            if self._catalog_data is not None:
                 return jsonify(
                     {
                         "ok": True,
-                        "filename": os.path.basename(catalog_path),
-                        "size": stat.st_size,
-                        "modified": stat.st_mtime,
+                        "filename": self._catalog_filename,
+                        "size": len(self._catalog_data),
+                        "modified": self._catalog_upload_time or time.time(),
                         "exists": True,
                     }
                 )
@@ -318,20 +321,26 @@ class GearLedgerServer:
 
         @self.app.route("/api/catalog", methods=["GET"])
         def get_catalog():
-            """Download the catalog file."""
-            catalog_path = self._get_catalog_path()
-            if catalog_path and os.path.exists(catalog_path):
-                return send_file(
-                    catalog_path,
-                    as_attachment=True,
-                    download_name=os.path.basename(catalog_path),
-                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            return jsonify({"ok": False, "error": "Catalog not found"}), 404
+            """Download the catalog file from memory."""
+            if self._catalog_data is None:
+                return jsonify({"ok": False, "error": "Catalog not found"}), 404
+
+            from io import BytesIO
+
+            # Create a BytesIO object from the in-memory catalog data
+            catalog_file = BytesIO(self._catalog_data)
+            catalog_file.seek(0)
+
+            return send_file(
+                catalog_file,
+                as_attachment=True,
+                download_name=self._catalog_filename or "catalog.xlsx",
+                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
         @self.app.route("/api/catalog", methods=["POST"])
         def upload_catalog():
-            """Upload a catalog file to the server."""
+            """Upload a catalog file to the server (stored in memory, not on disk)."""
             if "file" not in request.files:
                 return jsonify({"ok": False, "error": "No file provided"}), 400
 
@@ -340,25 +349,24 @@ class GearLedgerServer:
                 return jsonify({"ok": False, "error": "No file selected"}), 400
 
             try:
-                # Get catalog directory
-                catalog_dir = Path(APP_DIR) / "catalogs"
-                catalog_dir.mkdir(parents=True, exist_ok=True)
+                # Read file into memory
+                catalog_bytes = file.read()
+                filename = file.filename or "catalog.xlsx"
 
-                # Save uploaded file with timestamp
-                from datetime import datetime
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                # Preserve original extension
-                original_ext = os.path.splitext(file.filename)[1] or ".xlsx"
-                filename = f"catalog_{timestamp}{original_ext}"
-                catalog_path = catalog_dir / filename
+                # Store in memory only (no disk storage)
+                self._catalog_data = catalog_bytes
+                self._catalog_filename = filename
+                self._catalog_upload_time = time.time()
 
-                # Save the file
-                file.save(str(catalog_path))
-                print(f"[SERVER] Catalog file uploaded: {catalog_path}")
+                print(
+                    f"[SERVER] Catalog uploaded to memory: {filename} ({len(catalog_bytes)} bytes)"
+                )
 
                 # Increment data version to notify clients
                 self._data_version += 1
-                print(f"[SERVER] Catalog uploaded, data version now: {self._data_version}")
+                print(
+                    f"[SERVER] Catalog uploaded, data version now: {self._data_version}"
+                )
 
                 # Notify about data change (catalog uploaded)
                 if self.on_data_changed:
@@ -368,7 +376,7 @@ class GearLedgerServer:
                     {
                         "ok": True,
                         "filename": filename,
-                        "path": str(catalog_path),
+                        "size": len(catalog_bytes),
                         "version": self._data_version,
                     }
                 )
@@ -401,18 +409,20 @@ class GearLedgerServer:
             print(f"[ERROR] Failed to start server: {e}")
             return False
 
-    def _get_catalog_path(self) -> Optional[str]:
-        """Get path to stored catalog file."""
-        catalog_dir = Path(APP_DIR) / "catalogs"
-        catalog_dir.mkdir(parents=True, exist_ok=True)
+    def get_uploaded_catalog_data(self) -> Optional[bytes]:
+        """
+        Get in-memory catalog data (bytes) for server-side use.
 
-        # Look for the most recent catalog file (supports .xlsx, .xls)
-        catalog_files = list(catalog_dir.glob("catalog_*.*"))
-        # Filter to only Excel files
-        catalog_files = [f for f in catalog_files if f.suffix.lower() in [".xlsx", ".xls"]]
-        if catalog_files:
-            # Return most recently modified
-            return str(max(catalog_files, key=lambda p: p.stat().st_mtime))
+        Returns the catalog file as bytes, or None if no catalog is uploaded.
+        """
+        return self._catalog_data
+
+    def _get_catalog_path(self) -> Optional[str]:
+        """
+        Get path to stored catalog file (deprecated).
+
+        Catalogs are now stored in memory only. Returns None.
+        """
         return None
 
     def _start_stale_client_check(self):

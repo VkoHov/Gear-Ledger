@@ -1129,7 +1129,14 @@ class MainWindow(QWidget):
                 print("[MAIN_WINDOW] Registered data changed callback with server")
 
     def _auto_set_uploaded_catalog(self):
-        """Automatically set uploaded catalog as active if server is running but no catalog is selected."""
+        """
+        Automatically use uploaded catalog if server is running and catalog is uploaded.
+
+        When a catalog is uploaded, it's stored in memory only.
+        The server will automatically use the uploaded catalog via get_catalog_path()
+        (which returns empty string when in-memory catalog is available), and the
+        data layer will automatically use the in-memory catalog for lookups.
+        """
         from gearledger.data_layer import get_network_mode
         from gearledger.server import get_server
 
@@ -1141,21 +1148,10 @@ class MainWindow(QWidget):
         if not server or not server.is_running():
             return
 
-        # Check if catalog is already set in settings
-        current_catalog = self.settings_widget.catalog_edit.text().strip()
-        if current_catalog and os.path.exists(current_catalog):
-            # Catalog is already set, no need to auto-set
-            return
-
-        # Check if there's an uploaded catalog
-        uploaded_catalog = server._get_catalog_path()
-        if uploaded_catalog and os.path.exists(uploaded_catalog):
-            # Set the uploaded catalog as the active catalog
-            print(f"[MAIN_WINDOW] Auto-setting uploaded catalog: {uploaded_catalog}")
-            self.settings_widget.catalog_edit.setText(uploaded_catalog)
-            # Trigger catalog path change to enable functionality
-            if hasattr(self, "_on_catalog_path_changed"):
-                self._on_catalog_path_changed(uploaded_catalog)
+        # Check if there's an uploaded catalog in memory
+        if server.get_uploaded_catalog_data() is not None:
+            # Catalog is in memory, server will automatically use it for lookups
+            print("[MAIN_WINDOW] Uploaded catalog available in memory")
 
     def _sync_catalog_from_server(self):
         """Download catalog from server if in client mode."""

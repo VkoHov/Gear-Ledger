@@ -400,20 +400,28 @@ class NetworkSettingsDialog(QDialog):
                 )
 
     def _update_server_status(self):
-        """Update server status label with current connection count."""
+        """Update server status label with current connection count and SSE status."""
         from gearledger.server import get_server
 
         server = get_server()
         if server and server.is_running():
             url = server.get_server_url()
             count = server.get_connected_clients_count()
+            sse_count = server.get_sse_clients_count()
             if count > 0:
-                self.server_status_label.setText(
-                    tr("server_status_running_with_clients", url=url, count=count)
-                )
+                if sse_count > 0:
+                    status_text = tr("server_status_running_with_clients", url=url, count=count)
+                    status_text += f" ({sse_count} real-time)"
+                    self.server_status_label.setText(status_text)
+                    self.server_status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+                else:
+                    status_text = tr("server_status_running_with_clients", url=url, count=count)
+                    status_text += " (⚠️ no real-time sync)"
+                    self.server_status_label.setText(status_text)
+                    self.server_status_label.setStyleSheet("color: #e67e22; font-weight: bold;")
             else:
                 self.server_status_label.setText(tr("server_status_running", url=url))
-            self.server_status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+                self.server_status_label.setStyleSheet("color: #f39c12; font-weight: bold;")
         else:
             self.server_status_label.setText(tr("server_status_stopped"))
             self.server_status_label.setStyleSheet(

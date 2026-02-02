@@ -584,6 +584,22 @@ class MainWindow(QWidget):
         self._update_network_status()
         settings_btn_layout.addWidget(self.network_status_label)
 
+        # Client initialization progress label (shows initialization steps)
+        self.client_init_progress_label = QLabel("")
+        self.client_init_progress_label.setStyleSheet(
+            """
+            QLabel {
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 10px;
+                background-color: #ecf0f1;
+                color: #2c3e50;
+            }
+        """
+        )
+        self.client_init_progress_label.setVisible(False)
+        settings_btn_layout.addWidget(self.client_init_progress_label)
+
         # Network settings button
         self.network_settings_btn = QPushButton("🌐 " + tr("network_configuration"))
         self.network_settings_btn.setStyleSheet(
@@ -714,14 +730,28 @@ class MainWindow(QWidget):
         busy = self.process_manager.any_running
         catalog_valid = self.settings_widget.validate_catalog()
 
+        # Check if client is initialized (in client mode)
+        from gearledger.data_layer import get_network_mode
+
+        mode = get_network_mode()
+        client_ready = True
+        if mode == "client":
+            client_ready = self._client_initialized
+
         # Update all widgets
         self.settings_widget.set_controls_enabled(
             True
         )  # Always allow catalog selection
-        # Only enable functionality if catalog is valid and not busy
-        self.camera_widget.set_controls_enabled(not busy and catalog_valid)
-        self.results_widget.set_controls_enabled(not busy and catalog_valid)
-        self.scale_widget.set_controls_enabled(not busy and catalog_valid)
+        # Only enable functionality if catalog is valid, not busy, and client is ready
+        self.camera_widget.set_controls_enabled(
+            not busy and catalog_valid and client_ready
+        )
+        self.results_widget.set_controls_enabled(
+            not busy and catalog_valid and client_ready
+        )
+        self.scale_widget.set_controls_enabled(
+            not busy and catalog_valid and client_ready
+        )
 
     def _on_camera_capture(self, image_path: str):
         """Handle camera capture and start processing."""
@@ -1320,10 +1350,18 @@ class MainWindow(QWidget):
         # Show user-friendly message
         self.append_logs(
             [
-                "⚠️ Connection lost - attempting to reconnect...",
+                "⚠️ Real-time sync connection lost - attempting to reconnect...",
                 "   Updates may be delayed until connection is restored",
             ]
         )
+        # Update network status to show disconnection
+        self._update_network_status()
+        # Show prominent disconnection indicator
+        if self._client_initialized:
+            self._update_client_init_progress(
+                "⚠️ Real-time sync disconnected - reconnecting...", "#e67e22"
+            )
+            self.client_init_progress_label.setVisible(True)
         # SSE client will automatically retry in background thread
 
     def _on_sse_error(self, error: str):
@@ -1366,6 +1404,11 @@ class MainWindow(QWidget):
                 self._sse_client = None
             # Reset initialization flag
             self._client_initialized = False
+            # Hide progress indicator
+            if hasattr(self, "client_init_progress_label"):
+                self.client_init_progress_label.setVisible(False)
+            # Enable all controls (not in client mode)
+            self._set_client_enabled(True)
             # Update catalog UI
             if hasattr(self, "settings_widget"):
                 self.settings_widget.update_catalog_ui_for_mode()
@@ -1382,12 +1425,21 @@ class MainWindow(QWidget):
         client = get_client()
         if not client or not client.is_connected():
             self.append_logs(["⚠️ Client not connected - cannot initialize"])
+            self._update_client_init_progress("⚠️ Not connected", "#e74c3c")
             return
+
+        # Disable client functionality during initialization
+        self._set_client_enabled(False)
+
+        # Show progress indicator
+        if hasattr(self, "client_init_progress_label"):
+            self.client_init_progress_label.setVisible(True)
 
         # Step 1: Show connection message
         self.append_logs(
             ["🔌 Initializing client connection...", f"   Server: {client.server_url}"]
         )
+        self._update_client_init_progress("1️⃣ Connecting to server...", "#f39c12")
 
         # Step 2: Initialize sync version
         QTimer.singleShot(100, lambda: self._initialize_sync_version_step())
@@ -1399,6 +1451,8 @@ class MainWindow(QWidget):
         client = get_client()
         if not client or not client.is_connected():
             return
+
+        self._update_client_init_progress("2️⃣ Getting sync version...", "#f39c12")
 
         try:
             self._sync_version = client.get_sync_version()
@@ -1435,6 +1489,9 @@ class MainWindow(QWidget):
                 f"   Server: {server_url}",
             ]
         )
+        self._update_client_init_progress(
+            "3️⃣ Establishing real-time connection...", "#f39c12"
+        )
 
         # Create and start SSE client
         self._sse_client = SSEClientThread(server_url, timeout=10)
@@ -1462,6 +1519,9 @@ class MainWindow(QWidget):
                     "   You will receive instant updates when server data changes",
                 ]
             )
+            self._update_client_init_progress("4️⃣ Syncing catalog...", "#f39c12")
+            # Update network status to show SSE connected
+            self._update_network_status()
             # Step 4: Sync catalog
             QTimer.singleShot(200, lambda: self._sync_catalog_step())
         else:
@@ -1472,6 +1532,8 @@ class MainWindow(QWidget):
                     "   Receiving updates from server again",
                 ]
             )
+            # Update network status to show SSE reconnected
+            self._update_network_status()
 
     def _sync_catalog_step(self):
         """Step 4: Sync catalog from server, then mark client as ready."""
@@ -1506,6 +1568,17 @@ class MainWindow(QWidget):
             ]
         )
 
+        # Update progress indicator to show ready
+        self._update_client_init_progress("✅ Ready", "#27ae60")
+
+        # Enable client functionality
+        self._set_client_enabled(True)
+
+        # Hide progress indicator after a short delay
+        QTimer.singleShot(
+            2000, lambda: self.client_init_progress_label.setVisible(False)
+        )
+
     def _update_network_status(self):
         """Update the network status label showing current mode and connection status."""
         from gearledger.data_layer import get_network_mode
@@ -1518,11 +1591,14 @@ class MainWindow(QWidget):
             server = get_server()
             if server and server.is_running():
                 count = server.get_connected_clients_count()
+                sse_count = server.get_sse_clients_count()
                 if count > 0:
-                    status_text = (
-                        f"🖥️ Server: Running ({count} client{'s' if count != 1 else ''})"
-                    )
-                    bg_color = "#27ae60"  # Green
+                    if sse_count > 0:
+                        status_text = f"🖥️ Server: Running ({count} client{'s' if count != 1 else ''}, {sse_count} real-time)"
+                        bg_color = "#27ae60"  # Green
+                    else:
+                        status_text = f"🖥️ Server: Running ({count} client{'s' if count != 1 else ''}, ⚠️ no real-time sync)"
+                        bg_color = "#e67e22"  # Orange-red
                 else:
                     status_text = "🖥️ Server: Running (0 clients)"
                     bg_color = "#f39c12"  # Orange
@@ -1532,8 +1608,17 @@ class MainWindow(QWidget):
         elif mode == "client":
             client = get_client()
             if client and client.is_connected():
-                status_text = "💻 Client: Connected"
-                bg_color = "#27ae60"  # Green
+                # Check SSE connection status
+                if self._sse_client and self._sse_client.is_connected():
+                    if self._client_initialized:
+                        status_text = "💻 Client: Connected (Real-time sync active)"
+                        bg_color = "#27ae60"  # Green
+                    else:
+                        status_text = "💻 Client: Initializing..."
+                        bg_color = "#f39c12"  # Orange
+                else:
+                    status_text = "💻 Client: Connected (⚠️ Real-time sync disconnected)"
+                    bg_color = "#e67e22"  # Orange-red
             else:
                 status_text = "💻 Client: Disconnected"
                 bg_color = "#e74c3c"  # Red
@@ -1558,6 +1643,31 @@ class MainWindow(QWidget):
         # Force update the label
         self.network_status_label.update()
         self.network_status_label.repaint()
+
+    def _update_client_init_progress(self, message: str, color: str = "#f39c12"):
+        """Update client initialization progress indicator."""
+        if hasattr(self, "client_init_progress_label"):
+            self.client_init_progress_label.setText(message)
+            self.client_init_progress_label.setStyleSheet(
+                f"""
+                QLabel {{
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 10px;
+                    background-color: {color};
+                    color: white;
+                    font-weight: bold;
+                }}
+            """
+            )
+            self.client_init_progress_label.setVisible(True)
+
+    def _set_client_enabled(self, enabled: bool):
+        """Enable or disable client functionality during initialization."""
+        # Update controls based on enabled state
+        # This will be called by _update_controls which checks _client_initialized
+        # So we just need to trigger an update
+        self._update_controls()
 
     def _on_fuzzy_requested(self, candidates):
         """Handle fuzzy matching request."""

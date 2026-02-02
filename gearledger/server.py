@@ -109,6 +109,11 @@ class GearLedgerServer:
 
         return count
 
+    def get_sse_clients_count(self) -> int:
+        """Get count of currently connected SSE clients."""
+        with self._sse_lock:
+            return len(self._sse_clients)
+
     def _notify_client_changed(self, count: int):
         """Notify all registered callbacks about client count change."""
         # Only log if there are callbacks to avoid spam

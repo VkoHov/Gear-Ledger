@@ -326,33 +326,15 @@ class GearLedgerServer:
                     else:
                         print(f"[SERVER] No catalog entry found for artikul: {artikul}")
                 else:
-                    # Try to get catalog path from settings as fallback
-                    from gearledger.desktop.settings_widget import get_settings_widget
-
-                    settings_widget = get_settings_widget()
-                    if settings_widget:
-                        catalog_path = settings_widget.get_catalog_path()
-                        if catalog_path and os.path.exists(catalog_path):
-                            print(f"[SERVER] Using catalog file: {catalog_path}")
-                            catalog_lookup_result = _lookup_catalog_data(
-                                artikul, catalog_path=catalog_path
-                            )
-                            if catalog_lookup_result:
-                                catalog_data = {
-                                    k: _to_python_type(v)
-                                    for k, v in catalog_lookup_result.items()
-                                }
-                                print(f"[SERVER] Found catalog data: {catalog_data}")
-                            else:
-                                print(
-                                    f"[SERVER] No catalog entry found for artikul: {artikul}"
-                                )
-                        else:
-                            print("[SERVER] No catalog file available")
-                    else:
-                        print(
-                            "[SERVER] No settings widget available, cannot get catalog path"
-                        )
+                    # No in-memory catalog available
+                    # Server should use in-memory catalog only (uploaded via /api/catalog endpoint)
+                    # If no in-memory catalog, we can't do catalog lookup from server API context
+                    print(
+                        "[SERVER] No in-memory catalog available - catalog lookup skipped"
+                    )
+                    print(
+                        "[SERVER] Server should have catalog uploaded via /api/catalog endpoint"
+                    )
 
                 print(f"[SERVER] Catalog lookup result: {catalog_data}")
 

@@ -477,16 +477,23 @@ class SettingsWidget(QGroupBox):
             # Fallback to local catalog if server catalog not available
             return self.catalog_edit.text().strip()
 
-        # In server mode, if catalog is uploaded (in memory), return empty string
-        # The data layer will automatically use the in-memory catalog
+        # In server mode, prioritize in-memory uploaded catalog, but fall back to file from settings
         if mode == "server":
             server = get_server()
             if server and server.is_running():
                 if server.get_uploaded_catalog_data() is not None:
                     # Catalog is in memory, return empty to indicate use in-memory catalog
+                    # The data layer will automatically use the in-memory catalog
+                    return ""
+                else:
+                    # No uploaded catalog, use the catalog file from settings
+                    local_catalog = self.catalog_edit.text().strip()
+                    if local_catalog and os.path.exists(local_catalog):
+                        return local_catalog
+                    # No catalog file selected either
                     return ""
 
-        # In standalone mode or if no uploaded catalog, use local catalog
+        # In standalone mode, use local catalog
         return self.catalog_edit.text().strip()
 
     def _upload_catalog_to_server_auto(self, catalog_path: str):

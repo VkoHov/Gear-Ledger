@@ -121,19 +121,28 @@ def _lookup_catalog_for_network(artikul: str, catalog_path: str = None) -> Dict[
             server = get_server()
             if server and server.is_running():
                 catalog_bytes = server.get_uploaded_catalog_data()
+                if catalog_bytes:
+                    print(f"[DATA_LAYER] Using in-memory uploaded catalog for lookup (size: {len(catalog_bytes)} bytes)")
+                else:
+                    print(f"[DATA_LAYER] No in-memory catalog, will use file path if provided")
         
         # Use in-memory catalog if available, otherwise use file path
         if catalog_bytes is not None:
+            print(f"[DATA_LAYER] Looking up {artikul} in in-memory catalog")
             data = _lookup_catalog_data(artikul, catalog_bytes=catalog_bytes)
         elif catalog_path and os.path.exists(catalog_path):
+            print(f"[DATA_LAYER] Looking up {artikul} in catalog file: {catalog_path}")
             data = _lookup_catalog_data(artikul, catalog_path=catalog_path)
         else:
+            print(f"[DATA_LAYER] No catalog available: catalog_path={catalog_path}, in_memory={catalog_bytes is not None}")
             return {}
         
         # Convert numpy types to native Python types
         return {k: _to_python_type(v) for k, v in data.items()}
     except Exception as e:
         print(f"[ERROR] Catalog lookup failed: {e}")
+        import traceback
+        traceback.print_exc()
         return {}
 
 
@@ -223,6 +232,19 @@ def _record_to_database(
     # Look up catalog data (even if catalog_path is empty, we still write the result)
     # In server mode, will use in-memory uploaded catalog if available
     print(f"[DATA_LAYER] Catalog path for lookup: {catalog_path}")
+    
+    # In server mode, also check for in-memory catalog if catalog_path is empty
+    mode = get_network_mode()
+    if mode == "server" and (not catalog_path or catalog_path == ""):
+        from .server import get_server
+        server = get_server()
+        if server and server.is_running():
+            catalog_bytes = server.get_uploaded_catalog_data()
+            if catalog_bytes:
+                print(f"[DATA_LAYER] Using in-memory uploaded catalog (size: {len(catalog_bytes)} bytes)")
+            else:
+                print(f"[DATA_LAYER] No in-memory catalog, catalog_path is empty")
+    
     brand = ""
     description = ""
     sale_price = 0.0

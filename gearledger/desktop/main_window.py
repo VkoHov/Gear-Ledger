@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
@@ -31,6 +31,7 @@ from .results_pane import ResultsPane
 from .process_helpers import ProcessManager
 from .scale_widget import ScaleWidget
 from .translations import tr
+from .sse_client import SSEClientThread
 
 # Optional speech helpers (guarded)
 try:
@@ -238,8 +239,9 @@ class MainWindow(QWidget):
         # Auto-set uploaded catalog if server is running but no catalog is selected
         QTimer.singleShot(200, self._auto_set_uploaded_catalog)
 
-        # Initialize sync version and sync catalog from server on startup if in client mode
+        # Initialize SSE connection and sync catalog from server on startup if in client mode
         QTimer.singleShot(300, self._initialize_sync_version)
+        QTimer.singleShot(400, self._update_sse_connection)  # Start SSE connection
         QTimer.singleShot(
             500,
             lambda: (
@@ -710,12 +712,12 @@ class MainWindow(QWidget):
 
         # Sync version tracking for catalog sync in client mode
         self._sync_version = 0
-        self._sync_check_timer = QTimer(self)
-        self._sync_check_timer.timeout.connect(self._check_server_sync_version)
+        # SSE client for real-time event notifications (replaces polling timer)
+        self._sse_client: Optional[Any] = None
         # Flag to prevent concurrent catalog sync requests
         self._syncing_catalog = False
-        # Start sync checking only in client mode (will be updated when mode changes)
-        self._update_sync_timer()
+        # Start SSE connection in client mode (will be updated when mode changes)
+        self._update_sse_connection()
 
     def _update_controls(self):
         """Update control states based on process status and catalog availability."""
@@ -1246,23 +1248,33 @@ class MainWindow(QWidget):
         finally:
             self._syncing_catalog = False
 
-    def _update_sync_timer(self):
-        """Start/stop sync version checking timer based on network mode."""
+    def _update_sse_connection(self):
+        """Start/stop SSE connection based on network mode."""
         from gearledger.data_layer import get_network_mode
+        from gearledger.api_client import get_client
 
         mode = get_network_mode()
         if mode == "client":
-            # In client mode, poll server for data changes every 2 seconds
-            if not self._sync_check_timer.isActive():
-                self._sync_check_timer.start(2000)  # Check every 2 seconds
-                print(
-                    "[MAIN_WINDOW] Started sync version polling in client mode (every 2 seconds)"
-                )
+            # In client mode, connect to SSE stream for real-time events
+            client = get_client()
+            if client and client.is_connected() and not self._sse_client:
+                server_url = client.server_url
+                print(f"[MAIN_WINDOW] Starting SSE connection to {server_url}")
+
+                # Create and start SSE client
+                self._sse_client = SSEClientThread(server_url, timeout=10)
+                self._sse_client.catalog_uploaded.connect(self._on_sse_catalog_uploaded)
+                self._sse_client.results_changed.connect(self._on_sse_results_changed)
+                self._sse_client.connected.connect(self._on_sse_connected)
+                self._sse_client.disconnected.connect(self._on_sse_disconnected)
+                self._sse_client.error_occurred.connect(self._on_sse_error)
+                self._sse_client.start()
         else:
-            # In server/standalone mode, stop polling
-            if self._sync_check_timer.isActive():
-                self._sync_check_timer.stop()
-                print("[MAIN_WINDOW] Stopped sync version polling (not in client mode)")
+            # In server/standalone mode, stop SSE connection
+            if self._sse_client:
+                print("[MAIN_WINDOW] Stopping SSE connection (not in client mode)")
+                self._sse_client.stop()
+                self._sse_client = None
 
     def _initialize_sync_version(self):
         """Initialize sync version from server if in client mode."""
@@ -1281,46 +1293,36 @@ class MainWindow(QWidget):
             except Exception as e:
                 print(f"[MAIN_WINDOW] Error initializing sync version: {e}")
 
-    def _check_server_sync_version(self):
-        """Check server sync version and sync catalog if changed (client mode only)."""
-        from gearledger.data_layer import get_network_mode
-        from gearledger.api_client import get_client
-        import requests
+    def _on_sse_catalog_uploaded(self, event: dict):
+        """Handle SSE catalog uploaded event."""
+        print(f"[MAIN_WINDOW] 🔄 Catalog uploaded event received: {event}")
+        self._sync_version = event.get("version", self._sync_version)
+        # Sync catalog from server
+        self._sync_catalog_from_server()
+        # Update catalog UI
+        if hasattr(self, "settings_widget"):
+            self.settings_widget.update_catalog_ui_for_mode()
 
-        mode = get_network_mode()
-        if mode != "client":
-            return
+    def _on_sse_results_changed(self, event: dict):
+        """Handle SSE results changed event."""
+        print(f"[MAIN_WINDOW] 🔄 Results changed event received: {event}")
+        self._sync_version = event.get("version", self._sync_version)
+        # Refresh results pane to show updated data
+        QTimer.singleShot(150, self.results_pane.refresh)
 
-        client = get_client()
-        if not client or not client.is_connected():
-            return
+    def _on_sse_connected(self):
+        """Handle SSE connection established."""
+        print("[MAIN_WINDOW] ✓ SSE connection established")
 
-        try:
-            new_version = client.get_sync_version()
-            if new_version != -1 and new_version != self._sync_version:
-                print(
-                    f"[MAIN_WINDOW] 🔄 Server data version changed: {self._sync_version} -> {new_version}"
-                )
-                self._sync_version = new_version
-                # Sync catalog when version changes (catalog may have been uploaded)
-                self._sync_catalog_from_server()
-                # Update catalog UI to show new catalog status
-                if hasattr(self, "settings_widget"):
-                    self.settings_widget.update_catalog_ui_for_mode()
-        except KeyboardInterrupt:
-            # App is being terminated, silently exit
-            return
-        except (
-            requests.exceptions.RequestException,
-            ConnectionError,
-            TimeoutError,
-        ) as e:
-            # Network errors - server may be down or unreachable
-            # Don't spam logs, just silently handle
-            pass
-        except Exception as e:
-            # Other errors - log but don't crash
-            print(f"[MAIN_WINDOW] Error checking sync version: {e}")
+    def _on_sse_disconnected(self):
+        """Handle SSE connection lost."""
+        print("[MAIN_WINDOW] ✗ SSE connection lost, will attempt to reconnect")
+        # SSE client will automatically retry in background thread
+
+    def _on_sse_error(self, error: str):
+        """Handle SSE error."""
+        print(f"[MAIN_WINDOW] SSE error: {error}")
+        # SSE client will automatically retry in background thread
 
     def _on_server_data_changed(self):
         """Handle server data changed - refresh results pane and sync catalog."""
@@ -1341,8 +1343,8 @@ class MainWindow(QWidget):
         self.results_pane.update_refresh_button_visibility()
         # Update network status label
         self._update_network_status()
-        # Update sync timer based on mode
-        self._update_sync_timer()
+        # Update SSE connection based on mode
+        self._update_sse_connection()
         # Update catalog UI and sync catalog if switching to client mode
         if hasattr(self, "settings_widget"):
             self.settings_widget.update_catalog_ui_for_mode()
@@ -2022,8 +2024,9 @@ class MainWindow(QWidget):
             self.poll_main_timer.stop()
         if hasattr(self, "poll_fuzzy_timer"):
             self.poll_fuzzy_timer.stop()
-        # Stop sync check timer to prevent network requests during shutdown
-        if hasattr(self, "_sync_check_timer") and self._sync_check_timer.isActive():
-            self._sync_check_timer.stop()
+        # Stop SSE client to prevent network requests during shutdown
+        if hasattr(self, "_sse_client") and self._sse_client:
+            self._sse_client.stop()
+            self._sse_client = None
 
         super().closeEvent(event)

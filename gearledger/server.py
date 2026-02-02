@@ -8,9 +8,11 @@ import time
 import os
 from pathlib import Path
 from typing import Optional, Callable
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, Response
 from flask_cors import CORS
 from werkzeug.serving import make_server
+import queue
+import json
 
 from .database import get_database, Database
 from .network_discovery import ServerBroadcaster
@@ -60,6 +62,10 @@ class GearLedgerServer:
         self._catalog_data: Optional[bytes] = None
         self._catalog_filename: Optional[str] = None
         self._catalog_upload_time: Optional[float] = None
+
+        # SSE event system: track connected clients for event streaming
+        self._sse_clients: list = []  # List of client queues for SSE events
+        self._sse_lock = threading.Lock()  # Lock for thread-safe access to _sse_clients
 
         self._setup_routes()
 
@@ -167,6 +173,55 @@ class GearLedgerServer:
 
             return jsonify({"ok": True, "version": self._data_version})
 
+        @self.app.route("/api/events", methods=["GET"])
+        def stream_events():
+            """Server-Sent Events endpoint for real-time notifications."""
+
+            def event_stream():
+                # Create a queue for this client
+                client_queue = queue.Queue()
+
+                # Add client to list
+                with self._sse_lock:
+                    self._sse_clients.append(client_queue)
+                    print(
+                        f"[SERVER] SSE client connected. Total clients: {len(self._sse_clients)}"
+                    )
+
+                try:
+                    # Send initial connection event
+                    yield f"data: {json.dumps({'type': 'connected', 'version': self._data_version})}\n\n"
+
+                    # Keep connection alive and send events
+                    while True:
+                        try:
+                            # Wait for event with timeout to keep connection alive
+                            event = client_queue.get(timeout=30)
+                            yield f"data: {json.dumps(event)}\n\n"
+                        except queue.Empty:
+                            # Send keepalive ping
+                            yield ": keepalive\n\n"
+                except GeneratorExit:
+                    # Client disconnected
+                    pass
+                finally:
+                    # Remove client from list
+                    with self._sse_lock:
+                        if client_queue in self._sse_clients:
+                            self._sse_clients.remove(client_queue)
+                            print(
+                                f"[SERVER] SSE client disconnected. Total clients: {len(self._sse_clients)}"
+                            )
+
+            return Response(
+                event_stream(),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         @self.app.route("/api/clients/count", methods=["GET"])
         def get_connected_clients_count():
             """Get count of currently connected clients."""
@@ -239,6 +294,14 @@ class GearLedgerServer:
             self._data_version += 1
             print(f"[SERVER] Data version now: {self._data_version}")
 
+            # Send SSE event to all connected clients
+            self._broadcast_sse_event(
+                {
+                    "type": "results_changed",
+                    "version": self._data_version,
+                }
+            )
+
             # Notify about data change
             if self.on_data_changed:
                 self.on_data_changed()
@@ -291,6 +354,14 @@ class GearLedgerServer:
 
             # Increment data version for sync
             self._data_version += 1
+
+            # Send SSE event to all connected clients
+            self._broadcast_sse_event(
+                {
+                    "type": "results_changed",
+                    "version": self._data_version,
+                }
+            )
 
             if self.on_data_changed:
                 self.on_data_changed()
@@ -368,6 +439,16 @@ class GearLedgerServer:
                     f"[SERVER] Catalog uploaded, data version now: {self._data_version}"
                 )
 
+                # Send SSE event to all connected clients
+                self._broadcast_sse_event(
+                    {
+                        "type": "catalog_uploaded",
+                        "filename": filename,
+                        "size": len(catalog_bytes),
+                        "version": self._data_version,
+                    }
+                )
+
                 # Notify about data change (catalog uploaded)
                 if self.on_data_changed:
                     self.on_data_changed()
@@ -442,6 +523,25 @@ class GearLedgerServer:
             self._stale_check_timer.daemon = True
             self._stale_check_timer.start()
 
+    def _broadcast_sse_event(self, event: dict):
+        """Broadcast SSE event to all connected clients."""
+        with self._sse_lock:
+            # Send event to all connected clients
+            for client_queue in self._sse_clients[
+                :
+            ]:  # Copy list to avoid modification during iteration
+                try:
+                    client_queue.put_nowait(event)
+                except queue.Full:
+                    # Queue is full, remove client (likely disconnected)
+                    if client_queue in self._sse_clients:
+                        self._sse_clients.remove(client_queue)
+                except Exception as e:
+                    # Error sending to client, remove it
+                    print(f"[SERVER] Error sending SSE event to client: {e}")
+                    if client_queue in self._sse_clients:
+                        self._sse_clients.remove(client_queue)
+
     def stop(self):
         """Stop the server."""
         # Stop broadcasting
@@ -453,6 +553,10 @@ class GearLedgerServer:
         if self._stale_check_timer:
             self._stale_check_timer.cancel()
             self._stale_check_timer = None
+
+        # Clear SSE clients
+        with self._sse_lock:
+            self._sse_clients.clear()
 
         if self._server:
             self._server.shutdown()

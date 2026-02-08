@@ -1055,8 +1055,9 @@ class MainWindow(QWidget):
         # Register callback with server (in case it was just started)
         self._register_server_callbacks()
 
-        # Update status after dialog closes (in case settings changed)
+        # Update status and settings layout after dialog closes (mode may have changed)
         self._update_network_status()
+        self.settings_widget.update_catalog_ui_for_mode()
 
     def _register_server_callbacks(self):
         """Register main window callbacks with server for client change and data change notifications."""
@@ -1392,6 +1393,9 @@ class MainWindow(QWidget):
         self.results_pane.update_refresh_button_visibility()
         # Update network status label
         self._update_network_status()
+        # Update settings layout (catalog/results visibility) for new mode
+        if hasattr(self, "settings_widget"):
+            self.settings_widget.update_catalog_ui_for_mode()
 
         if mode == "client":
             # Initialize client connection sequentially
@@ -1409,9 +1413,6 @@ class MainWindow(QWidget):
                 self.client_init_progress_label.setVisible(False)
             # Enable all controls (not in client mode)
             self._set_client_enabled(True)
-            # Update catalog UI
-            if hasattr(self, "settings_widget"):
-                self.settings_widget.update_catalog_ui_for_mode()
 
             # If server mode, auto-upload catalog if one is selected and server is running
             if mode == "server":

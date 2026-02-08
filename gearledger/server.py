@@ -195,6 +195,8 @@ class GearLedgerServer:
                     print(
                         f"[SERVER] SSE client connected. Total clients: {len(self._sse_clients)}"
                     )
+                # Notify UI so server status shows "real-time sync" instead of "no real-time sync"
+                self._notify_client_changed(len(self._connected_clients))
 
                 try:
                     # Send initial connection event with catalog info if available
@@ -260,6 +262,8 @@ class GearLedgerServer:
                             print(
                                 f"[SERVER] SSE client disconnected. Total clients: {len(self._sse_clients)}"
                             )
+                    # Notify UI so server status updates (e.g. "no real-time sync" when last SSE disconnects)
+                    self._notify_client_changed(len(self._connected_clients))
 
             return Response(
                 event_stream(),
@@ -666,11 +670,13 @@ class GearLedgerServer:
                     # Queue is full, remove client (likely disconnected)
                     if client_queue in self._sse_clients:
                         self._sse_clients.remove(client_queue)
+                        self._notify_client_changed(len(self._connected_clients))
                 except Exception as e:
                     # Error sending to client, remove it
                     print(f"[SERVER] Error sending SSE event to client: {e}")
                     if client_queue in self._sse_clients:
                         self._sse_clients.remove(client_queue)
+                        self._notify_client_changed(len(self._connected_clients))
 
     def stop(self):
         """Stop the server."""
@@ -687,6 +693,7 @@ class GearLedgerServer:
         # Clear SSE clients
         with self._sse_lock:
             self._sse_clients.clear()
+        self._notify_client_changed(len(self._connected_clients))
 
         if self._server:
             self._server.shutdown()

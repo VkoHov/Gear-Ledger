@@ -1872,6 +1872,9 @@ class MainWindow(QWidget):
                     if self._client_initialized:
                         status_text = "💻 Client: Connected (Real-time sync active)"
                         bg_color = "#27ae60"  # Green
+                        # Hide reconnecting label when we're actually connected
+                        if hasattr(self, "client_init_progress_label"):
+                            self.client_init_progress_label.setVisible(False)
                     else:
                         status_text = "💻 Client: Initializing..."
                         bg_color = "#f39c12"  # Orange

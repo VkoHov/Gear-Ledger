@@ -36,7 +36,7 @@ from .sse_client import SSEClientThread
 
 # Optional speech helpers (guarded)
 try:
-    from gearledger.speech import speak, speak_match, speak_name, _spell_code
+    from gearledger.speech import speak, speak_match, speak_name, speak_no_match, _spell_code
 except Exception as e:
     # If anything goes wrong importing speech, log it so we can see why
     # and fall back to no-op implementations instead of crashing.
@@ -52,6 +52,9 @@ except Exception as e:
         pass
 
     def speak_match(*a, **k):
+        pass
+
+    def speak_no_match(*a, **k):
         pass
 
     def speak_name(*a, **k):
@@ -2082,9 +2085,9 @@ class MainWindow(QWidget):
             self.results_widget.set_match_result(tr("status_not_found"))
             best = res.get("best_visible") or res.get("best_normalized")
             if best:
-                speak(tr("speak_no_match_best_guess", code=_spell_code(best)))
+                speak_no_match("best_guess", code=_spell_code(best))
             else:
-                speak(tr("speak_no_match"))
+                speak_no_match("plain")
 
         # Update cost
         cost = res.get("gpt_cost")
@@ -2282,7 +2285,7 @@ class MainWindow(QWidget):
                 else:
                     self.append_logs([tr("log_no_match_manual_code", code=part_code)])
                     # Speak that no match was found
-                    speak(tr("speak_no_match_for_code", code=_spell_code(part_code)))
+                    speak_no_match("for_code", code=_spell_code(part_code))
 
                     from PyQt6.QtWidgets import QMessageBox
 

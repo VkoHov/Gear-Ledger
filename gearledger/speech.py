@@ -303,6 +303,51 @@ def speak(text: str):
     print(f"[SPEAK] {text}")
 
 
+def speak_no_match(scenario: str = "plain", code: str = None):
+    """
+    Speak "no match found" - uses Armenian when Piper is selected (Piper uses hy_AM voice).
+
+    Args:
+        scenario: "plain", "best_guess", or "for_code"
+        code: Spelled code for best_guess/for_code (e.g. from _spell_code())
+    """
+    try:
+        from gearledger.desktop.settings_manager import get_speech_engine
+
+        engine = get_speech_engine()
+    except Exception:
+        engine = "os"
+
+    if engine == "piper":
+        if scenario == "plain":
+            text = _SPEAK_NO_MATCH_ARMENIAN["plain"]
+        elif scenario == "best_guess" and code:
+            text = _SPEAK_NO_MATCH_ARMENIAN["best_guess"].format(code=code)
+        elif scenario == "for_code" and code:
+            text = _SPEAK_NO_MATCH_ARMENIAN["for_code"].format(code=code)
+        else:
+            text = _SPEAK_NO_MATCH_ARMENIAN["plain"]
+        try:
+            from gearledger.piper_tts import speak_with_piper
+
+            if speak_with_piper(text):
+                return
+        except Exception as e:
+            print(f"[SPEECH] Piper TTS failed for no_match: {e}")
+
+    # Fallback: use translated text and normal speak()
+    from gearledger.desktop.translations import tr
+
+    if scenario == "plain":
+        speak(tr("speak_no_match"))
+    elif scenario == "best_guess" and code:
+        speak(tr("speak_no_match_best_guess", code=code))
+    elif scenario == "for_code" and code:
+        speak(tr("speak_no_match_for_code", code=code))
+    else:
+        speak(tr("speak_no_match"))
+
+
 # --- NEW: spell-out helpers for part codes ---
 
 # Punctuation words in different languages
@@ -319,6 +364,13 @@ _PUNCT_WORDS = {
         ".": "точка",
         "_": "подчёркивание",
     },
+}
+
+# Armenian "no match" phrases for Piper (hy_AM voice model)
+_SPEAK_NO_MATCH_ARMENIAN = {
+    "plain": "Չի գտնվել",
+    "best_guess": "Խորհուրդ տրված կոդը չի գտնվել",
+    "for_code": "Կոդի համարը չի գտնվել",
 }
 
 # Match messages in different languages
@@ -472,7 +524,7 @@ def speak_match(artikul: str, client: str, weight: float = None):
 
         if speak_with_piper is not None and client_clean:
             # Keep it short and name-focused; artikul/weight are not spoken here.
-            text = f"Արմատիկ. {client_clean}"
+            text = f"{client_clean}"
             if not speak_with_piper(text):
                 # If Piper fails, fall back to normal path below
                 pass
@@ -505,10 +557,8 @@ def speak_match(artikul: str, client: str, weight: float = None):
                     ru_weight = f". Вес: {weight_formatted} килограмм"
                     _speak_macos(ru_weight, "ru", wait=True)
 
-                # Part 4: Client (with EN voice for names)
+                # Part 4: Client (with EN voice for names, no prefix)
                 if client_clean:
-                    ru_client_label = f". {msgs['client']}:"
-                    _speak_macos(ru_client_label, "ru", wait=True)
                     _speak_macos(client_clean, "en", wait=True)
                     _speak_macos(".", "ru", wait=True)  # Final period
                 else:
@@ -528,7 +578,7 @@ def speak_match(artikul: str, client: str, weight: float = None):
             parts.append(f"Weight: {weight_formatted} kilograms")
 
     if client_clean:
-        parts.append(f"{msgs['client']}: {client_clean}")
+        parts.append(client_clean)
 
     message = ". ".join(parts) + "."
     speak(message)

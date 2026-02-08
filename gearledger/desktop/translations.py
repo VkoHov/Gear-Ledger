@@ -1395,6 +1395,10 @@ TRANSLATIONS = {
         "ru": "Сначала установите вес (весы или вручную)",
     },
     # ============ Network Configuration ============
+    "network": {
+        "en": "Network",
+        "ru": "Сеть",
+    },
     "network_configuration": {
         "en": "Network Configuration (Multi-Device)",
         "ru": "Сетевая конфигурация (Многопользовательский режим)",

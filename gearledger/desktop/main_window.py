@@ -594,7 +594,7 @@ class MainWindow(QWidget):
         settings_btn_layout.addWidget(self.sse_reconnect_btn)
 
         # Network settings button
-        self.network_settings_btn = QPushButton("🌐 " + tr("network_configuration"))
+        self.network_settings_btn = QPushButton("🌐 " + tr("network"))
         self.network_settings_btn.setStyleSheet(
             """
             QPushButton {

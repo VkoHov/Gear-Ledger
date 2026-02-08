@@ -50,7 +50,7 @@ class GearLedgerServer:
         self._connected_clients = {}
         self._last_client_count = 0
         self._client_timeout = (
-            10  # Consider client disconnected after 10 seconds of inactivity
+            60  # Consider client disconnected after 60 seconds of inactivity
         )
         # Timer to periodically check for stale clients and notify
         self._stale_check_timer = None
@@ -181,6 +181,9 @@ class GearLedgerServer:
         @self.app.route("/api/events", methods=["GET"])
         def stream_events():
             """Server-Sent Events endpoint for real-time notifications."""
+            client_ip = request.remote_addr
+            # Keep client from being marked stale - SSE connection counts as activity
+            self._connected_clients[client_ip] = time.time()
 
             def event_stream():
                 # Create a queue for this client
@@ -236,6 +239,8 @@ class GearLedgerServer:
                                 break
                         except queue.Empty:
                             # Send keepalive ping every 20 seconds to prevent client timeout
+                            # Also refresh client activity so it's not marked stale
+                            self._connected_clients[client_ip] = time.time()
                             try:
                                 yield ": keepalive\n\n"
                             except OSError:
@@ -490,6 +495,9 @@ class GearLedgerServer:
         @self.app.route("/api/catalog/info", methods=["GET"])
         def get_catalog_info():
             """Get catalog metadata (filename, size, date)."""
+            # Keep client from being marked stale when checking catalog
+            client_ip = request.remote_addr
+            self._connected_clients[client_ip] = time.time()
             print(
                 f"[SERVER] /api/catalog/info called: _catalog_data is {'not None' if self._catalog_data is not None else 'None'}"
             )
@@ -512,6 +520,9 @@ class GearLedgerServer:
         @self.app.route("/api/catalog", methods=["GET"])
         def get_catalog():
             """Download the catalog file from memory."""
+            # Keep client from being marked stale when downloading catalog
+            client_ip = request.remote_addr
+            self._connected_clients[client_ip] = time.time()
             if self._catalog_data is None:
                 return jsonify({"ok": False, "error": "Catalog not found"}), 404
 

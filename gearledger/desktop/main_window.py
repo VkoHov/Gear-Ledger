@@ -202,6 +202,10 @@ class MainWindow(QWidget):
 
         # Initialize client connection sequentially on startup if in client mode
         QTimer.singleShot(300, self._initialize_client_connection)
+        # Auto-start server if settings say server mode
+        QTimer.singleShot(400, self._auto_start_server_if_needed)
+        # Auto-connect client if settings say client mode (and not yet connected)
+        QTimer.singleShot(600, self._auto_connect_client_if_needed)
 
     def _set_window_icon(self):
         """Set the window icon from icon.ico or icon.png file if available."""
@@ -544,6 +548,24 @@ class MainWindow(QWidget):
         )
         self._update_network_status()
         settings_btn_layout.addWidget(self.network_status_label)
+
+        # Start/Stop Server button (visible in server mode)
+        self.server_toggle_btn = QPushButton(tr("start_server"))
+        self.server_toggle_btn.setStyleSheet(
+            "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.server_toggle_btn.clicked.connect(self._on_toggle_server)
+        self.server_toggle_btn.setVisible(False)
+        settings_btn_layout.addWidget(self.server_toggle_btn)
+
+        # Connect/Disconnect button (visible in client mode)
+        self.client_connect_btn = QPushButton(tr("connect"))
+        self.client_connect_btn.setStyleSheet(
+            "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.client_connect_btn.clicked.connect(self._on_toggle_client_connection)
+        self.client_connect_btn.setVisible(False)
+        settings_btn_layout.addWidget(self.client_connect_btn)
 
         # Client initialization progress label (shows initialization steps)
         self.client_init_progress_label = QLabel("")
@@ -1028,6 +1050,107 @@ class MainWindow(QWidget):
 
         dlg.exec()
 
+    def _on_toggle_server(self):
+        """Start or stop the server from main window."""
+        from gearledger.server import start_server, stop_server, get_server
+        from gearledger.data_layer import set_runtime_mode
+        from PyQt6.QtWidgets import QMessageBox
+
+        server = get_server()
+        if server and server.is_running():
+            stop_server()
+            set_runtime_mode("standalone")
+            self.append_logs(["🖥️ Server stopped"])
+            self._update_network_status()
+            self.settings_widget.update_catalog_ui_for_mode()
+        else:
+            from gearledger.desktop.settings_manager import load_settings
+
+            settings = load_settings()
+            port = settings.server_port
+            try:
+                def on_data_changed():
+                    QTimer.singleShot(0, self.results_pane.refresh)
+
+                def on_client_changed(_count):
+                    QTimer.singleShot(0, self._update_network_status)
+
+                server = start_server(
+                    port=port,
+                    on_data_changed=on_data_changed,
+                    on_client_changed=on_client_changed,
+                )
+                if server and server.is_running():
+                    set_runtime_mode("server")
+                    url = server.get_server_url()
+                    self.append_logs([f"🖥️ Server started at {url}"])
+                    self._update_network_status()
+                    self.settings_widget.update_catalog_ui_for_mode()
+                    QTimer.singleShot(500, self._auto_set_uploaded_catalog)
+            except Exception as e:
+                self.append_logs([f"❌ Server start failed: {e}"])
+                from PyQt6.QtWidgets import QMessageBox
+
+                QMessageBox.critical(
+                    self, tr("server"), tr("server_error", error=str(e))
+                )
+
+    def _on_toggle_client_connection(self):
+        """Connect or disconnect from server from main window."""
+        from gearledger.api_client import (
+            connect_to_server,
+            disconnect_from_server,
+            get_client,
+        )
+        from gearledger.data_layer import set_runtime_mode
+        from PyQt6.QtWidgets import QMessageBox
+
+        client = get_client()
+        if client and client.is_connected():
+            disconnect_from_server()
+            set_runtime_mode("standalone")
+            if self._sse_client:
+                self._sse_client.stop()
+                self._sse_client = None
+            self._client_initialized = False
+            self.append_logs(["🔌 Disconnected from server"])
+            self._update_network_status()
+            self.settings_widget.update_catalog_ui_for_mode()
+        else:
+            from gearledger.desktop.settings_manager import load_settings
+
+            settings = load_settings()
+            address = (settings.server_address or "").strip()
+            if not address:
+                QMessageBox.warning(
+                    self,
+                    tr("connection"),
+                    tr("enter_server_address"),
+                )
+                return
+            if not address.startswith("http://") and not address.startswith("https://"):
+                address = f"http://{address}"
+            try:
+                client = connect_to_server(address)
+                if client:
+                    set_runtime_mode("client")
+                    self.append_logs([f"✓ Connected to {address}"])
+                    self._update_network_status()
+                    self.settings_widget.update_catalog_ui_for_mode()
+                    self._initialize_client_connection()
+                else:
+                    QMessageBox.critical(
+                        self,
+                        tr("connection"),
+                        tr("connection_failed", address=address),
+                    )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    tr("connection"),
+                    tr("connection_error", error=str(e)),
+                )
+
     def _open_network_settings(self):
         """Open the network settings dialog."""
         from .network_settings_dialog import NetworkSettingsDialog
@@ -1156,6 +1279,68 @@ class MainWindow(QWidget):
                 self.settings_widget._upload_catalog_to_server_auto(catalog_path)
             else:
                 print("[MAIN_WINDOW] No catalog file selected in settings")
+
+    def _auto_start_server_if_needed(self):
+        """Auto-start server on app launch if settings say server mode."""
+        from gearledger.desktop.settings_manager import load_settings
+        from gearledger.server import get_server, start_server
+        from gearledger.data_layer import set_runtime_mode
+
+        settings = load_settings()
+        if settings.network_mode != "server":
+            return
+        server = get_server()
+        if server and server.is_running():
+            return
+        try:
+            def on_data_changed():
+                QTimer.singleShot(0, self.results_pane.refresh)
+
+            def on_client_changed(_count):
+                QTimer.singleShot(0, self._update_network_status)
+
+            start_server(
+                port=settings.server_port,
+                on_data_changed=on_data_changed,
+                on_client_changed=on_client_changed,
+            )
+            set_runtime_mode("server")
+            self.append_logs([f"🖥️ Server auto-started on port {settings.server_port}"])
+            self._update_network_status()
+            self.settings_widget.update_catalog_ui_for_mode()
+            self._register_server_callbacks()
+            QTimer.singleShot(500, self._auto_set_uploaded_catalog)
+        except Exception as e:
+            self.append_logs([f"❌ Server auto-start failed: {e}"])
+
+    def _auto_connect_client_if_needed(self):
+        """Auto-connect to server on app launch if settings say client mode."""
+        from gearledger.desktop.settings_manager import load_settings
+        from gearledger.api_client import connect_to_server, get_client
+        from gearledger.data_layer import set_runtime_mode
+
+        settings = load_settings()
+        if settings.network_mode != "client":
+            return
+        if get_client() and get_client().is_connected():
+            return
+        address = (settings.server_address or "").strip()
+        if not address:
+            return
+        if not address.startswith("http://") and not address.startswith("https://"):
+            address = f"http://{address}"
+        try:
+            client = connect_to_server(address)
+            if client:
+                set_runtime_mode("client")
+                self.append_logs([f"✓ Auto-connected to {address}"])
+                self._update_network_status()
+                self.settings_widget.update_catalog_ui_for_mode()
+                self._initialize_client_connection()
+            else:
+                self.append_logs([f"⚠️ Auto-connect to {address} failed (server unreachable)"])
+        except Exception as e:
+            self.append_logs([f"⚠️ Auto-connect failed: {e}"])
 
     def _sync_catalog_from_server(self, force: bool = False):
         """Download catalog from server if in client mode.
@@ -1593,9 +1778,10 @@ class MainWindow(QWidget):
         from gearledger.api_client import get_client
 
         mode = get_network_mode()
+        server = get_server()
+        client = get_client()
 
         if mode == "server":
-            server = get_server()
             if server and server.is_running():
                 count = server.get_connected_clients_count()
                 sse_count = server.get_sse_clients_count()
@@ -1613,7 +1799,6 @@ class MainWindow(QWidget):
                 status_text = "🖥️ Server: Stopped"
                 bg_color = "#95a5a6"  # Gray
         elif mode == "client":
-            client = get_client()
             if client and client.is_connected():
                 # Check SSE connection status
                 if self._sse_client and self._sse_client.is_connected():
@@ -1647,6 +1832,38 @@ class MainWindow(QWidget):
             }}
         """
         )
+        # Update server button visibility and text
+        if mode == "server":
+            self.server_toggle_btn.setVisible(True)
+            if server and server.is_running():
+                self.server_toggle_btn.setText(tr("stop_server"))
+                self.server_toggle_btn.setStyleSheet(
+                    "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
+                )
+            else:
+                self.server_toggle_btn.setText(tr("start_server"))
+                self.server_toggle_btn.setStyleSheet(
+                    "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
+                )
+        else:
+            self.server_toggle_btn.setVisible(False)
+
+        # Update client connect button visibility and text
+        if mode == "client":
+            self.client_connect_btn.setVisible(True)
+            if client and client.is_connected():
+                self.client_connect_btn.setText(tr("disconnect"))
+                self.client_connect_btn.setStyleSheet(
+                    "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
+                )
+            else:
+                self.client_connect_btn.setText(tr("connect"))
+                self.client_connect_btn.setStyleSheet(
+                    "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
+                )
+        else:
+            self.client_connect_btn.setVisible(False)
+
         # Force update the label
         self.network_status_label.update()
         self.network_status_label.repaint()

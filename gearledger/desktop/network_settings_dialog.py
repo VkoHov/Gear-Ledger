@@ -235,8 +235,10 @@ class NetworkSettingsDialog(QDialog):
 
         # Update button states based on current connection status
         from gearledger.server import get_server
+        from gearledger.api_client import get_client
 
         server = get_server()
+        client = get_client()
         if is_server and server and server.is_running():
             self.start_server_btn.setText(tr("stop_server"))
             self.start_server_btn.setStyleSheet(
@@ -255,16 +257,28 @@ class NetworkSettingsDialog(QDialog):
                     "color: #7f8c8d; font-style: italic;"
                 )
 
-        if is_client and self._client and self._client.is_connected():
+        if is_client and client and client.is_connected():
             self.connect_btn.setText(tr("disconnect"))
             self.connect_btn.setStyleSheet(
                 "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
             )
+            self.connection_status_label.setText(
+                tr("connection_status_connected", address=client.server_url)
+            )
+            self.connection_status_label.setStyleSheet(
+                "color: #27ae60; font-weight: bold;"
+            )
+            self._client = client  # Keep in sync for _toggle_connection
         else:
             self.connect_btn.setText(tr("connect"))
             self.connect_btn.setStyleSheet(
                 "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
             )
+            if is_client:
+                self.connection_status_label.setText(tr("connection_status_disconnected"))
+                self.connection_status_label.setStyleSheet(
+                    "color: #7f8c8d; font-style: italic;"
+                )
 
     def _toggle_server(self):
         """Start or stop the server."""
@@ -352,13 +366,13 @@ class NetworkSettingsDialog(QDialog):
             self.network_mode_changed.emit("standalone", "")
             QMessageBox.information(self, tr("connection"), tr("disconnected_msg"))
         else:
-            # Connect
-            # Check if a server is selected from dropdown
+            # Connect - use URL only (currentData or normalized line edit text)
             current_data = self.server_address_combo.currentData()
             if current_data:
                 address = current_data
             else:
-                address = self.server_address_combo.lineEdit().text().strip()
+                raw = self.server_address_combo.lineEdit().text().strip()
+                address = self._normalize_server_address(raw) or raw
 
             if not address:
                 QMessageBox.warning(self, tr("connection"), tr("enter_server_address"))
@@ -504,6 +518,26 @@ class NetworkSettingsDialog(QDialog):
         )
         self._stop_discovery()
 
+    def _normalize_server_address(self, text: str) -> str:
+        """Extract URL from text. Handles 'Name (ip:port)' or 'http://ip:port' format."""
+        import re
+        text = (text or "").strip()
+        if not text:
+            return ""
+        # Already a URL
+        if text.startswith("http://") or text.startswith("https://"):
+            return text
+        # Extract ip:port from "Name (ip:port)" format
+        match = re.search(r"\(([^)]+)\)", text)
+        if match:
+            host_port = match.group(1).strip()
+            if host_port and ":" in host_port:
+                return f"http://{host_port}"
+        # Plain ip:port
+        if ":" in text and not text.startswith("http"):
+            return f"http://{text}"
+        return text
+
     def _update_discovered_servers(self):
         """Update the combo box with discovered servers."""
         if not self.client_radio.isChecked():
@@ -529,19 +563,16 @@ class NetworkSettingsDialog(QDialog):
 
         if discovered:
             for server in discovered:
-                display_text = f"{server.name} ({server.ip}:{server.port})"
                 server_url = server.get_url()
-                print(
-                    f"[DISCOVERY] Adding server to combo: {display_text} -> {server_url}"
-                )
-                self.server_address_combo.addItem(display_text, server_url)
+                # Use URL only for both display and data - ensures Connect uses valid address
+                self.server_address_combo.addItem(server_url, server_url)
+                print(f"[DISCOVERY] Adding server to combo: {server_url}")
 
             # Auto-select first server if field is empty, otherwise restore selection
             if not current_text:
                 # Field is empty - auto-select first discovered server
                 first_server_url = discovered[0].get_url()
                 self.server_address_combo.setCurrentIndex(0)
-                # Explicitly set the text in the lineEdit to ensure it updates
                 self.server_address_combo.lineEdit().setText(first_server_url)
                 if len(discovered) == 1:
                     print(f"[DISCOVERY] Auto-selected server: {first_server_url}")
@@ -553,15 +584,20 @@ class NetworkSettingsDialog(QDialog):
             else:
                 # Try to restore selection if it matches a discovered server
                 found_match = False
+                normalized_current = self._normalize_server_address(current_text)
                 for i in range(self.server_address_combo.count()):
-                    if self.server_address_combo.itemData(i) == current_text:
+                    url = self.server_address_combo.itemData(i)
+                    if url == current_text or url == normalized_current:
                         self.server_address_combo.setCurrentIndex(i)
+                        self.server_address_combo.lineEdit().setText(url)
                         found_match = True
                         break
 
                 if not found_match:
-                    # If current text doesn't match, keep it as custom entry
-                    self.server_address_combo.lineEdit().setText(current_text)
+                    # Use normalized URL if it looks like "Name (ip:port)", else keep as-is
+                    self.server_address_combo.lineEdit().setText(
+                        normalized_current or current_text
+                    )
 
             self.discovery_status_label.setText(
                 tr("servers_found", count=len(discovered))
@@ -580,10 +616,11 @@ class NetworkSettingsDialog(QDialog):
 
     def accept(self):
         """Save settings and close dialog."""
-        # Save network settings
+        # Save network settings - normalize server address to URL only
         self.settings.server_port = self.server_port_spin.value()
+        raw = self.server_address_combo.lineEdit().text().strip()
         self.settings.server_address = (
-            self.server_address_combo.lineEdit().text().strip()
+            self._normalize_server_address(raw) or raw
         )
         if self.server_radio.isChecked():
             self.settings.network_mode = "server"

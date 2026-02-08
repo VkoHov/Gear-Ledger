@@ -40,6 +40,7 @@ class SSEClientThread(QThread):
         self._should_stop = False
 
         while not self._should_stop:
+            response = None
             try:
                 # Connect to SSE endpoint
                 url = f"{self.server_url}/api/events"
@@ -110,6 +111,13 @@ class SSEClientThread(QThread):
                     if "Read timed out" not in str(e) and "Connection" not in str(e):
                         self.error_occurred.emit(f"Unexpected error: {e}")
                     self.msleep(5000)
+            finally:
+                # Close connection so server detects disconnect and removes from _sse_clients
+                if response is not None:
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
 
         self._running = False
         self._connected = False

@@ -232,15 +232,15 @@ class GearLedgerServer:
                     while True:
                         try:
                             # Wait for event with timeout to keep connection alive
-                            # Use 20 seconds to send keepalive more frequently (before client timeout)
-                            event = client_queue.get(timeout=20)
+                            # Use 5 seconds so we detect client disconnect within ~5s (not 20s)
+                            event = client_queue.get(timeout=5)
                             try:
                                 yield f"data: {json.dumps(event)}\n\n"
                             except OSError:
                                 # Client disconnected, exit silently
                                 break
                         except queue.Empty:
-                            # Send keepalive ping every 20 seconds to prevent client timeout
+                            # Send keepalive ping every 5 seconds to detect disconnect sooner
                             # Also refresh client activity so it's not marked stale
                             self._connected_clients[client_ip] = time.time()
                             try:
@@ -262,6 +262,9 @@ class GearLedgerServer:
                             print(
                                 f"[SERVER] SSE client disconnected. Total clients: {len(self._sse_clients)}"
                             )
+                    # Remove from _connected_clients so server shows 0 immediately on disconnect
+                    if client_ip in self._connected_clients:
+                        del self._connected_clients[client_ip]
                     # Notify UI so server status updates (e.g. "no real-time sync" when last SSE disconnects)
                     self._notify_client_changed(len(self._connected_clients))
 

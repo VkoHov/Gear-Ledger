@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QLabel,
     QLineEdit,
+    QSpinBox,
 )
 from PyQt6.QtGui import QFont
 
@@ -60,23 +61,23 @@ except Exception as e:
         return x
 
 
-class NameConfirmationDialog(QDialog):
-    """Custom dialog for confirming user/client name after successful entry."""
+class AddToResultsDialog(QDialog):
+    """Dialog to enter quantity and add match to results."""
 
-    def __init__(self, parent, client_name: str):
+    def __init__(self, parent, artikul: str, client: str):
         super().__init__(parent)
-        self.client_name = client_name
+        self.artikul = artikul
+        self.client = client
+        self.quantity = 1
         self._setup_ui()
-        # Speak only the client name when dialog opens
-        speak_name(client_name)
+        speak_name(client)
 
     def _setup_ui(self):
-        """Set up the dialog UI with improved layout and typography."""
-        self.setWindowTitle(tr("manual_entry_success"))
-        self.setMinimumSize(700, 400)  # Increased to accommodate larger text
+        """Set up the dialog UI."""
+        self.setWindowTitle(tr("add_to_results"))
+        self.setMinimumSize(500, 300)
         self.setModal(True)
 
-        # Center dialog on parent window
         if self.parent():
             parent_geometry = self.parent().geometry()
             dialog_size = self.sizeHint()
@@ -90,91 +91,56 @@ class NameConfirmationDialog(QDialog):
             )
             self.move(x, y)
 
-        # Main layout with generous padding
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(24)
+        main_layout.setSpacing(20)
         main_layout.setContentsMargins(32, 32, 32, 32)
 
-        # Client name as main headline
-        name_label = QLabel(self.client_name)
+        # Match display
+        match_text = f"{self.artikul} → {self.client}"
+        name_label = QLabel(match_text)
         name_font = QFont()
-        name_font.setPointSize(84)  # Doubled from 42 to 84
+        name_font.setPointSize(24)
         name_font.setBold(True)
         name_label.setFont(name_font)
         name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         name_label.setWordWrap(True)
-        # Use font-size in stylesheet as well to ensure it's applied
         name_label.setStyleSheet(
-            """
-            color: #2c3e50;
-            padding: 16px;
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            font-size: 84pt;
-            font-weight: bold;
-        """
+            "color: #2c3e50; padding: 16px; background-color: #f8f9fa; "
+            "border-radius: 8px; font-weight: bold; font-size: 24px;"
         )
         main_layout.addWidget(name_label)
 
-        # Friendly confirmation message
-        confirmation_label = QLabel(tr("entry_saved_confirmation"))
-        confirmation_font = QFont()
-        confirmation_font.setPointSize(18)  # Increased from 14 to 18
-        confirmation_label.setFont(confirmation_font)
-        confirmation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        confirmation_label.setWordWrap(True)
-        confirmation_label.setStyleSheet("color: #5a6c7d; padding: 12px;")
-        main_layout.addWidget(confirmation_label)
+        # Quantity input
+        qty_layout = QHBoxLayout()
+        qty_label = QLabel(tr("quantity_label"))
+        qty_font = QFont()
+        qty_font.setPointSize(18)
+        qty_label.setFont(qty_font)
+        qty_layout.addWidget(qty_label)
+        self.quantity_spin = QSpinBox()
+        self.quantity_spin.setMinimum(1)
+        self.quantity_spin.setMaximum(9999)
+        self.quantity_spin.setValue(1)
+        self.quantity_spin.setMinimumHeight(48)
+        self.quantity_spin.setMinimumWidth(120)
+        spin_font = QFont()
+        spin_font.setPointSize(18)
+        self.quantity_spin.setFont(spin_font)
+        self.quantity_spin.setStyleSheet("font-size: 18px; padding: 8px;")
+        qty_layout.addWidget(self.quantity_spin)
+        qty_layout.addStretch()
+        main_layout.addLayout(qty_layout)
 
-        # Add stretch to push buttons down
         main_layout.addStretch()
 
-        # Button layout
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(12)
-
-        # Copy name button (optional secondary action)
-        copy_btn = QPushButton(tr("copy_name"))
-        copy_btn.setMinimumHeight(48)  # Increased from 40 to 48
-        copy_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #e9ecef;
-                color: #495057;
-                border: 1px solid #ced4da;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background-color: #dee2e6;
-            }
-            QPushButton:pressed {
-                background-color: #ced4da;
-            }
-        """
-        )
-        copy_btn.clicked.connect(self._copy_name)
-        button_layout.addWidget(copy_btn)
-
-        button_layout.addStretch()
-
-        # OK button (primary action) - detect language
-        try:
-            from gearledger.speech import get_speech_language
-
-            current_lang = get_speech_language()
-        except Exception:
-            current_lang = "en"
-        ok_text = "OK" if current_lang == "en" else "ОК"
-        ok_btn = QPushButton(ok_text)
-        ok_btn.setMinimumHeight(48)  # Increased from 40 to 48
-        ok_btn.setMinimumWidth(140)  # Increased from 120 to 140
+        # Add button
+        ok_btn = QPushButton(tr("add_to_results"))
+        ok_btn.setMinimumHeight(48)
         ok_btn.setDefault(True)
         ok_btn.setStyleSheet(
             """
             QPushButton {
-                background-color: #007bff;
+                background-color: #27ae60;
                 color: white;
                 border: none;
                 border-radius: 6px;
@@ -183,24 +149,17 @@ class NameConfirmationDialog(QDialog):
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #0056b3;
-            }
-            QPushButton:pressed {
-                background-color: #004085;
+                background-color: #219a52;
             }
         """
         )
-        ok_btn.clicked.connect(self.accept)
-        button_layout.addWidget(ok_btn)
+        ok_btn.clicked.connect(self._on_add)
+        main_layout.addWidget(ok_btn)
 
-        main_layout.addLayout(button_layout)
-
-    def _copy_name(self):
-        """Copy the client name to clipboard."""
-        from PyQt6.QtWidgets import QApplication
-
-        clipboard = QApplication.clipboard()
-        clipboard.setText(self.client_name)
+    def _on_add(self):
+        """Store quantity and close dialog."""
+        self.quantity = self.quantity_spin.value()
+        self.accept()
 
 
 class MainWindow(QWidget):
@@ -1812,61 +1771,11 @@ class MainWindow(QWidget):
         # Handle match result
         client = res.get("match_client")
         artikul = res.get("match_artikul")
-        ledger_path = self.settings_widget.get_results_path()
 
         if client and artikul:
             self.results_widget.set_match_result(f"{artikul} → {client}")
             speak_match(artikul, client)
-
-            # Validate weight price before recording
-            if not self.settings_widget.is_weight_price_valid():
-                error_msg = self.settings_widget.get_weight_price_error_message()
-                from PyQt6.QtWidgets import QMessageBox
-
-                QMessageBox.critical(
-                    self,
-                    tr("weight_price_required"),
-                    tr("cannot_record_match", error=error_msg),
-                )
-                return
-
-            # Record the match with scale weight
-            from gearledger.data_layer import record_match_unified
-
-            # Use scale weight if available, otherwise default to 1
-            scale_weight = self.scale_widget.get_current_weight()
-            weight_to_use = scale_weight if scale_weight > 0 else 1.0
-
-            rec = record_match_unified(
-                ledger_path,
-                artikul,
-                client,
-                qty_inc=1,
-                weight_inc=weight_to_use,
-                catalog_path=self.settings_widget.get_catalog_path(),
-                weight_price=self.settings_widget.get_weight_price(),
-            )
-            if rec["ok"]:
-                self.append_logs(
-                    [
-                        tr(
-                            "log_logged_to_results",
-                            action=rec["action"],
-                            path=rec["path"],
-                        )
-                    ]
-                )
-                # Force refresh with delay in server mode to ensure database write is visible
-                from gearledger.data_layer import get_network_mode
-
-                mode = get_network_mode()
-                if mode == "server":
-                    # In server mode, add a small delay to ensure database transaction is committed and visible
-                    QTimer.singleShot(150, self.results_pane.refresh)
-                else:
-                    self.results_pane.refresh()
-            else:
-                self.append_logs([tr("log_results_log_failed", error=rec["error"])])
+            self._show_add_dialog_and_record(artikul, client)
         else:
             self.results_widget.set_match_result(tr("status_not_found"))
             best = res.get("best_visible") or res.get("best_normalized")
@@ -1920,71 +1829,11 @@ class MainWindow(QWidget):
         # Handle fuzzy result
         c = res.get("match_client")
         a = res.get("match_artikul")
-        ledger_path = self.settings_widget.get_results_path()
 
         if c and a:
             self.results_widget.update_fuzzy_result(c, a)
-            # Speak only the client name (via configured engine: OS/OpenAI/Piper)
-            try:
-                print(f"[SPEECH] _finish_fuzzy_process speaking client='{c}'")
-            except Exception:
-                pass
             speak_name(c)
-
-            # Validate weight price before recording
-            if not self.settings_widget.is_weight_price_valid():
-                error_msg = self.settings_widget.get_weight_price_error_message()
-                from PyQt6.QtWidgets import QMessageBox
-
-                QMessageBox.critical(
-                    self,
-                    tr("weight_price_required"),
-                    tr("cannot_record_match", error=error_msg),
-                )
-                return
-
-            # Record the match with scale weight
-            from gearledger.data_layer import record_match_unified
-
-            # Use scale weight if available, otherwise default to 1
-            scale_weight = self.scale_widget.get_current_weight()
-            weight_to_use = scale_weight if scale_weight > 0 else 1.0
-
-            catalog_path = self.settings_widget.get_catalog_path()
-            print(
-                f"[MAIN_WINDOW] Recording match: artikul={a}, client={c}, catalog_path={catalog_path}"
-            )
-
-            rec = record_match_unified(
-                ledger_path,
-                a,
-                c,
-                qty_inc=1,
-                weight_inc=weight_to_use,
-                catalog_path=catalog_path,
-                weight_price=self.settings_widget.get_weight_price(),
-            )
-            if rec["ok"]:
-                self.append_logs(
-                    [
-                        tr(
-                            "log_logged_to_results",
-                            action=rec["action"],
-                            path=rec["path"],
-                        )
-                    ]
-                )
-                # Force refresh with delay in server mode to ensure database write is visible
-                from gearledger.data_layer import get_network_mode
-
-                mode = get_network_mode()
-                if mode == "server":
-                    # In server mode, add a small delay to ensure database transaction is committed and visible
-                    QTimer.singleShot(150, self.results_pane.refresh)
-                else:
-                    self.results_pane.refresh()
-            else:
-                self.append_logs([tr("log_results_log_failed", error=rec["error"])])
+            self._show_add_dialog_and_record(a, c)
 
         self._update_controls()
 
@@ -2013,60 +1862,11 @@ class MainWindow(QWidget):
             if result.get("ok"):
                 client = result.get("match_client")
                 artikul = result.get("match_artikul")
-                ledger_path = self.settings_widget.get_results_path()
 
                 if client and artikul:
                     self.results_widget.update_manual_result(client, artikul)
                     speak_match(artikul, client)
-
-                    # Validate weight price before recording
-                    if not self.settings_widget.is_weight_price_valid():
-                        error_msg = (
-                            self.settings_widget.get_weight_price_error_message()
-                        )
-                        from PyQt6.QtWidgets import QMessageBox
-
-                        QMessageBox.critical(
-                            self,
-                            tr("weight_price_required"),
-                            tr("cannot_record_manual_search", error=error_msg),
-                        )
-                        return
-
-                    # Record the match
-                    from gearledger.data_layer import record_match_unified
-
-                    rec = record_match_unified(
-                        ledger_path,
-                        artikul,
-                        client,
-                        qty_inc=1,
-                        weight_inc=1,
-                        catalog_path=self.settings_widget.get_catalog_path(),
-                        weight_price=self.settings_widget.get_weight_price(),
-                    )
-                    if rec["ok"]:
-                        self.append_logs(
-                            [
-                                tr(
-                                    "log_logged_to_results",
-                                    action=rec["action"],
-                                    path=rec["path"],
-                                )
-                            ]
-                        )
-                        # Force refresh with delay in server mode to ensure database write is visible
-                        from gearledger.data_layer import get_network_mode
-
-                        mode = get_network_mode()
-                        if mode == "server":
-                            QTimer.singleShot(150, self.results_pane.refresh)
-                        else:
-                            self.results_pane.refresh()
-                    else:
-                        self.append_logs(
-                            [tr("log_results_log_failed", error=rec["error"])]
-                        )
+                    self._show_add_dialog_and_record(artikul, client)
                 else:
                     self.results_widget.update_manual_result("", "")
             else:
@@ -2083,6 +1883,67 @@ class MainWindow(QWidget):
         except Exception as e:
             self.append_logs([tr("log_manual_search_error", error=str(e))])
             self.results_widget.update_manual_result("", "")
+
+    def _show_add_dialog_and_record(self, artikul: str, client: str):
+        """Show add-to-results dialog; record when user confirms."""
+        if not self.settings_widget.is_weight_price_valid():
+            error_msg = self.settings_widget.get_weight_price_error_message()
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(
+                self,
+                tr("weight_price_required"),
+                tr("cannot_record_match", error=error_msg),
+            )
+            return
+
+        dialog = AddToResultsDialog(self, artikul, client)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        quantity = dialog.quantity
+        ledger_path = self.settings_widget.get_results_path()
+        manual_weight = getattr(self, "_pending_manual_weight", None)
+        if manual_weight is not None:
+            total_weight = manual_weight
+            self._pending_manual_weight = None
+        else:
+            total_weight = self.scale_widget.get_current_weight()
+            if total_weight <= 0:
+                total_weight = 1.0
+        # Store weight per item: total_weight / quantity
+        weight_per_item = total_weight / quantity if quantity > 0 else total_weight
+
+        from gearledger.data_layer import record_match_unified
+
+        rec = record_match_unified(
+            ledger_path,
+            artikul,
+            client,
+            qty_inc=quantity,
+            weight_inc=weight_per_item,
+            catalog_path=self.settings_widget.get_catalog_path(),
+            weight_price=self.settings_widget.get_weight_price(),
+        )
+        if rec["ok"]:
+            self.append_logs(
+                [
+                    tr(
+                        "log_logged_to_results",
+                        action=rec["action"],
+                        path=rec["path"],
+                    )
+                ]
+            )
+            from gearledger.data_layer import get_network_mode
+
+            mode = get_network_mode()
+            if mode == "server":
+                QTimer.singleShot(150, self.results_pane.refresh)
+            else:
+                self.results_pane.refresh()
+        else:
+            self.append_logs([tr("log_results_log_failed", error=rec["error"])])
 
     def _on_manual_entry_requested(self, part_code: str, weight: float):
         """Handle manual entry request."""
@@ -2109,79 +1970,13 @@ class MainWindow(QWidget):
             if result.get("ok"):
                 client = result.get("match_client")
                 artikul = result.get("match_artikul")
-                ledger_path = self.settings_widget.get_results_path()
 
                 if client and artikul:
-                    # Don't speak here - dialog will speak only the client name
-                    # speak_match(artikul, client)
-
-                    # Validate weight price before recording
-                    if not self.settings_widget.is_weight_price_valid():
-                        error_msg = (
-                            self.settings_widget.get_weight_price_error_message()
-                        )
-                        from PyQt6.QtWidgets import QMessageBox
-
-                        QMessageBox.critical(
-                            self,
-                            tr("weight_price_required"),
-                            tr("cannot_record_manual_entry", error=error_msg),
-                        )
-                        return
-
-                    # Record the match with the specified weight
-                    from gearledger.data_layer import record_match_unified
-
-                    rec = record_match_unified(
-                        ledger_path,
-                        artikul,
-                        client,
-                        qty_inc=1,
-                        weight_inc=weight,
-                        catalog_path=self.settings_widget.get_catalog_path(),
-                        weight_price=self.settings_widget.get_weight_price(),
-                    )
-                    if rec["ok"]:
-                        self.append_logs(
-                            [
-                                tr(
-                                    "log_manual_entry_logged",
-                                    artikul=artikul,
-                                    client=client,
-                                    weight=weight,
-                                )
-                            ]
-                        )
-                        # Force refresh with delay in server mode to ensure database write is visible
-                        from gearledger.data_layer import get_network_mode
-
-                        mode = get_network_mode()
-                        if mode == "server":
-                            QTimer.singleShot(150, self.results_pane.refresh)
-                        else:
-                            self.results_pane.refresh()
-
-                        # Clear the manual entry fields
-                        self.settings_widget.clear_manual_entry()
-
-                        # Show success message with improved dialog
-                        def show_dialog():
-                            dialog = NameConfirmationDialog(self, client)
-                            dialog.exec()
-
-                        # Ensure dialog opens on main thread
-                        QTimer.singleShot(0, show_dialog)
-                    else:
-                        self.append_logs(
-                            [tr("log_manual_entry_failed", error=rec["error"])]
-                        )
-                        from PyQt6.QtWidgets import QMessageBox
-
-                        QMessageBox.warning(
-                            self,
-                            tr("manual_entry_failed"),
-                            tr("manual_entry_failed_msg", error=rec["error"]),
-                        )
+                    self._pending_manual_weight = weight
+                    self.results_widget.update_manual_result(client, artikul)
+                    speak_match(artikul, client)
+                    self.settings_widget.clear_manual_entry()
+                    self._show_add_dialog_and_record(artikul, client)
                 else:
                     self.append_logs([tr("log_no_match_manual_code", code=part_code)])
                     # Speak that no match was found

@@ -848,6 +848,10 @@ TRANSLATIONS = {
         "en": "Add to Results",
         "ru": "Добавить в результаты",
     },
+    "quantity_label": {
+        "en": "Quantity:",
+        "ru": "Количество:",
+    },
     "reset_tooltip": {
         "en": "Clear selection and start with new empty results file",
         "ru": "Очистить выбор и начать с нового пустого файла результатов",

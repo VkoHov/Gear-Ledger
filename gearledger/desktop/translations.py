@@ -1439,6 +1439,10 @@ TRANSLATIONS = {
         "en": "⏹️ Stop Server",
         "ru": "⏹️ Остановить сервер",
     },
+    "reconnect_sse": {
+        "en": "🔄 Reconnect",
+        "ru": "🔄 Переподключить",
+    },
     "server_status_stopped": {
         "en": "Server is not running",
         "ru": "Сервер не запущен",

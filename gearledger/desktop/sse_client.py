@@ -32,6 +32,7 @@ class SSEClientThread(QThread):
         self.timeout = timeout
         self._running = False
         self._should_stop = False
+        self._connected = False  # Actual connection state (True when stream is open)
 
     def run(self):
         """Run the SSE client in background thread."""
@@ -61,10 +62,12 @@ class SSEClientThread(QThread):
                     )
                     # Wait before retrying
                     if not self._should_stop:
+                        print("[SSE_CLIENT] Retrying in 5 seconds...")
                         self.msleep(5000)  # Wait 5 seconds before retry
                     continue
 
                 print("[SSE_CLIENT] Connected to SSE stream")
+                self._connected = True
                 self.connected.emit()
 
                 # Read events from stream
@@ -84,27 +87,32 @@ class SSEClientThread(QThread):
 
                 # Connection closed
                 print("[SSE_CLIENT] Connection closed")
+                self._connected = False
                 self.disconnected.emit()
 
             except requests.exceptions.Timeout:
                 if not self._should_stop:
-                    print("[SSE_CLIENT] Connection timeout, will retry")
-                    # Don't emit error for timeout - disconnected signal will handle it
-                    self.msleep(5000)  # Wait 5 seconds before retry
+                    self._connected = False
+                    print("[SSE_CLIENT] Connection timeout, will retry in 5 seconds...")
+                    self.disconnected.emit()
+                    self.msleep(5000)
             except requests.exceptions.ConnectionError as e:
                 if not self._should_stop:
-                    print(f"[SSE_CLIENT] Connection error: {e}, will retry")
-                    # Don't emit error for connection errors - disconnected signal will handle it
-                    self.msleep(5000)  # Wait 5 seconds before retry
+                    self._connected = False
+                    print(f"[SSE_CLIENT] Connection error (server unreachable?): {e}, will retry in 5 seconds...")
+                    self.disconnected.emit()
+                    self.msleep(5000)
             except Exception as e:
                 if not self._should_stop:
-                    print(f"[SSE_CLIENT] Error: {e}, will retry")
-                    # Only emit error for unexpected errors
+                    self._connected = False
+                    print(f"[SSE_CLIENT] Error: {e}, will retry in 5 seconds...")
+                    self.disconnected.emit()
                     if "Read timed out" not in str(e) and "Connection" not in str(e):
                         self.error_occurred.emit(f"Unexpected error: {e}")
-                    self.msleep(5000)  # Wait 5 seconds before retry
+                    self.msleep(5000)
 
         self._running = False
+        self._connected = False
         print("[SSE_CLIENT] SSE client stopped")
 
     def _process_event(self, event_data: str):
@@ -158,8 +166,9 @@ class SSEClientThread(QThread):
     def stop(self):
         """Stop the SSE client."""
         self._should_stop = True
+        self._connected = False
         self.wait(2000)  # Wait up to 2 seconds for thread to stop
 
     def is_connected(self) -> bool:
-        """Check if SSE client is running and connected."""
-        return self._running and not self._should_stop
+        """Check if SSE client has an active stream connection."""
+        return self._connected

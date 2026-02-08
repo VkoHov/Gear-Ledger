@@ -584,6 +584,15 @@ class MainWindow(QWidget):
         self.client_init_progress_label.setVisible(False)
         settings_btn_layout.addWidget(self.client_init_progress_label)
 
+        # Reconnect SSE button (visible when SSE disconnected in client mode)
+        self.sse_reconnect_btn = QPushButton(tr("reconnect_sse"))
+        self.sse_reconnect_btn.setStyleSheet(
+            "background-color: #e67e22; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.sse_reconnect_btn.clicked.connect(self._on_sse_reconnect_clicked)
+        self.sse_reconnect_btn.setVisible(False)
+        settings_btn_layout.addWidget(self.sse_reconnect_btn)
+
         # Network settings button
         self.network_settings_btn = QPushButton("🌐 " + tr("network_configuration"))
         self.network_settings_btn.setStyleSheet(
@@ -1531,6 +1540,21 @@ class MainWindow(QWidget):
             ]
         )
 
+    def _on_sse_reconnect_clicked(self):
+        """Manually restart SSE connection when stuck reconnecting."""
+        from gearledger.api_client import get_client
+
+        client = get_client()
+        if not client or not client.is_connected():
+            return
+        if not self._sse_client:
+            self._start_sse_connection_step()
+            return
+        self.append_logs(["🔄 Restarting real-time sync connection..."])
+        self._sse_client.stop()
+        self._sse_client = None
+        self._start_sse_connection_step()
+
     def _on_sse_disconnected(self):
         """Handle SSE connection lost."""
         print("[MAIN_WINDOW] ✗ SSE connection lost, will attempt to reconnect")
@@ -1541,8 +1565,8 @@ class MainWindow(QWidget):
                 "   Updates may be delayed until connection is restored",
             ]
         )
-        # Update network status to show disconnection
-        self._update_network_status()
+        # Force status to show disconnected (SSE may reconnect before we run, so don't recheck)
+        self._update_network_status(force_sse_disconnected=True)
         # Show prominent disconnection indicator
         if self._client_initialized:
             self._update_client_init_progress(
@@ -1725,6 +1749,9 @@ class MainWindow(QWidget):
                     "   Receiving updates from server again",
                 ]
             )
+            # Hide the "reconnecting..." progress label
+            if hasattr(self, "client_init_progress_label"):
+                self.client_init_progress_label.setVisible(False)
             # Update network status to show SSE reconnected
             self._update_network_status()
 
@@ -1764,6 +1791,9 @@ class MainWindow(QWidget):
         # Update progress indicator to show ready
         self._update_client_init_progress("✅ Ready", "#27ae60")
 
+        # Update status bar from "Initializing..." to "Connected"
+        self._update_network_status()
+
         # Enable client functionality
         self._set_client_enabled(True)
 
@@ -1772,8 +1802,13 @@ class MainWindow(QWidget):
             2000, lambda: self.client_init_progress_label.setVisible(False)
         )
 
-    def _update_network_status(self):
-        """Update the network status label showing current mode and connection status."""
+    def _update_network_status(self, force_sse_disconnected: bool = False):
+        """Update the network status label showing current mode and connection status.
+
+        Args:
+            force_sse_disconnected: If True, treat SSE as disconnected (used when we just
+                received the disconnected signal, since SSE may reconnect before we run).
+        """
         from gearledger.data_layer import get_network_mode
         from gearledger.server import get_server
         from gearledger.api_client import get_client
@@ -1801,8 +1836,13 @@ class MainWindow(QWidget):
                 bg_color = "#95a5a6"  # Gray
         elif mode == "client":
             if client and client.is_connected():
-                # Check SSE connection status
-                if self._sse_client and self._sse_client.is_connected():
+                # Check SSE connection status (use force_sse_disconnected when we received disconnect signal)
+                sse_connected = (
+                    not force_sse_disconnected
+                    and self._sse_client
+                    and self._sse_client.is_connected()
+                )
+                if sse_connected:
                     if self._client_initialized:
                         status_text = "💻 Client: Connected (Real-time sync active)"
                         bg_color = "#27ae60"  # Green
@@ -1857,13 +1897,27 @@ class MainWindow(QWidget):
                 self.client_connect_btn.setStyleSheet(
                     "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
                 )
+                # Show Reconnect button when SSE disconnected (API still connected)
+                sse_ok = (
+                    not force_sse_disconnected
+                    and self._sse_client
+                    and self._sse_client.is_connected()
+                )
+                if hasattr(self, "sse_reconnect_btn"):
+                    self.sse_reconnect_btn.setVisible(
+                        client.is_connected() and not sse_ok and self._client_initialized
+                    )
             else:
                 self.client_connect_btn.setText(tr("connect"))
                 self.client_connect_btn.setStyleSheet(
                     "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
                 )
+                if hasattr(self, "sse_reconnect_btn"):
+                    self.sse_reconnect_btn.setVisible(False)
         else:
             self.client_connect_btn.setVisible(False)
+            if hasattr(self, "sse_reconnect_btn"):
+                self.sse_reconnect_btn.setVisible(False)
 
         # Force update the label
         self.network_status_label.update()

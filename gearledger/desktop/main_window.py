@@ -546,7 +546,6 @@ class MainWindow(QWidget):
             }
         """
         )
-        self._update_network_status()
         settings_btn_layout.addWidget(self.network_status_label)
 
         # Start/Stop Server button (visible in server mode)
@@ -566,6 +565,8 @@ class MainWindow(QWidget):
         self.client_connect_btn.clicked.connect(self._on_toggle_client_connection)
         self.client_connect_btn.setVisible(False)
         settings_btn_layout.addWidget(self.client_connect_btn)
+
+        self._update_network_status()
 
         # Client initialization progress label (shows initialization steps)
         self.client_init_progress_label = QLabel("")

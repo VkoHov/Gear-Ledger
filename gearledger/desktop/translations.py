@@ -282,6 +282,26 @@ TRANSLATIONS = {
         "en": "Results Excel (ledger):",
         "ru": "Результаты Excel (журнал):",
     },
+    "catalog_status_from_server": {
+        "en": "Catalog from server",
+        "ru": "Каталог с сервера",
+    },
+    "catalog_status_not_on_server": {
+        "en": "No catalog on server. Please upload on server.",
+        "ru": "Нет каталога на сервере. Загрузите на сервере.",
+    },
+    "catalog_status_not_connected": {
+        "en": "Not connected to server",
+        "ru": "Не подключено к серверу",
+    },
+    "results_status_available": {
+        "en": "Results: Available from server",
+        "ru": "Результаты: Доступны с сервера",
+    },
+    "results_status_not_connected": {
+        "en": "Results: Not connected",
+        "ru": "Результаты: Не подключено",
+    },
     "catalog": {
         "en": "Catalog:",
         "ru": "Каталог:",

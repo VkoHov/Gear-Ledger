@@ -38,7 +38,8 @@ class SettingsWidget(QGroupBox):
 
         # Catalog Excel file
         catalog_layout = QHBoxLayout()
-        catalog_layout.addWidget(QLabel(tr("catalog_excel_lookup")))
+        self.catalog_label = QLabel(tr("catalog_excel_lookup"))
+        catalog_layout.addWidget(self.catalog_label)
         self.catalog_edit = QLineEdit()
         self.btn_catalog = QPushButton(tr("browse"))
         catalog_layout.addWidget(self.catalog_edit, 1)
@@ -58,7 +59,8 @@ class SettingsWidget(QGroupBox):
 
         # Results Excel file
         results_layout = QHBoxLayout()
-        results_layout.addWidget(QLabel(tr("results_excel_ledger")))
+        self.results_label = QLabel(tr("results_excel_ledger"))
+        results_layout.addWidget(self.results_label)
         self.results_edit = QLineEdit()
         # Leave empty initially - will auto-generate on first use
         self.btn_results = QPushButton(tr("browse"))
@@ -73,6 +75,17 @@ class SettingsWidget(QGroupBox):
         results_layout.addWidget(self.btn_download)
         results_layout.addWidget(self.btn_generate_invoice)
         layout.addLayout(results_layout)
+
+        # Results info (client mode only - shows server results status)
+        results_info_layout = QHBoxLayout()
+        self.results_info_label = QLabel("")
+        self.results_info_label.setWordWrap(True)
+        self.results_info_label.setStyleSheet(
+            "color: #7f8c8d; font-size: 11px; padding: 4px;"
+        )
+        self.results_info_label.setVisible(False)  # Only visible in client mode
+        results_info_layout.addWidget(self.results_info_label, 1)
+        layout.addLayout(results_info_layout)
 
         # Manual entry section (hidden by default, shown only in Manual tab)
         self.manual_entry_box = QGroupBox(tr("manual_entry_without_scanning"))
@@ -596,9 +609,11 @@ class SettingsWidget(QGroupBox):
         mode = get_network_mode()
 
         if mode == "client":
-            # In client mode: hide catalog selection, show server catalog status
-            if hasattr(self, "catalog_label"):
-                self.catalog_label.setVisible(False)
+            # In client mode: hide catalog and results selection, show status only
+            client = get_client()
+            connected = client and client.is_connected()
+
+            self.catalog_label.setVisible(False)
             self.catalog_edit.setVisible(False)
             self.btn_catalog.setVisible(False)
             self.catalog_info_label.setVisible(True)
@@ -610,15 +625,14 @@ class SettingsWidget(QGroupBox):
                 size = catalog_info.get("size", 0)
                 size_mb = size / (1024 * 1024) if size > 0 else 0
                 self.catalog_info_label.setText(
-                    f"📋 Catalog from server: {filename} ({size_mb:.2f} MB)"
+                    f"📋 {tr('catalog_status_from_server')}: {filename} ({size_mb:.2f} MB)"
                 )
                 self.catalog_info_label.setStyleSheet(
                     "color: #27ae60; font-size: 11px; padding: 4px;"
                 )
             else:
                 # Fetch catalog status from server (fallback if no info provided)
-                client = get_client()
-                if client and client.is_connected():
+                if connected:
                     if not catalog_info:  # Only make API call if we don't have info
                         info = client.get_catalog_info()
                     else:
@@ -629,30 +643,62 @@ class SettingsWidget(QGroupBox):
                         size = info.get("size", 0)
                         size_mb = size / (1024 * 1024) if size > 0 else 0
                         self.catalog_info_label.setText(
-                            f"📋 Catalog from server: {filename} ({size_mb:.2f} MB)"
+                            f"📋 {tr('catalog_status_from_server')}: {filename} ({size_mb:.2f} MB)"
                         )
                         self.catalog_info_label.setStyleSheet(
                             "color: #27ae60; font-size: 11px; padding: 4px;"
                         )
                     else:
                         self.catalog_info_label.setText(
-                            "📋 No catalog on server. Please upload on server."
+                            f"📋 {tr('catalog_status_not_on_server')}"
                         )
                         self.catalog_info_label.setStyleSheet(
                             "color: #7f8c8d; font-size: 11px; padding: 4px;"
                         )
                 else:
-                    self.catalog_info_label.setText("📋 Not connected to server")
+                    self.catalog_info_label.setText(
+                        f"📋 {tr('catalog_status_not_connected')}"
+                    )
                     self.catalog_info_label.setStyleSheet(
                         "color: #e74c3c; font-size: 11px; padding: 4px;"
                     )
+
+            # In client mode: hide results selection, download, invoice; show status only
+            self.results_label.setVisible(False)
+            self.results_edit.setVisible(False)
+            self.btn_results.setVisible(False)
+            self.btn_reset_results.setVisible(False)
+            self.btn_download.setVisible(False)
+            self.btn_generate_invoice.setVisible(False)
+            self.results_info_label.setVisible(True)
+            if connected:
+                self.results_info_label.setText(
+                    f"📄 {tr('results_status_available')}"
+                )
+                self.results_info_label.setStyleSheet(
+                    "color: #27ae60; font-size: 11px; padding: 4px;"
+                )
+            else:
+                self.results_info_label.setText(
+                    f"📄 {tr('results_status_not_connected')}"
+                )
+                self.results_info_label.setStyleSheet(
+                    "color: #e74c3c; font-size: 11px; padding: 4px;"
+                )
         else:
-            # In server/standalone mode: show catalog selection, hide status
-            if hasattr(self, "catalog_label"):
-                self.catalog_label.setVisible(True)
+            # In server/standalone mode: show catalog and results selection, hide status
+            self.catalog_label.setVisible(True)
             self.catalog_edit.setVisible(True)
             self.btn_catalog.setVisible(True)
             self.catalog_info_label.setVisible(False)
+
+            self.results_label.setVisible(True)
+            self.results_edit.setVisible(True)
+            self.btn_results.setVisible(True)
+            self.btn_reset_results.setVisible(True)
+            self.btn_download.setVisible(True)
+            self.btn_generate_invoice.setVisible(True)
+            self.results_info_label.setVisible(False)
 
     def get_results_path(self) -> str:
         """Get the current results file path. Uses default from settings if not set."""

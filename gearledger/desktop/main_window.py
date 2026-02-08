@@ -238,6 +238,8 @@ class MainWindow(QWidget):
         QTimer.singleShot(100, self._register_server_callbacks)
         # Auto-set uploaded catalog if server is running but no catalog is selected
         QTimer.singleShot(200, self._auto_set_uploaded_catalog)
+        # Update catalog/results UI for current mode (hides selection in client mode)
+        QTimer.singleShot(150, lambda: self.settings_widget.update_catalog_ui_for_mode())
 
         # Initialize client connection sequentially on startup if in client mode
         QTimer.singleShot(300, self._initialize_client_connection)
@@ -905,6 +907,11 @@ class MainWindow(QWidget):
 
     def _ensure_catalog_file(self):
         """Ensure catalog file is selected before allowing app functionality."""
+        from gearledger.data_layer import get_network_mode
+
+        if get_network_mode() == "client":
+            # In client mode, catalog comes from server when connected
+            return
         if not self.settings_widget.validate_catalog():
             # Show blocking dialog to force catalog selection
             from PyQt6.QtWidgets import (

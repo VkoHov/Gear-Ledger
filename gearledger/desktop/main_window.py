@@ -707,6 +707,11 @@ class MainWindow(QWidget):
         self.poll_fuzzy_timer = QTimer(self)
         self.poll_fuzzy_timer.timeout.connect(self._poll_fuzzy_queue)
 
+        # Periodically refresh network status in client mode (fixes stale "disconnected" badge)
+        self._network_status_timer = QTimer(self)
+        self._network_status_timer.timeout.connect(self._refresh_network_status_if_client)
+        self._network_status_timer.start(3000)  # Every 3 seconds
+
         # Sync version tracking for catalog sync in client mode
         self._sync_version = 0
         # SSE client for real-time event notifications (replaces polling timer)
@@ -1455,6 +1460,13 @@ class MainWindow(QWidget):
         finally:
             self._syncing_catalog = False
 
+    def _refresh_network_status_if_client(self):
+        """Periodically refresh status when in client mode to fix stale 'disconnected' badge."""
+        from gearledger.data_layer import get_network_mode
+
+        if get_network_mode() == "client":
+            self._update_network_status()
+
     def _update_sse_connection(self):
         """
         Start/stop SSE connection based on network mode.
@@ -1506,6 +1518,11 @@ class MainWindow(QWidget):
 
         self._sync_version = event.get("version", self._sync_version)
 
+        # We're receiving data - we're definitely connected, update status
+        self._update_network_status()
+        if hasattr(self, "client_init_progress_label"):
+            self.client_init_progress_label.setVisible(False)
+
         # Update catalog UI immediately with info from event (before downloading)
         if hasattr(self, "settings_widget"):
             # Pass catalog info directly to avoid extra API call
@@ -1527,6 +1544,10 @@ class MainWindow(QWidget):
         """Handle SSE results changed event."""
         print(f"[MAIN_WINDOW] 🔄 Results changed event received: {event}")
         self._sync_version = event.get("version", self._sync_version)
+        # We're receiving data - we're definitely connected, update status
+        self._update_network_status()
+        if hasattr(self, "client_init_progress_label"):
+            self.client_init_progress_label.setVisible(False)
         # Show user-friendly message
         self.append_logs(["🔄 Server results updated - refreshing..."])
         # Refresh results pane to show updated data
@@ -1855,7 +1876,7 @@ class MainWindow(QWidget):
                         status_text = "💻 Client: Initializing..."
                         bg_color = "#f39c12"  # Orange
                 else:
-                    status_text = "💻 Client: Connected (⚠️ Real-time sync disconnected)"
+                    status_text = "💻 Client: Connected (reconnecting…)"
                     bg_color = "#e67e22"  # Orange-red
             else:
                 status_text = "💻 Client: Disconnected"

@@ -1147,7 +1147,8 @@ class MainWindow(QWidget):
                     self.append_logs([f"✓ Connected to {address}"])
                     self._update_network_status()
                     self.settings_widget.update_catalog_ui_for_mode()
-                    self._initialize_client_connection()
+                    # Delay slightly so any previous SSE thread can fully release resources
+                    QTimer.singleShot(300, self._initialize_client_connection)
                 else:
                     QMessageBox.critical(
                         self,
@@ -1516,9 +1517,11 @@ class MainWindow(QWidget):
             }
             self.settings_widget.update_catalog_ui_for_mode(catalog_info=catalog_info)
 
-        # Force sync catalog from server (don't check modification time, always download)
-        # This will download the catalog file
-        self._sync_catalog_from_server(force=True)
+        # Only trigger catalog download if NOT during initial connection - _sync_catalog_step
+        # already handles it. During init we'd have two simultaneous downloads stressing the server.
+        if self._client_initialized:
+            # Reconnection or catalog update - sync catalog
+            QTimer.singleShot(500, lambda: self._sync_catalog_from_server(force=True))
 
     def _on_sse_results_changed(self, event: dict):
         """Handle SSE results changed event."""
@@ -1635,10 +1638,10 @@ class MainWindow(QWidget):
         from gearledger.api_client import get_client
 
         mode = get_network_mode()
+        client = get_client()
         if mode != "client":
             return
 
-        client = get_client()
         if not client or not client.is_connected():
             self.append_logs(["⚠️ Client not connected - cannot initialize"])
             self._update_client_init_progress("⚠️ Not connected", "#e74c3c")
@@ -1689,11 +1692,13 @@ class MainWindow(QWidget):
         if not client or not client.is_connected():
             return
 
-        # Only start if not already started
+        # Stop any existing SSE client first (e.g. from previous session) to ensure clean state
         if self._sse_client:
-            # Already connected, proceed to catalog sync
-            QTimer.singleShot(100, lambda: self._sync_catalog_step())
-            return
+            try:
+                self._sse_client.stop()
+            except Exception:
+                pass
+            self._sse_client = None
 
         server_url = client.server_url
         print(f"[MAIN_WINDOW] Starting SSE connection to {server_url}")

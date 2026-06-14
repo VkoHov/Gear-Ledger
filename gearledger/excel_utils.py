@@ -53,6 +53,22 @@ def _detect_columns(df):
     return artikul_col, client_col
 
 
+def _detect_stock_column(df) -> str | None:
+    """Return the column name that holds available stock count, or None."""
+    # Prefer exact Russian names first
+    for exact in ("Количество", "Остаток", "Наличие"):
+        if exact in df.columns:
+            return exact
+    for c in df.columns:
+        lc = str(c).strip().lower()
+        if any(k in lc for k in [
+            "количество", "кол-во", "кол.", "остаток", "наличие", "в наличии",
+            "qty", "quantity", "stock", "count", "available",
+        ]):
+            return c
+    return None
+
+
 def _load_catalog(excel_path: str) -> dict:
     """
     Load Excel, build lookup dicts, cache the result.
@@ -78,15 +94,19 @@ def _load_catalog(excel_path: str) -> dict:
 
     artikul_col, client_col = _detect_columns(df)
     if not artikul_col:
-        entry = {"mtime": mtime, "lookup": {}, "lookup_nodash": {}, "error": "no_artikul_col"}
+        entry = {"mtime": mtime, "lookup": {}, "lookup_nodash": {}, "count_lookup": {}, "error": "no_artikul_col"}
         with _catalog_lock:
             _catalog_cache[abs_path] = entry
         return entry
     if not client_col:
         client_col = artikul_col
 
+    stock_col = _detect_stock_column(df)
+
     lookup: dict = {}
     lookup_nodash: dict = {}
+    count_lookup: dict = {}
+
     for _, row in df.iterrows():
         orig = str(row[artikul_col] or "")
         norm = _space_norm(orig)
@@ -98,11 +118,22 @@ def _load_catalog(excel_path: str) -> dict:
         norm_nd = norm.replace("-", "").replace("—", "").replace("–", "")
         if norm_nd and norm_nd != norm and norm_nd not in lookup_nodash:
             lookup_nodash[norm_nd] = (client_val, orig)
+        # Stock count
+        if stock_col is not None and norm not in count_lookup:
+            try:
+                cnt = int(pd.to_numeric(row[stock_col], errors="coerce") or 0)
+            except Exception:
+                cnt = 0
+            count_lookup[norm] = cnt
+            if norm_nd and norm_nd != norm:
+                count_lookup.setdefault(norm_nd, cnt)
 
     entry = {
         "mtime": mtime,
         "lookup": lookup,
         "lookup_nodash": lookup_nodash,
+        "count_lookup": count_lookup,
+        "stock_col": stock_col,
         "artikul_col": artikul_col,
         "client_col": client_col,
         "total_rows": len(df),
@@ -111,6 +142,29 @@ def _load_catalog(excel_path: str) -> dict:
     with _catalog_lock:
         _catalog_cache[abs_path] = entry
     return entry
+
+
+def get_catalog_stock(excel_path: str, artikul: str) -> int | None:
+    """
+    Return the available stock count for *artikul* from the catalog.
+    Returns None if the catalog has no stock column or the file can't be read.
+    Returns an int (possibly 0) if a stock column exists.
+    """
+    if not os.path.exists(excel_path):
+        return None
+    try:
+        catalog = _load_catalog(excel_path)
+    except ExcelReadError:
+        return None
+    count_lookup = catalog.get("count_lookup")
+    if not count_lookup and catalog.get("stock_col") is None:
+        return None  # Catalog has no stock column at all
+    q = _space_norm(artikul)
+    count = count_lookup.get(q)
+    if count is None:
+        q_nd = q.replace("-", "").replace("—", "").replace("–", "")
+        count = count_lookup.get(q_nd)
+    return count  # may be None if artikul not found
 
 
 def invalidate_catalog_cache(excel_path: str = None):

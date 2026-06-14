@@ -156,6 +156,18 @@ TRANSLATIONS = {
         "en": "🔍 Search & Add",
         "ru": "🔍 Найти и добавить",
     },
+    "out_of_stock": {
+        "en": "Out of Stock",
+        "ru": "Нет в наличии",
+    },
+    "out_of_stock_msg": {
+        "en": "Part {artikul} has 0 items in stock and cannot be added.",
+        "ru": "Артикул {artikul} отсутствует на складе (0 шт.) и не может быть добавлен.",
+    },
+    "in_stock_label": {
+        "en": "In stock: {count} pcs",
+        "ru": "На складе: {count} шт.",
+    },
     "searching": {
         "en": "Searching...",
         "ru": "Поиск...",

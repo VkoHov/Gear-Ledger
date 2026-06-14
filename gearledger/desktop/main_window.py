@@ -97,11 +97,12 @@ class _ManualSearchWorker(QThread):
 class AddToResultsDialog(QDialog):
     """Dialog to enter quantity and add match to results."""
 
-    def __init__(self, parent, artikul: str, client: str):
+    def __init__(self, parent, artikul: str, client: str, stock: int = None):
         super().__init__(parent)
         self.artikul = artikul
         self.client = client
         self.quantity = 1
+        self.stock = stock  # available stock from catalog (None = unknown)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -142,6 +143,15 @@ class AddToResultsDialog(QDialog):
         )
         main_layout.addWidget(name_label)
 
+        # Stock badge (shown only when catalog has a stock column)
+        if self.stock is not None:
+            stock_label = QLabel(tr("in_stock_label", count=self.stock))
+            stock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stock_label.setStyleSheet(
+                "color: #27ae60; font-size: 14px; font-weight: bold; padding: 4px 0;"
+            )
+            main_layout.addWidget(stock_label)
+
         # Quantity input
         qty_layout = QHBoxLayout()
         qty_label = QLabel(tr("quantity_label"))
@@ -151,7 +161,8 @@ class AddToResultsDialog(QDialog):
         qty_layout.addWidget(qty_label)
         self.quantity_spin = QSpinBox()
         self.quantity_spin.setMinimum(1)
-        self.quantity_spin.setMaximum(9999)
+        max_qty = self.stock if self.stock is not None else 9999
+        self.quantity_spin.setMaximum(max_qty)
         self.quantity_spin.setValue(1)
         self.quantity_spin.setMinimumHeight(48)
         self.quantity_spin.setMinimumWidth(120)
@@ -2230,7 +2241,23 @@ class MainWindow(QWidget):
             )
             return
 
-        dialog = AddToResultsDialog(self, artikul, client)
+        # Stock check — only runs if catalog has a stock column
+        catalog_path = self.settings_widget.get_catalog_path()
+        stock = None
+        if catalog_path and os.path.exists(catalog_path):
+            from gearledger.excel_utils import get_catalog_stock
+            stock = get_catalog_stock(catalog_path, artikul)
+
+        if stock is not None and stock <= 0:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                tr("out_of_stock"),
+                tr("out_of_stock_msg", artikul=artikul),
+            )
+            return
+
+        dialog = AddToResultsDialog(self, artikul, client, stock=stock)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 

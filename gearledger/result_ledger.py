@@ -196,6 +196,34 @@ def record_match(
         return {"ok": False, "action": action, "path": path, "error": str(e)}
 
 
+def get_results_quantity(path: str, artikul: str, client: str) -> int:
+    """Return the quantity already recorded in results for (artikul, client). 0 if not found."""
+    if not os.path.exists(path):
+        return 0
+    try:
+        df = pd.read_excel(path)
+        if "Артикул" not in df.columns or "Количество" not in df.columns:
+            return 0
+        key_norm = _norm(artikul)
+        client_upper = (client or "").upper()
+        norm_col = "_NORM"
+        df[norm_col] = df["Артикул"].astype(str).map(_norm)
+        if "Клиент" in df.columns:
+            client_match = df["Клиент"].astype(str).str.upper() == client_upper
+        else:
+            client_match = pd.Series([False] * len(df))
+        mask = (df[norm_col] == key_norm) & client_match
+        if mask.any():
+            val = df.loc[df.index[mask][0], "Количество"]
+            try:
+                return int(pd.to_numeric(val, errors="coerce") or 0)
+            except Exception:
+                return 0
+        return 0
+    except Exception:
+        return 0
+
+
 def _lookup_catalog_data(artikul: str, catalog_path: str = None, catalog_bytes: bytes = None) -> Dict[str, any]:
     """
     Look up additional data from catalog by artikul.

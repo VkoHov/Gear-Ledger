@@ -65,6 +65,74 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# Out-of-stock dialog with large, readable text
+# ---------------------------------------------------------------------------
+def _show_out_of_stock_dialog(parent, artikul: str, total: int, added: int):
+    from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+    from PyQt6.QtCore import Qt
+
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(tr("out_of_stock"))
+    dlg.setModal(True)
+    dlg.setMinimumWidth(480)
+
+    layout = QVBoxLayout(dlg)
+    layout.setContentsMargins(36, 36, 36, 36)
+    layout.setSpacing(20)
+
+    # Icon
+    icon_lbl = QLabel("🚫")
+    icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    icon_lbl.setStyleSheet("font-size: 52px;")
+    layout.addWidget(icon_lbl)
+
+    # Artikul
+    code_lbl = QLabel(artikul)
+    code_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    code_lbl.setStyleSheet(
+        "font-size: 28px; font-weight: bold; color: #2c3e50; "
+        "background: #f0f0f0; border-radius: 8px; padding: 10px;"
+    )
+    code_lbl.setWordWrap(True)
+    layout.addWidget(code_lbl)
+
+    # Stats row
+    stats_lbl = QLabel(
+        f"<center>"
+        f"<span style='font-size:18px; color:#7f8c8d;'>{tr('in_catalog')}: </span>"
+        f"<span style='font-size:22px; font-weight:bold; color:#27ae60;'>{total}</span>"
+        f"&nbsp;&nbsp;&nbsp;"
+        f"<span style='font-size:18px; color:#7f8c8d;'>{tr('already_added')}: </span>"
+        f"<span style='font-size:22px; font-weight:bold; color:#e74c3c;'>{added}</span>"
+        f"</center>"
+    )
+    stats_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    stats_lbl.setTextFormat(Qt.TextFormat.RichText)
+    layout.addWidget(stats_lbl)
+
+    # Message
+    msg_lbl = QLabel(tr("out_of_stock_detail"))
+    msg_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    msg_lbl.setWordWrap(True)
+    msg_lbl.setStyleSheet("font-size: 16px; color: #e74c3c; font-weight: bold;")
+    layout.addWidget(msg_lbl)
+
+    # OK button
+    btn = QPushButton("OK")
+    btn.setMinimumHeight(44)
+    btn.setStyleSheet(
+        "QPushButton { background-color: #e74c3c; color: white; font-size: 16px; "
+        "font-weight: bold; border-radius: 6px; padding: 8px 32px; } "
+        "QPushButton:hover { background-color: #c0392b; }"
+    )
+    btn.clicked.connect(dlg.accept)
+    btn.setDefault(True)
+    layout.addWidget(btn)
+
+    dlg.exec()
+
+
+# ---------------------------------------------------------------------------
 # Background worker for manual code search (keeps UI responsive)
 # ---------------------------------------------------------------------------
 
@@ -2243,21 +2311,22 @@ class MainWindow(QWidget):
 
         # Stock check — only runs if catalog has a stock column
         catalog_path = self.settings_widget.get_catalog_path()
-        stock = None
+        remaining = None  # None = no stock column, skip check
+        catalog_stock = None
         if catalog_path and os.path.exists(catalog_path):
             from gearledger.excel_utils import get_catalog_stock
-            stock = get_catalog_stock(catalog_path, artikul)
+            catalog_stock = get_catalog_stock(catalog_path, artikul)
 
-        if stock is not None and stock <= 0:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                tr("out_of_stock"),
-                tr("out_of_stock_msg", artikul=artikul),
-            )
-            return
+        if catalog_stock is not None:
+            from gearledger.data_layer import get_results_quantity
+            results_path = self.settings_widget.get_results_path()
+            already_added = get_results_quantity(results_path, artikul, client)
+            remaining = catalog_stock - already_added
+            if remaining <= 0:
+                _show_out_of_stock_dialog(self, artikul, catalog_stock, already_added)
+                return
 
-        dialog = AddToResultsDialog(self, artikul, client, stock=stock)
+        dialog = AddToResultsDialog(self, artikul, client, stock=remaining)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 

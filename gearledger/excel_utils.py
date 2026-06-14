@@ -11,6 +11,7 @@ import pandas as pd
 # Protected by a lock because _ManualSearchWorker runs on a background thread.
 # ---------------------------------------------------------------------------
 import threading
+from typing import Optional
 _catalog_cache: dict = {}
 _catalog_lock = threading.Lock()
 
@@ -53,7 +54,7 @@ def _detect_columns(df):
     return artikul_col, client_col
 
 
-def _detect_stock_column(df) -> str | None:
+def _detect_stock_column(df) -> Optional[str]:
     """Return the column name that holds available stock count, or None."""
     # Prefer exact Russian names first
     for exact in ("Количество", "Остаток", "Наличие"):
@@ -144,7 +145,7 @@ def _load_catalog(excel_path: str) -> dict:
     return entry
 
 
-def get_catalog_stock(excel_path: str, artikul: str) -> int | None:
+def get_catalog_stock(excel_path: str, artikul: str) -> Optional[int]:
     """
     Return the available stock count for *artikul* from the catalog.
     Returns None if the catalog has no stock column or the file can't be read.

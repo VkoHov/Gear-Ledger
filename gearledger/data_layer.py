@@ -331,6 +331,36 @@ def _record_to_database(
         return {"ok": False, "action": "failed", "path": "", "error": str(e)}
 
 
+def get_results_quantity(results_path: str, artikul: str, client: str) -> int:
+    """
+    Return the quantity already recorded for (artikul, client) in the current backend.
+    Standalone → reads results Excel. Server → queries SQLite. Client → returns 0.
+    """
+    mode = get_network_mode()
+    if mode == "server":
+        try:
+            from .database import get_database
+            db = get_database()
+            conn = db._get_connection()
+            import re as _re
+            def _norm(s):
+                return _re.sub(r"[ \t\n\r\-.:/]", "", str(s or "")).upper()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT quantity FROM results WHERE UPPER(artikul) = ? AND UPPER(client) = ?",
+                (_norm(artikul), (client or "").upper()),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
+            return 0
+    elif mode == "client":
+        return 0  # can't reliably query remote server here
+    else:
+        from .result_ledger import get_results_quantity as _excel_qty
+        return _excel_qty(results_path, artikul, client)
+
+
 def get_all_results(client_filter: str = None) -> list:
     """Get all results from the appropriate backend."""
     mode = get_network_mode()

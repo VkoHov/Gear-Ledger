@@ -161,12 +161,24 @@ TRANSLATIONS = {
         "ru": "Нет в наличии",
     },
     "out_of_stock_msg": {
-        "en": "Part {artikul} has 0 items in stock and cannot be added.",
-        "ru": "Артикул {artikul} отсутствует на складе (0 шт.) и не может быть добавлен.",
+        "en": "Cannot add {artikul}: only {total} in catalog, {added} already recorded.",
+        "ru": "Невозможно добавить {artikul}: в каталоге {total} шт., уже записано {added} шт.",
+    },
+    "out_of_stock_detail": {
+        "en": "This item cannot be added — stock limit reached.",
+        "ru": "Этот товар нельзя добавить — лимит склада исчерпан.",
+    },
+    "in_catalog": {
+        "en": "In catalog",
+        "ru": "В каталоге",
+    },
+    "already_added": {
+        "en": "Already added",
+        "ru": "Уже добавлено",
     },
     "in_stock_label": {
-        "en": "In stock: {count} pcs",
-        "ru": "На складе: {count} шт.",
+        "en": "Available: {count} pcs",
+        "ru": "Доступно: {count} шт.",
     },
     "searching": {
         "en": "Searching...",

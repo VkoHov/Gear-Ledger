@@ -189,11 +189,30 @@ def record_match(
     if norm_col in df.columns:
         df = df.drop(columns=[norm_col])
 
+    tmp_path = path + ".tmp"
     try:
-        df.to_excel(path, index=False)
+        df.to_excel(tmp_path, index=False)
+        os.replace(tmp_path, path)
         return {"ok": True, "action": action, "path": path, "error": ""}
     except Exception as e:
+        # Clean up incomplete temp file if it exists
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
         return {"ok": False, "action": action, "path": path, "error": str(e)}
+
+
+def cleanup_orphan_tmp(path: str):
+    """Delete leftover .tmp file from a previous crashed write, if it exists."""
+    tmp_path = path + ".tmp"
+    try:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+            print(f"[INFO] Cleaned up orphan temp file: {tmp_path}")
+    except OSError as e:
+        print(f"[WARNING] Could not remove orphan temp file {tmp_path}: {e}")
 
 
 def get_results_quantity(path: str, artikul: str, client: str) -> int:

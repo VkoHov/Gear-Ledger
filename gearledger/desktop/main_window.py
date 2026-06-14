@@ -1131,6 +1131,9 @@ class MainWindow(QWidget):
 
     def _on_results_path_changed(self, path: str):
         """Handle results path change."""
+        if path:
+            from gearledger.result_ledger import cleanup_orphan_tmp
+            cleanup_orphan_tmp(path)
         self.results_pane.set_ledger_path(path)
 
     def _open_settings(self):

@@ -8,8 +8,11 @@ import pandas as pd
 # lookup maps  space-normalised code  →  (client_str, orig_artikul_str)
 # lookup_nodash maps the same codes with hyphens stripped → same value,
 # so we can answer hyphen-variant queries without re-scanning.
+# Protected by a lock because _ManualSearchWorker runs on a background thread.
 # ---------------------------------------------------------------------------
+import threading
 _catalog_cache: dict = {}
+_catalog_lock = threading.Lock()
 
 
 class ExcelReadError(Exception):
@@ -54,6 +57,7 @@ def _load_catalog(excel_path: str) -> dict:
     """
     Load Excel, build lookup dicts, cache the result.
     Raises ExcelReadError on read failure.
+    Thread-safe: protected by _catalog_lock.
     """
     abs_path = os.path.abspath(excel_path)
     try:
@@ -61,10 +65,12 @@ def _load_catalog(excel_path: str) -> dict:
     except OSError as e:
         raise ExcelReadError(excel_path, str(e))
 
-    cached = _catalog_cache.get(abs_path)
-    if cached and cached["mtime"] == mtime:
-        return cached
+    with _catalog_lock:
+        cached = _catalog_cache.get(abs_path)
+        if cached and cached["mtime"] == mtime:
+            return cached
 
+    # Read Excel outside the lock so we don't block other threads
     try:
         df = pd.read_excel(abs_path)
     except Exception as e:
@@ -73,7 +79,8 @@ def _load_catalog(excel_path: str) -> dict:
     artikul_col, client_col = _detect_columns(df)
     if not artikul_col:
         entry = {"mtime": mtime, "lookup": {}, "lookup_nodash": {}, "error": "no_artikul_col"}
-        _catalog_cache[abs_path] = entry
+        with _catalog_lock:
+            _catalog_cache[abs_path] = entry
         return entry
     if not client_col:
         client_col = artikul_col
@@ -88,7 +95,6 @@ def _load_catalog(excel_path: str) -> dict:
         client_val = str(row[client_col]) if client_col != artikul_col else ""
         if norm not in lookup:
             lookup[norm] = (client_val, orig)
-        # Pre-index hyphen-stripped variant
         norm_nd = norm.replace("-", "").replace("—", "").replace("–", "")
         if norm_nd and norm_nd != norm and norm_nd not in lookup_nodash:
             lookup_nodash[norm_nd] = (client_val, orig)
@@ -102,16 +108,18 @@ def _load_catalog(excel_path: str) -> dict:
         "total_rows": len(df),
         "error": None,
     }
-    _catalog_cache[abs_path] = entry
+    with _catalog_lock:
+        _catalog_cache[abs_path] = entry
     return entry
 
 
 def invalidate_catalog_cache(excel_path: str = None):
     """Invalidate cached catalog. Pass None to clear everything."""
-    if excel_path is None:
-        _catalog_cache.clear()
-    else:
-        _catalog_cache.pop(os.path.abspath(excel_path), None)
+    with _catalog_lock:
+        if excel_path is None:
+            _catalog_cache.clear()
+        else:
+            _catalog_cache.pop(os.path.abspath(excel_path), None)
 
 
 def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):

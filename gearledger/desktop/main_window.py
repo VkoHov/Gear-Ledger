@@ -2212,7 +2212,9 @@ class MainWindow(QWidget):
             self.results_widget.update_manual_result("", "")
 
         worker.finished.connect(on_result)
+        worker.finished.connect(worker.deleteLater)
         worker.error.connect(on_error)
+        worker.error.connect(worker.deleteLater)
         worker.start()
 
     def _show_add_dialog_and_record(self, artikul: str, client: str):
@@ -2336,7 +2338,9 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, tr("manual_entry_error"), tr("error_occurred", error=msg))
 
         worker.finished.connect(on_result)
+        worker.finished.connect(worker.deleteLater)
         worker.error.connect(on_error)
+        worker.error.connect(worker.deleteLater)
         worker.start()
 
     def _on_generate_invoice_requested(self):

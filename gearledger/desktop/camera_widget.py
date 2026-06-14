@@ -494,6 +494,8 @@ class CameraWidget(QGroupBox):
         self._camera_thread = CameraWorker(cam_index, cam_width, cam_height)
         self._camera_thread.finished.connect(self._on_camera_opened)
         self._camera_thread.error.connect(self._on_camera_error)
+        self._camera_thread.finished.connect(self._camera_thread.deleteLater)
+        self._camera_thread.error.connect(self._camera_thread.deleteLater)
         self._camera_thread.start()
 
     def _on_camera_opened(self, cap, cam_index):
@@ -603,6 +605,12 @@ class CameraWidget(QGroupBox):
             # Call the callback
             self.on_capture_callback(tmp.name)
         except Exception as e:
+            # Clean up temp file on failure so it doesn't leak
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+            self._captured_image_path = None
             QMessageBox.critical(self, tr("error"), tr("failed_save_capture", error=e))
 
     def _grab_and_show(self):

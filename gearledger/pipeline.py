@@ -406,16 +406,8 @@ def run_fuzzy_match(
             continue
         log(info, f"Fuzzy Excel try: {visible}  (→ {normalized})")
 
-        # Support both versions of try_match_in_excel:
-        #   (excel_path, normalized, min_fuzzy, allow_fuzzy=True)
-        #   (excel_path, normalized, min_fuzzy)
         try:
-            try:
-                c, a, dbg = try_match_in_excel(
-                    excel_path, normalized, min_fuzzy, allow_fuzzy=True
-                )
-            except TypeError:
-                c, a, dbg = try_match_in_excel(excel_path, normalized, min_fuzzy)
+            c, a, dbg = try_match_in_excel(excel_path, normalized, min_fuzzy)
         except ExcelReadError as e:
             # Return error for UI to show popup
             # Pass error info as dict (not exception object) for multiprocessing queue

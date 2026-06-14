@@ -482,7 +482,11 @@ def _speak_macos(text: str, lang: str = None, wait: bool = True):
         with _speech_lock:
             _current_say_proc = proc
         if wait:
-            proc.wait()
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                print("[SPEECH] macOS say command timed out, killed")
             with _speech_lock:
                 if _current_say_proc is proc:
                     _current_say_proc = None

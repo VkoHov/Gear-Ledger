@@ -13,6 +13,7 @@ from pathlib import Path
 # Import the modular main window
 from gearledger.desktop.main_window import MainWindow
 from gearledger.desktop.settings_manager import load_settings
+from gearledger.logging_utils import setup_logging, get_logger, get_log_path
 
 
 def _set_application_icon(app: QApplication):
@@ -44,6 +45,10 @@ def _set_application_icon(app: QApplication):
 
 
 def main():
+    # Initialize file logging before anything else
+    setup_logging()
+    _log = get_logger(__name__)
+
     # macOS-safe multiprocessing start method
     try:
         mp.set_start_method("spawn", force=True)
@@ -54,6 +59,13 @@ def main():
 
     # Load settings and inject into environment
     settings = load_settings()
+    _log.info(
+        "Settings: backend=%s lang=%s network=%s log_file=%s",
+        settings.vision_backend,
+        settings.language,
+        settings.network_mode,
+        get_log_path(),
+    )
 
     if settings.openai_api_key:
         os.environ["OPENAI_API_KEY"] = settings.openai_api_key

@@ -189,12 +189,18 @@ def record_match(
     if norm_col in df.columns:
         df = df.drop(columns=[norm_col])
 
-    tmp_path = path + ".tmp"
+    from gearledger.logging_utils import get_logger
+    _log = get_logger(__name__)
+
+    base, ext = os.path.splitext(path)
+    tmp_path = base + ".__tmp__" + ext  # e.g. results.__tmp__.xlsx
     try:
         df.to_excel(tmp_path, index=False)
         os.replace(tmp_path, path)
+        _log.info("record_match %s: artikul=%s client=%s", action, artikul, client)
         return {"ok": True, "action": action, "path": path, "error": ""}
     except Exception as e:
+        _log.error("record_match write failed: artikul=%s error=%s", artikul, e, exc_info=True)
         # Clean up incomplete temp file if it exists
         try:
             if os.path.exists(tmp_path):
@@ -205,8 +211,9 @@ def record_match(
 
 
 def cleanup_orphan_tmp(path: str):
-    """Delete leftover .tmp file from a previous crashed write, if it exists."""
-    tmp_path = path + ".tmp"
+    """Delete leftover .__tmp__.xlsx file from a previous crashed write, if it exists."""
+    base, ext = os.path.splitext(path)
+    tmp_path = base + ".__tmp__" + ext
     try:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)

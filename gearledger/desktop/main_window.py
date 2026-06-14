@@ -2533,8 +2533,14 @@ class MainWindow(QWidget):
             )
 
     def append_logs(self, lines):
-        """Append log lines to the log widget."""
+        """Append log lines to the log widget and persist to file."""
         self.logs_widget.append_logs(lines)
+        if lines:
+            from gearledger.logging_utils import get_logger
+            _log = get_logger("gearledger.ui")
+            for line in lines:
+                if line:
+                    _log.info("%s", line)
 
     def _update_logs_visibility(self):
         """Update logs widget visibility based on settings."""

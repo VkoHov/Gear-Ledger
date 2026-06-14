@@ -730,6 +730,14 @@ class CameraWidget(QGroupBox):
             enabled and (self.cap is not None or not enabled)
         )
 
+    def set_searching(self, searching: bool):
+        """Disable the manual search button while a search is in progress."""
+        self.btn_search_code.setEnabled(not searching)
+        if searching:
+            self.btn_search_code.setText(tr("searching"))
+        else:
+            self.btn_search_code.setText(tr("search_add"))
+
     def cleanup(self):
         """Clean up camera resources."""
         self.stop_camera()

@@ -9,6 +9,32 @@ import threading
 # Don't initialize engine at module level - create it on demand
 _ENGINE_AVAILABLE = None
 
+# ---------------------------------------------------------------------------
+# Async speech helpers — keeps the UI thread free during TTS playback
+# ---------------------------------------------------------------------------
+_speech_lock = threading.Lock()
+_current_say_proc: "subprocess.Popen | None" = None
+
+
+def _stop_current_speech():
+    """Terminate any in-progress speech process so new speech starts cleanly."""
+    global _current_say_proc
+    with _speech_lock:
+        proc = _current_say_proc
+        _current_say_proc = None
+    if proc is not None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+
+def _run_speech_async(fn, *args, **kwargs):
+    """Run *fn* in a background daemon thread. Returns immediately."""
+    _stop_current_speech()
+    t = threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True)
+    t.start()
+
 # Current speech language (synced with app language)
 _SPEECH_LANGUAGE = "en"
 
@@ -222,9 +248,13 @@ def _clean_text_for_speech(text: str) -> str:
 
 
 def speak(text: str):
+    """Non-blocking: schedules speech on a background thread."""
     if not text:
         return
+    _run_speech_async(_speak_sync, text)
 
+
+def _speak_sync(text: str):
     # Clean text for better speech
     text = _clean_text_for_speech(text)
 
@@ -265,27 +295,9 @@ def speak(text: str):
 
     elif sys.platform == "darwin":
         # macOS: Use native 'say' command as primary OS TTS
-        try:
-            # Pick best available voice for current language
-            voice = _pick_macos_voice(_SPEECH_LANGUAGE)
-
-            # Language-specific rate (RU needs slower for clarity)
-            rate = 170 if _SPEECH_LANGUAGE == "ru" else 185
-
-            result = subprocess.run(
-                ["say", "-v", voice, "-r", str(rate), text],
-                check=False,
-                capture_output=True,
-            )
-            if result.returncode == 0:
-                return
-
-            # Fallback: try default voice
-            subprocess.run(["say", "-r", str(rate), text], check=False)
+        if _speak_macos(text, _SPEECH_LANGUAGE, wait=True):
             return
-        except Exception as e:
-            print(f"[SPEECH] macOS say failed: {e}")
-            # Fall through to final fallback
+        print(f"[SPEECH] macOS say failed, no fallback")
 
     else:
         # Linux: Try pyttsx3
@@ -304,13 +316,11 @@ def speak(text: str):
 
 
 def speak_no_match(scenario: str = "plain", code: str = None):
-    """
-    Speak "no match found" - uses Armenian when Piper is selected (Piper uses hy_AM voice).
+    """Non-blocking: schedules 'no match' speech on a background thread."""
+    _run_speech_async(_speak_no_match_sync, scenario, code)
 
-    Args:
-        scenario: "plain", "best_guess", or "for_code"
-        code: Spelled code for best_guess/for_code (e.g. from _spell_code())
-    """
+
+def _speak_no_match_sync(scenario: str = "plain", code: str = None):
     try:
         from gearledger.desktop.settings_manager import get_speech_engine
 
@@ -335,17 +345,17 @@ def speak_no_match(scenario: str = "plain", code: str = None):
         except Exception as e:
             print(f"[SPEECH] Piper TTS failed for no_match: {e}")
 
-    # Fallback: use translated text and normal speak()
+    # Fallback: use translated text and normal _speak_sync()
     from gearledger.desktop.translations import tr
 
     if scenario == "plain":
-        speak(tr("speak_no_match"))
+        _speak_sync(tr("speak_no_match"))
     elif scenario == "best_guess" and code:
-        speak(tr("speak_no_match_best_guess", code=code))
+        _speak_sync(tr("speak_no_match_best_guess", code=code))
     elif scenario == "for_code" and code:
-        speak(tr("speak_no_match_for_code", code=code))
+        _speak_sync(tr("speak_no_match_for_code", code=code))
     else:
-        speak(tr("speak_no_match"))
+        _speak_sync(tr("speak_no_match"))
 
 
 # --- NEW: spell-out helpers for part codes ---
@@ -453,8 +463,9 @@ def _speak_macos(text: str, lang: str = None, wait: bool = True):
     Args:
         text: Text to speak
         lang: Language code ("en" or "ru"), defaults to current language
-        wait: If True, wait for speech to complete (blocking)
+        wait: If True, wait for speech to complete (blocking within the caller's thread)
     """
+    global _current_say_proc
     if not text or sys.platform != "darwin":
         return False
 
@@ -463,38 +474,29 @@ def _speak_macos(text: str, lang: str = None, wait: bool = True):
     rate = 170 if target_lang == "ru" else 185
 
     try:
+        proc = subprocess.Popen(
+            ["say", "-v", voice, "-r", str(rate), text],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        with _speech_lock:
+            _current_say_proc = proc
         if wait:
-            # Blocking call - wait for completion
-            result = subprocess.run(
-                ["say", "-v", voice, "-r", str(rate), text],
-                check=False,
-                capture_output=True,
-                timeout=10,
-            )
-            return result.returncode == 0
-        else:
-            # Non-blocking call
-            subprocess.Popen(
-                ["say", "-v", voice, "-r", str(rate), text],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return True
+            proc.wait()
+            with _speech_lock:
+                if _current_say_proc is proc:
+                    _current_say_proc = None
+        return True
     except Exception:
         return False
 
 
 def speak_match(artikul: str, client: str, weight: float = None):
-    """
-    Say match announcement with improved quality.
-    For macOS: Uses split-speaking (RU parts with RU voice, EN code/name with EN voice).
-    For others: Single voice with cleaned text.
+    """Non-blocking: schedules match announcement on a background thread."""
+    _run_speech_async(_speak_match_sync, artikul, client, weight)
 
-    Args:
-        artikul: Part code to spell out
-        client: Client name (will be cleaned of → symbols)
-        weight: Optional weight to announce naturally
-    """
+
+def _speak_match_sync(artikul: str, client: str, weight: float = None):
     msgs = _MATCH_MESSAGES.get(_SPEECH_LANGUAGE, _MATCH_MESSAGES["en"])
     code_spelled = _spell_code(artikul)
     client_clean = _clean_text_for_speech(client) if client else None
@@ -581,7 +583,7 @@ def speak_match(artikul: str, client: str, weight: float = None):
         parts.append(client_clean)
 
     message = ". ".join(parts) + "."
-    speak(message)
+    _speak_sync(message)
 
 
 def _get_engine_for_language(lang: str):
@@ -626,15 +628,13 @@ def _get_engine_for_language(lang: str):
 
 
 def speak_name(name: str) -> None:
-    """
-    Speak ONLY the user/client name (no code, no weight, no "match found" text).
-
-    Args:
-        name: The name to speak. Will be cleaned of arrows and symbols.
-    """
+    """Non-blocking: schedules name speech on a background thread."""
     if not name or not name.strip():
         return
+    _run_speech_async(_speak_name_sync, name)
 
+
+def _speak_name_sync(name: str) -> None:
     # Clean the name
     cleaned_name = _clean_text_for_speech(name)
     if not cleaned_name:
@@ -765,18 +765,9 @@ def speak_name(name: str) -> None:
     # 3) Default / fallback: Use OS TTS
     if sys.platform == "darwin":
         # macOS: Use 'say' with detected language voice
-        try:
-            voice = _pick_macos_voice(detected_lang)
-            rate = 170 if detected_lang == "ru" else 185
-            subprocess.run(
-                ["say", "-v", voice, "-r", str(rate), cleaned_name],
-                check=False,
-                capture_output=True,
-                timeout=10,
-            )
+        if _speak_macos(cleaned_name, detected_lang, wait=True):
             return
-        except Exception as e:
-            print(f"[SPEECH] macOS say failed for name: {e}")
+        print(f"[SPEECH] macOS say failed for name")
     elif sys.platform == "win32":
         # Windows: Use pyttsx3 with detected language voice
         engine_obj = _get_engine_for_language(detected_lang)

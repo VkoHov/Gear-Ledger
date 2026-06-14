@@ -183,7 +183,7 @@ def record_match(
             "Цена продажи": final_price,
             "Сумма продажи": final_price * qty_inc,
         }
-        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True, sort=False)
 
     # Drop temp column and save
     if norm_col in df.columns:

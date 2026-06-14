@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal as _pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QWidget,
@@ -64,6 +64,36 @@ except Exception as e:
         return x
 
 
+# ---------------------------------------------------------------------------
+# Background worker for manual code search (keeps UI responsive)
+# ---------------------------------------------------------------------------
+
+
+class _ManualSearchWorker(QThread):
+    """Runs catalog lookup on a background thread and emits the result dict."""
+
+    finished = _pyqtSignal(dict)
+    error = _pyqtSignal(str)
+
+    def __init__(self, catalog_path: str, code: str, min_fuzzy: int):
+        super().__init__()
+        self._catalog_path = catalog_path
+        self._code = code
+        self._min_fuzzy = min_fuzzy
+
+    def run(self):
+        try:
+            from gearledger.pipeline import run_fuzzy_match
+            result = run_fuzzy_match(
+                self._catalog_path,
+                [(self._code, self._code)],
+                self._min_fuzzy,
+            )
+            self.finished.emit(result)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 class AddToResultsDialog(QDialog):
     """Dialog to enter quantity and add match to results."""
 
@@ -73,7 +103,6 @@ class AddToResultsDialog(QDialog):
         self.client = client
         self.quantity = 1
         self._setup_ui()
-        speak_name(client)
 
     def _setup_ui(self):
         """Set up the dialog UI."""
@@ -1012,6 +1041,8 @@ class MainWindow(QWidget):
 
     def _on_catalog_path_changed(self, path: str):
         """Handle catalog path change - enable functionality when catalog is set."""
+        from gearledger.excel_utils import invalidate_catalog_cache
+        invalidate_catalog_cache(path if path else None)
         if path and os.path.exists(path):
             # Catalog is set and valid, enable all functionality
             self._enable_app_functionality()
@@ -2143,31 +2174,27 @@ class MainWindow(QWidget):
         self._update_controls()
 
     def _on_manual_search_requested(self, code: str):
-        """Handle manual search request."""
-        from gearledger.pipeline import run_fuzzy_match
+        """Handle manual search request (runs search on background thread)."""
         from gearledger.config import DEFAULT_MIN_FUZZY
 
         if not self.settings_widget.validate_catalog():
             from PyQt6.QtWidgets import QMessageBox
-
             QMessageBox.critical(self, tr("error"), tr("choose_valid_catalog"))
             return
 
         catalog = self.settings_widget.get_catalog_path()
-
         self.append_logs([tr("log_searching_manual_code", code=code)])
+        self.camera_widget.set_searching(True)
 
-        try:
-            # Create a single candidate with the manual code
-            cand_order = [(code, code)]  # (visible, normalized)
+        worker = _ManualSearchWorker(catalog, code, DEFAULT_MIN_FUZZY)
+        self._manual_search_worker = worker  # keep reference alive
 
-            # Run fuzzy match with the manual code
-            result = run_fuzzy_match(catalog, cand_order, DEFAULT_MIN_FUZZY)
-
+        def on_result(result):
+            self._manual_search_worker = None
+            self.camera_widget.set_searching(False)
             if result.get("ok"):
                 client = result.get("match_client")
                 artikul = result.get("match_artikul")
-
                 if client and artikul:
                     self.results_widget.update_manual_result(client, artikul)
                     speak_match(artikul, client)
@@ -2175,19 +2202,18 @@ class MainWindow(QWidget):
                 else:
                     self.results_widget.update_manual_result("", "")
             else:
-                self.append_logs(
-                    [
-                        tr(
-                            "log_manual_search_failed",
-                            error=result.get("error", "Unknown error"),
-                        )
-                    ]
-                )
+                self.append_logs([tr("log_manual_search_failed", error=result.get("error", "Unknown error"))])
                 self.results_widget.update_manual_result("", "")
 
-        except Exception as e:
-            self.append_logs([tr("log_manual_search_error", error=str(e))])
+        def on_error(msg):
+            self._manual_search_worker = None
+            self.camera_widget.set_searching(False)
+            self.append_logs([tr("log_manual_search_error", error=msg)])
             self.results_widget.update_manual_result("", "")
+
+        worker.finished.connect(on_result)
+        worker.error.connect(on_error)
+        worker.start()
 
     def _show_add_dialog_and_record(self, artikul: str, client: str):
         """Show add-to-results dialog; record when user confirms."""
@@ -2251,44 +2277,39 @@ class MainWindow(QWidget):
             self.append_logs([tr("log_results_log_failed", error=rec["error"])])
 
     def _on_manual_entry_requested(self, part_code: str, weight: float):
-        """Handle manual entry request."""
-        from gearledger.pipeline import run_fuzzy_match
+        """Handle manual entry request (runs search on background thread)."""
         from gearledger.config import DEFAULT_MIN_FUZZY
 
         if not self.settings_widget.validate_catalog():
             from PyQt6.QtWidgets import QMessageBox
-
             QMessageBox.critical(self, tr("error"), tr("choose_valid_catalog"))
             return
 
         catalog = self.settings_widget.get_catalog_path()
-
         self.append_logs([tr("log_manual_entry", code=part_code, weight=weight)])
+        self.camera_widget.set_searching(True)
 
-        try:
-            # Create a single candidate with the manual code
-            cand_order = [(part_code, part_code)]  # (visible, normalized)
+        worker = _ManualSearchWorker(catalog, part_code, DEFAULT_MIN_FUZZY)
+        self._manual_entry_worker = worker  # keep reference alive
 
-            # Run fuzzy match with the manual code
-            result = run_fuzzy_match(catalog, cand_order, DEFAULT_MIN_FUZZY)
-
+        def on_result(result):
+            self._manual_entry_worker = None
+            self.camera_widget.set_searching(False)
             if result.get("ok"):
                 client = result.get("match_client")
                 artikul = result.get("match_artikul")
-
                 if client and artikul:
                     self._pending_manual_weight = weight
                     self.results_widget.update_manual_result(client, artikul)
+                    self.camera_widget.show_manual_result(True, f"{artikul} → {client}")
                     speak_match(artikul, client)
                     self.settings_widget.clear_manual_entry()
                     self._show_add_dialog_and_record(artikul, client)
                 else:
                     self.append_logs([tr("log_no_match_manual_code", code=part_code)])
-                    # Speak that no match was found
+                    self.camera_widget.show_manual_result(False, tr("no_match_found"))
                     speak_no_match("for_code", code=_spell_code(part_code))
-
                     from PyQt6.QtWidgets import QMessageBox
-
                     QMessageBox.information(
                         self,
                         tr("no_match_found"),
@@ -2296,12 +2317,9 @@ class MainWindow(QWidget):
                     )
             else:
                 error_msg = result.get("error", "Unknown error")
-                self.append_logs(
-                    [tr("log_manual_entry_search_failed", error=error_msg)]
-                )
+                self.append_logs([tr("log_manual_entry_search_failed", error=error_msg)])
+                self.camera_widget.show_manual_result(False, error_msg)
                 from PyQt6.QtWidgets import QMessageBox
-
-                # Check if it's an Excel read error
                 if not self._show_excel_error_popup(result.get("excel_error")):
                     QMessageBox.critical(
                         self,
@@ -2309,15 +2327,17 @@ class MainWindow(QWidget):
                         tr("unable_search_part_code", code=part_code),
                     )
 
-        except Exception as e:
-            self.append_logs([tr("log_manual_entry_error", error=str(e))])
+        def on_error(msg):
+            self._manual_entry_worker = None
+            self.camera_widget.set_searching(False)
+            self.camera_widget.show_manual_result(False, msg)
+            self.append_logs([tr("log_manual_entry_error", error=msg)])
             from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, tr("manual_entry_error"), tr("error_occurred", error=msg))
 
-            QMessageBox.critical(
-                self,
-                tr("manual_entry_error"),
-                tr("error_occurred", error=str(e)),
-            )
+        worker.finished.connect(on_result)
+        worker.error.connect(on_error)
+        worker.start()
 
     def _on_generate_invoice_requested(self):
         """Handle invoice generation request."""

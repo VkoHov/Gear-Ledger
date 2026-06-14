@@ -72,6 +72,18 @@ def main():
 
     app = QApplication(sys.argv)
 
+    # Allow Ctrl+C in the terminal to quit the app cleanly.
+    # PyQt's event loop blocks Python's SIGINT handler; a short QTimer lets
+    # the interpreter check for signals between Qt events.
+    import signal
+    from PyQt6.QtCore import QTimer
+
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    _sigint_timer = QTimer()
+    _sigint_timer.setInterval(200)
+    _sigint_timer.timeout.connect(lambda: None)  # wake Python interpreter
+    _sigint_timer.start()
+
     # Set application icon if available
     _set_application_icon(app)
 

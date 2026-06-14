@@ -2,6 +2,15 @@
 import os
 import pandas as pd
 
+# ---------------------------------------------------------------------------
+# Catalog cache — keyed by absolute path; invalidated when mtime changes.
+# Each entry: {"mtime": float, "lookup": dict, "lookup_nodash": dict}
+# lookup maps  space-normalised code  →  (client_str, orig_artikul_str)
+# lookup_nodash maps the same codes with hyphens stripped → same value,
+# so we can answer hyphen-variant queries without re-scanning.
+# ---------------------------------------------------------------------------
+_catalog_cache: dict = {}
+
 
 class ExcelReadError(Exception):
     """Exception raised when Excel file cannot be read."""
@@ -12,202 +21,140 @@ class ExcelReadError(Exception):
         super().__init__(f"Failed to read Excel file: {error_message}")
 
 
-def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
-    """
-    Space-stripped, UPPERCASE, EXACT equality only.
-    Returns (client, artikul_display, debug).
-    """
-    debug = []
-    if not os.path.exists(excel_path):
-        debug.append(f"Excel not found: {excel_path}")
-        return (None, None, "\n".join(debug))
+def _space_norm(s) -> str:
+    return str(s or "").replace(" ", "").upper()
 
-    try:
-        df = pd.read_excel(excel_path)
-    except Exception as e:
-        error_msg = str(e)
-        debug.append(f"Failed to read Excel: {error_msg}")
-        # Raise custom exception so UI can show popup
-        raise ExcelReadError(excel_path, error_msg)
 
-    # Try to locate columns
+def _detect_columns(df):
+    """Return (artikul_col, client_col) from a DataFrame."""
     artikul_col = None
     client_col = None
     for c in df.columns:
         lc = str(c).strip().lower()
         if artikul_col is None and any(
             k in lc
-            for k in [
-                "номер",
-                "арт",
-                "artikul",
-                "article",
-                "part",
-                "sku",
-                "code",
-                "number",
-            ]
+            for k in ["номер", "арт", "artikul", "article", "part", "sku", "code", "number"]
         ):
             artikul_col = c
         if client_col is None and any(
             k in lc for k in ["клиент", "client", "name", "buyer", "vendor", "customer"]
         ):
             client_col = c
-
-    # Fallback to exact names if present (prioritize Номер over Артикул for new format)
+    # Exact-name overrides take priority
     if "Номер" in df.columns:
         artikul_col = "Номер"
     elif "Артикул" in df.columns:
         artikul_col = "Артикул"
     if "Клиент" in df.columns:
         client_col = "Клиент"
+    return artikul_col, client_col
 
+
+def _load_catalog(excel_path: str) -> dict:
+    """
+    Load Excel, build lookup dicts, cache the result.
+    Raises ExcelReadError on read failure.
+    """
+    abs_path = os.path.abspath(excel_path)
+    try:
+        mtime = os.path.getmtime(abs_path)
+    except OSError as e:
+        raise ExcelReadError(excel_path, str(e))
+
+    cached = _catalog_cache.get(abs_path)
+    if cached and cached["mtime"] == mtime:
+        return cached
+
+    try:
+        df = pd.read_excel(abs_path)
+    except Exception as e:
+        raise ExcelReadError(excel_path, str(e))
+
+    artikul_col, client_col = _detect_columns(df)
     if not artikul_col:
-        debug.append("Could not locate an artikul/part-code column.")
-        return (None, None, "\n".join(debug))
+        entry = {"mtime": mtime, "lookup": {}, "lookup_nodash": {}, "error": "no_artikul_col"}
+        _catalog_cache[abs_path] = entry
+        return entry
     if not client_col:
-        # allow missing client; we’ll return None for client if not found
         client_col = artikul_col
 
-    def space_norm(s: str) -> str:
-        return (str(s or "")).replace(" ", "").upper()
+    lookup: dict = {}
+    lookup_nodash: dict = {}
+    for _, row in df.iterrows():
+        orig = str(row[artikul_col] or "")
+        norm = _space_norm(orig)
+        if not norm or norm == "NAN":
+            continue
+        client_val = str(row[client_col]) if client_col != artikul_col else ""
+        if norm not in lookup:
+            lookup[norm] = (client_val, orig)
+        # Pre-index hyphen-stripped variant
+        norm_nd = norm.replace("-", "").replace("—", "").replace("–", "")
+        if norm_nd and norm_nd != norm and norm_nd not in lookup_nodash:
+            lookup_nodash[norm_nd] = (client_val, orig)
 
-    q = space_norm(query_raw)
-    debug.append(f"═══════════════════════════════════════")
-    debug.append(f"EXCEL MATCH DEBUG")
-    debug.append(f"═══════════════════════════════════════")
-    debug.append(f"Query (original): '{query_raw}'")
-    debug.append(f"Query (normalized): '{q}'")
-    debug.append(f"Excel file: {os.path.basename(excel_path)}")
-    debug.append(f"Total rows in Excel: {len(df)}")
-    debug.append(f"Artikul column: '{artikul_col}'")
-    debug.append(f"Client column: '{client_col}'")
+    entry = {
+        "mtime": mtime,
+        "lookup": lookup,
+        "lookup_nodash": lookup_nodash,
+        "artikul_col": artikul_col,
+        "client_col": client_col,
+        "total_rows": len(df),
+        "error": None,
+    }
+    _catalog_cache[abs_path] = entry
+    return entry
 
-    # Build normalized column (space stripped, uppercase)
-    norm_col = "_GL_SPACE_NORM_"
-    df[norm_col] = df[artikul_col].astype(str).map(space_norm)
 
-    # Show sample of values in Excel
-    debug.append(f"\nSample values from Excel (first 20):")
-    for idx, row in df.head(20).iterrows():
-        orig_val = str(row[artikul_col])
-        norm_val = str(row[norm_col])
-        debug.append(f"  [{idx}] Original: '{orig_val}' → Normalized: '{norm_val}'")
-
-    # If query contains hyphen/dash, try both with and without
-    queries_to_try = [q]
-    if "-" in q or "—" in q or "–" in q:
-        q_no_dash = q.replace("-", "").replace("—", "").replace("–", "")
-        if q_no_dash and q_no_dash != q:
-            queries_to_try.append(q_no_dash)
-            debug.append(
-                f"\nQuery contains hyphen - will try both: '{q}' and '{q_no_dash}'"
-            )
-
-    # Try each query variation
-    for query_variant in queries_to_try:
-        debug.append(f"\nTrying query variant: '{query_variant}'")
-
-        # Check for exact match
-        exact = df[df[norm_col] == query_variant]
-        if not exact.empty:
-            row = exact.iloc[0]
-            orig_matched = str(row[artikul_col])
-            norm_matched = str(row[norm_col])
-            client_matched = str(row.get(client_col, ""))
-            debug.append(f"\n✓ MATCH FOUND!")
-            debug.append(f"  Query variant that matched: '{query_variant}'")
-            debug.append(f"  Original value: '{orig_matched}'")
-            debug.append(f"  Normalized value: '{norm_matched}'")
-            debug.append(f"  Client: '{client_matched}'")
-            debug.append(f"═══════════════════════════════════════")
-            return (
-                client_matched,
-                orig_matched,
-                "\n".join(debug),
-            )
-        else:
-            debug.append(f"  No match for variant: '{query_variant}'")
-
-    # No match found with any variant - use the original query for debugging
-    q = queries_to_try[0]  # Use original for rest of debug output
-
-    # No exact match - provide detailed debugging
-    debug.append(f"\n✗ NO EXACT MATCH FOUND")
-    debug.append(f"  Searched for: '{q}'")
-
-    # Check if query exists with different normalization
-    all_norms = df[norm_col].unique()
-    debug.append(f"\nAll unique normalized values in Excel ({len(all_norms)} total):")
-    if len(all_norms) <= 100:
-        for norm_val in sorted(all_norms):
-            # Find original value for this normalized value
-            orig_example = df[df[norm_col] == norm_val].iloc[0][artikul_col]
-            debug.append(f"  '{norm_val}' (from '{orig_example}')")
+def invalidate_catalog_cache(excel_path: str = None):
+    """Invalidate cached catalog. Pass None to clear everything."""
+    if excel_path is None:
+        _catalog_cache.clear()
     else:
-        debug.append(f"  (Too many to list - showing first 50)")
-        for norm_val in sorted(all_norms)[:50]:
-            orig_example = df[df[norm_col] == norm_val].iloc[0][artikul_col]
-            debug.append(f"  '{norm_val}' (from '{orig_example}')")
+        _catalog_cache.pop(os.path.abspath(excel_path), None)
 
-    # Find closest matches (by length and character similarity)
-    debug.append(f"\nClosest matches (by length):")
-    query_len = len(q)
-    closest_by_len = sorted(all_norms, key=lambda x: abs(len(x) - query_len))[:5]
-    for norm_val in closest_by_len:
-        orig_example = df[df[norm_col] == norm_val].iloc[0][artikul_col]
-        len_diff = abs(len(norm_val) - query_len)
-        debug.append(f"  '{norm_val}' (from '{orig_example}', length diff: {len_diff})")
 
-    # Check if query is a substring of any value
-    contains_query = df[df[norm_col].str.contains(q, na=False, case=False)]
-    if not contains_query.empty:
-        debug.append(
-            f"\nValues containing '{q}' as substring ({len(contains_query)} found):"
-        )
-        for idx, row in contains_query.head(10).iterrows():
-            orig_val = str(row[artikul_col])
-            norm_val = str(row[norm_col])
-            debug.append(f"  '{norm_val}' (from '{orig_val}')")
+def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
+    """
+    Space-stripped, UPPERCASE, EXACT equality only.
+    Returns (client, artikul_display, debug).
 
-    # Check if any value is a substring of query
-    query_contains = df[
-        df[norm_col].apply(
-            lambda x: q in str(x) if x is not None and str(x) != "nan" else False
-        )
+    Uses an in-memory cache so the Excel file is only read once per
+    session (or when the file changes on disk).
+    """
+    if not os.path.exists(excel_path):
+        return (None, None, f"Excel not found: {excel_path}")
+
+    catalog = _load_catalog(excel_path)  # may raise ExcelReadError
+
+    if catalog.get("error") == "no_artikul_col":
+        return (None, None, "Could not locate an artikul/part-code column.")
+
+    lookup = catalog["lookup"]
+    lookup_nodash = catalog["lookup_nodash"]
+    total_rows = catalog.get("total_rows", "?")
+
+    q = _space_norm(query_raw)
+    debug_lines = [
+        f"Query: ‘{query_raw}’ → ‘{q}’ | file: {os.path.basename(excel_path)} ({total_rows} rows)"
     ]
-    if not query_contains.empty:
-        debug.append(
-            f"\nValues that are substrings of '{q}' ({len(query_contains)} found):"
-        )
-        for idx, row in query_contains.head(10).iterrows():
-            orig_val = str(row[artikul_col])
-            norm_val = str(row[norm_col])
-            debug.append(f"  '{norm_val}' (from '{orig_val}')")
 
-    # Character-by-character comparison for very similar strings
-    if len(q) > 0:
-        debug.append(f"\nCharacter analysis:")
-        debug.append(f"  Query length: {len(q)}")
-        debug.append(f"  Query characters: {set(q)}")
+    # Try with original spaces-stripped form first
+    hit = lookup.get(q)
+    if hit:
+        client_val, orig = hit
+        debug_lines.append(f"✓ MATCH: ‘{q}’ → ‘{orig}’ | client: ‘{client_val}’")
+        return (client_val, orig, "\n".join(debug_lines))
 
-        # Find values with similar character sets
-        query_chars = set(q)
-        similar_chars = []
-        for norm_val in all_norms[:50]:  # Check first 50 for performance
-            val_chars = set(str(norm_val))
-            common_chars = query_chars & val_chars
-            if len(common_chars) >= min(3, len(query_chars) * 0.5):
-                orig_example = df[df[norm_col] == norm_val].iloc[0][artikul_col]
-                similar_chars.append((norm_val, orig_example, len(common_chars)))
+    # Try hyphen-stripped variant
+    q_nd = q.replace("-", "").replace("—", "").replace("–", "")
+    if q_nd and q_nd != q:
+        debug_lines.append(f"Trying no-dash variant: ‘{q_nd}’")
+        hit = lookup.get(q_nd) or lookup_nodash.get(q_nd)
+        if hit:
+            client_val, orig = hit
+            debug_lines.append(f"✓ MATCH (no-dash): ‘{q_nd}’ → ‘{orig}’ | client: ‘{client_val}’")
+            return (client_val, orig, "\n".join(debug_lines))
 
-        if similar_chars:
-            similar_chars.sort(key=lambda x: x[2], reverse=True)
-            debug.append(f"  Values with similar characters (top 5):")
-            for norm_val, orig_example, common_count in similar_chars[:5]:
-                debug.append(
-                    f"    '{norm_val}' (from '{orig_example}', {common_count} common chars)"
-                )
-
-    debug.append(f"═══════════════════════════════════════")
-    return (None, None, "\n".join(debug))
+    debug_lines.append(f"✗ No match for ‘{q}’ ({len(lookup)} entries searched)")
+    return (None, None, "\n".join(debug_lines))

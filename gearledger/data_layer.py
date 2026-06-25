@@ -355,7 +355,22 @@ def get_results_quantity(results_path: str, artikul: str, client: str) -> int:
         except Exception:
             return 0
     elif mode == "client":
-        return 0  # can't reliably query remote server here
+        try:
+            from .api_client import get_client
+            import re as _re
+            def _norm(s):
+                return _re.sub(r"[ \t\n\r\-.:/]", "", str(s or "")).upper()
+            api_client = get_client()
+            if not api_client or not api_client.is_connected():
+                return 0
+            results = api_client.get_all_results(client)
+            norm_artikul = _norm(artikul)
+            for row in results:
+                if _norm(row.get("artikul", "")) == norm_artikul:
+                    return int(row.get("quantity", 0))
+            return 0
+        except Exception:
+            return 0
     else:
         from .result_ledger import get_results_quantity as _excel_qty
         return _excel_qty(results_path, artikul, client)

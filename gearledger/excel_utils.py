@@ -6,8 +6,11 @@ import pandas as pd
 # Catalog cache — keyed by absolute path; invalidated when mtime changes.
 # Each entry: {"mtime": float, "lookup": dict, "lookup_nodash": dict}
 # lookup maps  space-normalised code  →  (client_str, orig_artikul_str)
-# lookup_nodash maps the same codes with hyphens stripped → same value,
-# so we can answer hyphen-variant queries without re-scanning.
+# lookup_nodash maps the same codes with hyphens stripped → list of
+# (client_str, orig_artikul_str), since multiple dashed catalog entries
+# can share the same hyphen-stripped form (e.g. "70-06-5-5" and "700-655"
+# both strip to "700655"). So we can answer hyphen-variant queries
+# without re-scanning, and still surface every candidate for the picker.
 # Protected by a lock because _ManualSearchWorker runs on a background thread.
 # ---------------------------------------------------------------------------
 import threading
@@ -26,10 +29,20 @@ class ExcelReadError(Exception):
 
 
 def _space_norm(s) -> str:
-    # Remove spaces, uppercase, then normalize all dash variants to regular hyphen
-    # so em-dash / en-dash in Excel cells match user-typed hyphens.
-    s = str(s or "").replace(" ", "").upper()
+    # Trim edges, uppercase, then normalize all dash variants to a regular
+    # hyphen so em-dash / en-dash in Excel cells match user-typed hyphens.
+    # Internal spaces and dots are kept as-is (not stripped) so catalog
+    # entries that differ only by separator style — e.g. "75.5", "75 5",
+    # "755" — get distinct lookup keys instead of silently colliding into
+    # one; _strip_seps() below provides the separator-agnostic fallback
+    # that cross-matches them and feeds the multi-match picker.
+    s = str(s or "").strip().upper()
     return s.replace("—", "-").replace("–", "-")
+
+
+def _strip_seps(s: str) -> str:
+    """Remove all separator characters (-, ., space) for fallback matching."""
+    return s.replace("-", "").replace(".", "").replace(" ", "")
 
 
 def _detect_columns(df):
@@ -119,9 +132,9 @@ def _load_catalog(excel_path: str) -> dict:
         client_val = str(row[client_col]) if client_col != artikul_col else ""
         if norm not in lookup:
             lookup[norm] = (client_val, orig)
-        norm_nd = norm.replace("-", "").replace("—", "").replace("–", "")
-        if norm_nd and norm_nd != norm and norm_nd not in lookup_nodash:
-            lookup_nodash[norm_nd] = (client_val, orig)
+        norm_nd = _strip_seps(norm)
+        if norm_nd and norm_nd != norm:
+            lookup_nodash.setdefault(norm_nd, []).append((client_val, orig))
         # Stock count
         if stock_col is not None and norm not in count_lookup:
             try:
@@ -166,7 +179,7 @@ def get_catalog_stock(excel_path: str, artikul: str) -> Optional[int]:
     q = _space_norm(artikul)
     count = count_lookup.get(q)
     if count is None:
-        q_nd = q.replace("-", "").replace("—", "").replace("–", "")
+        q_nd = _strip_seps(q)
         count = count_lookup.get(q_nd)
     return count  # may be None if artikul not found
 
@@ -203,7 +216,7 @@ def find_all_matches_in_excel(excel_path: str, query_raw: str) -> List[Tuple[str
     lookup_nodash = catalog["lookup_nodash"]
 
     q = _space_norm(query_raw)
-    q_nd = q.replace("-", "").replace("—", "").replace("–", "")
+    q_nd = _strip_seps(q)
 
     seen: set = set()
     results: list = []
@@ -215,11 +228,15 @@ def find_all_matches_in_excel(excel_path: str, query_raw: str) -> List[Tuple[str
                 seen.add(orig)
                 results.append((client_val, orig))
 
-    _add(lookup.get(q))           # exact match
-    _add(lookup_nodash.get(q))    # dashed catalog entry that strips to q  (e.g. "7-1-3" when q="713")
+    def _add_all(hits):
+        for hit in hits or []:
+            _add(hit)
+
+    _add(lookup.get(q))               # exact match
+    _add_all(lookup_nodash.get(q))    # dashed catalog entries that strip to q  (e.g. "7-1-3" when q="713")
     if q_nd != q:
-        _add(lookup.get(q_nd))        # exact catalog entry equal to dash-stripped query (e.g. "713" when q="7-1-3")
-        _add(lookup_nodash.get(q_nd)) # dashed entry that strips to q_nd
+        _add(lookup.get(q_nd))            # exact catalog entry equal to dash-stripped query (e.g. "713" when q="7-1-3")
+        _add_all(lookup_nodash.get(q_nd)) # dashed entries that strip to q_nd
 
     return results
 
@@ -257,10 +274,11 @@ def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
         return (client_val, orig, "\n".join(debug_lines))
 
     # Try hyphen-stripped variant
-    q_nd = q.replace("-", "").replace("—", "").replace("–", "")
+    q_nd = _strip_seps(q)
     if q_nd and q_nd != q:
         debug_lines.append(f"Trying no-dash variant: ‘{q_nd}’")
-        hit = lookup.get(q_nd) or lookup_nodash.get(q_nd)
+        nd_hits = lookup_nodash.get(q_nd)
+        hit = lookup.get(q_nd) or (nd_hits[0] if nd_hits else None)
         if hit:
             client_val, orig = hit
             debug_lines.append(f"✓ MATCH (no-dash): ‘{q_nd}’ → ‘{orig}’ | client: ‘{client_val}’")

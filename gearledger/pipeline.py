@@ -129,6 +129,7 @@ def process_image(
 
         match_client = None
         match_artikul = None
+        multi_match: List[Tuple[str, str]] = []
         dbg_all: List[str] = []
         excel_error = None
 
@@ -202,6 +203,16 @@ def process_image(
                         step,
                         f"  Excel MATCH → {artikul_display}  | Клиент: {client_found}",
                     )
+                    try:
+                        all_matches = find_all_matches_in_excel(excel_path, vis)
+                    except ExcelReadError:
+                        all_matches = []
+                    multi_match = all_matches if len(all_matches) > 1 else []
+                    if multi_match:
+                        log(
+                            step,
+                            f"MULTI MATCH — {len(multi_match)} candidates: {[x[1] for x in multi_match]}",
+                        )
                     break  # Found match, stop trying
                 else:
                     log(
@@ -276,6 +287,7 @@ def process_image(
             "gpt_cost": gpt_cost,
             "match_client": match_client,
             "match_artikul": match_artikul,
+            "multi_match": multi_match,
             "match_debug": "\n\n".join(dbg_all),
             "logs": logs,
             "prompt_fuzzy": prompt_fuzzy,

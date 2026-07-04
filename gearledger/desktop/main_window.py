@@ -2466,11 +2466,21 @@ class MainWindow(QWidget):
                 artikul = result.get("match_artikul")
                 if client and artikul:
                     self._pending_manual_weight = weight
-                    self.results_widget.update_manual_result(client, artikul)
-                    self.camera_widget.show_manual_result(True, f"{artikul} → {client}")
-                    speak_match(artikul, client)
-                    self.settings_widget.clear_manual_entry()
-                    self._show_add_dialog_and_record(artikul, client)
+                    multi = result.get("multi_match") or []
+                    if multi:
+                        def _on_pick(a, c):
+                            self.results_widget.update_manual_result(c, a)
+                            self.camera_widget.show_manual_result(True, f"{a} → {c}")
+                            speak_match(a, c)
+                            self.settings_widget.clear_manual_entry()
+                            self._show_add_dialog_and_record(a, c)
+                        self._show_multi_match_picker(multi, _on_pick)
+                    else:
+                        self.results_widget.update_manual_result(client, artikul)
+                        self.camera_widget.show_manual_result(True, f"{artikul} → {client}")
+                        speak_match(artikul, client)
+                        self.settings_widget.clear_manual_entry()
+                        self._show_add_dialog_and_record(artikul, client)
                 else:
                     self.append_logs([tr("log_no_match_manual_code", code=part_code)])
                     self.camera_widget.show_manual_result(False, tr("no_match_found"))

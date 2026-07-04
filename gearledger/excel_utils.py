@@ -11,7 +11,7 @@ import pandas as pd
 # Protected by a lock because _ManualSearchWorker runs on a background thread.
 # ---------------------------------------------------------------------------
 import threading
-from typing import Optional
+from typing import List, Optional, Tuple
 _catalog_cache: dict = {}
 _catalog_lock = threading.Lock()
 
@@ -175,6 +175,50 @@ def invalidate_catalog_cache(excel_path: str = None):
             _catalog_cache.clear()
         else:
             _catalog_cache.pop(os.path.abspath(excel_path), None)
+
+
+def find_all_matches_in_excel(excel_path: str, query_raw: str) -> List[Tuple[str, str]]:
+    """
+    Return every (client, orig_artikul) pair in the catalog that the query
+    could reasonably mean — both exact and dash-normalized variants.
+
+    Examples (catalog has "713" AND "7-1-3"):
+      query "713"   → [("ClientA", "713"), ("ClientB", "7-1-3")]
+      query "7-1-3" → [("ClientB", "7-1-3"), ("ClientA", "713")]
+      query "713"   (catalog has only "7-1-3") → [("ClientB", "7-1-3")]
+
+    Returns [] when nothing matches or the file doesn't exist.
+    Raises ExcelReadError on read failure.
+    """
+    if not os.path.exists(excel_path):
+        return []
+    catalog = _load_catalog(excel_path)
+    if catalog.get("error") == "no_artikul_col":
+        return []
+
+    lookup = catalog["lookup"]
+    lookup_nodash = catalog["lookup_nodash"]
+
+    q = _space_norm(query_raw)
+    q_nd = q.replace("-", "").replace("—", "").replace("–", "")
+
+    seen: set = set()
+    results: list = []
+
+    def _add(hit):
+        if hit:
+            client_val, orig = hit
+            if orig not in seen:
+                seen.add(orig)
+                results.append((client_val, orig))
+
+    _add(lookup.get(q))           # exact match
+    _add(lookup_nodash.get(q))    # dashed catalog entry that strips to q  (e.g. "7-1-3" when q="713")
+    if q_nd != q:
+        _add(lookup.get(q_nd))        # exact catalog entry equal to dash-stripped query (e.g. "713" when q="7-1-3")
+        _add(lookup_nodash.get(q_nd)) # dashed entry that strips to q_nd
+
+    return results
 
 
 def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):

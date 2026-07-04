@@ -2192,8 +2192,16 @@ class MainWindow(QWidget):
 
         if client and artikul:
             self.results_widget.set_match_result(f"{artikul} → {client}")
-            speak_match(artikul, client)
-            self._show_add_dialog_and_record(artikul, client)
+            multi = res.get("multi_match") or []
+            if multi:
+                def _on_pick(a, c):
+                    self.results_widget.set_match_result(f"{a} → {c}")
+                    speak_match(a, c)
+                    self._show_add_dialog_and_record(a, c)
+                self._show_multi_match_picker(multi, _on_pick)
+            else:
+                speak_match(artikul, client)
+                self._show_add_dialog_and_record(artikul, client)
         else:
             self.results_widget.set_match_result(tr("status_not_found"))
             best = res.get("best_visible") or res.get("best_normalized")
@@ -2249,9 +2257,17 @@ class MainWindow(QWidget):
         a = res.get("match_artikul")
 
         if c and a:
-            self.results_widget.update_fuzzy_result(c, a)
-            speak_name(c)
-            self._show_add_dialog_and_record(a, c)
+            multi = res.get("multi_match") or []
+            if multi:
+                def _on_pick(a2, c2):
+                    self.results_widget.update_fuzzy_result(c2, a2)
+                    speak_name(c2)
+                    self._show_add_dialog_and_record(a2, c2)
+                self._show_multi_match_picker(multi, _on_pick)
+            else:
+                self.results_widget.update_fuzzy_result(c, a)
+                speak_name(c)
+                self._show_add_dialog_and_record(a, c)
 
         self._update_controls()
 
@@ -2278,9 +2294,17 @@ class MainWindow(QWidget):
                 client = result.get("match_client")
                 artikul = result.get("match_artikul")
                 if client and artikul:
-                    self.results_widget.update_manual_result(client, artikul)
-                    speak_match(artikul, client)
-                    self._show_add_dialog_and_record(artikul, client)
+                    multi = result.get("multi_match") or []
+                    if multi:
+                        def _on_pick(a, c):
+                            self.results_widget.update_manual_result(c, a)
+                            speak_match(a, c)
+                            self._show_add_dialog_and_record(a, c)
+                        self._show_multi_match_picker(multi, _on_pick)
+                    else:
+                        self.results_widget.update_manual_result(client, artikul)
+                        speak_match(artikul, client)
+                        self._show_add_dialog_and_record(artikul, client)
                 else:
                     self.results_widget.update_manual_result("", "")
             else:
@@ -2298,6 +2322,47 @@ class MainWindow(QWidget):
         worker.error.connect(on_error)
         worker.error.connect(worker.deleteLater)
         worker.start()
+
+    def _show_multi_match_picker(self, matches: list, callback):
+        """
+        Show a dialog letting the user pick one entry from *matches*
+        (list of (client, artikul) tuples).  Calls callback(artikul, client)
+        for the chosen entry.  Does nothing if matches has 0 or 1 items.
+        """
+        if len(matches) <= 1:
+            if matches:
+                client, artikul = matches[0]
+                callback(artikul, client)
+            return
+
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("multiple_matches_title"))
+        dlg.setModal(True)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel(tr("multiple_matches_msg")))
+
+        for client, artikul in matches:
+            btn = QPushButton(f"{artikul}  →  {client}")
+            btn.setMinimumHeight(40)
+
+            def _make_handler(a, c):
+                def _handler():
+                    dlg.accept()
+                    callback(a, c)
+                return _handler
+
+            btn.clicked.connect(_make_handler(artikul, client))
+            layout.addWidget(btn)
+
+        cancel_row = QHBoxLayout()
+        cancel_row.addStretch()
+        cancel_btn = QPushButton(tr("cancel"))
+        cancel_btn.clicked.connect(dlg.reject)
+        cancel_row.addWidget(cancel_btn)
+        layout.addLayout(cancel_row)
+
+        dlg.exec()
 
     def _show_add_dialog_and_record(self, artikul: str, client: str):
         """Show add-to-results dialog; record when user confirms."""

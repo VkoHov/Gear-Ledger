@@ -591,6 +591,14 @@ TRANSLATIONS = {
         "en": "Test Scale Connection",
         "ru": "Проверить подключение весов",
     },
+    "multiple_matches_title": {
+        "en": "Multiple Matches Found",
+        "ru": "Найдено несколько совпадений",
+    },
+    "multiple_matches_msg": {
+        "en": "The code matches multiple catalog entries. Select the correct one:",
+        "ru": "Код соответствует нескольким записям в каталоге. Выберите нужную:",
+    },
     "processing_configuration": {
         "en": "Processing Configuration",
         "ru": "Конфигурация обработки",

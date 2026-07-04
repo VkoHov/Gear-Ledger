@@ -15,7 +15,7 @@ from .config import (
     DEFAULT_VISION_BACKEND,
     OPENAI_VISION_MAX_TOKENS,
 )
-from .excel_utils import try_match_in_excel, ExcelReadError
+from .excel_utils import try_match_in_excel, find_all_matches_in_excel, ExcelReadError
 from .gpt_utils import (
     get_openai_client,
     rank_with_gpt,
@@ -429,10 +429,16 @@ def run_fuzzy_match(
             logs.append("[FUZZY DEBUG] ------------------")
             logs.extend(dbg_all)
             logs.append("---------- end FUZZY DEBUG -----")
+            # Check for ambiguous dash-variant matches (e.g. "713" and "7-1-3" both in catalog)
+            all_matches = find_all_matches_in_excel(excel_path, visible)
+            multi_match = all_matches if len(all_matches) > 1 else []
+            if multi_match:
+                log(step, f"MULTI MATCH — {len(multi_match)} candidates: {[x[1] for x in multi_match]}")
             return {
                 "ok": True,
                 "match_client": c,
                 "match_artikul": a,
+                "multi_match": multi_match,
                 "logs": logs,
                 "excel_error": None,
             }
@@ -445,6 +451,7 @@ def run_fuzzy_match(
         "ok": True,
         "match_client": None,
         "match_artikul": None,
+        "multi_match": [],
         "logs": logs,
         "excel_error": None,
     }

@@ -26,7 +26,10 @@ class ExcelReadError(Exception):
 
 
 def _space_norm(s) -> str:
-    return str(s or "").replace(" ", "").upper()
+    # Remove spaces, uppercase, then normalize all dash variants to regular hyphen
+    # so em-dash / en-dash in Excel cells match user-typed hyphens.
+    s = str(s or "").replace(" ", "").upper()
+    return s.replace("—", "-").replace("–", "-")
 
 
 def _detect_columns(df):

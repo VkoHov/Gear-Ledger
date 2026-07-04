@@ -165,12 +165,20 @@ class _ManualSearchWorker(QThread):
 class AddToResultsDialog(QDialog):
     """Dialog to enter quantity and add match to results."""
 
-    def __init__(self, parent, artikul: str, client: str, stock: int = None):
+    def __init__(
+        self,
+        parent,
+        artikul: str,
+        client: str,
+        stock: int = None,
+        stock_breakdown: list = None,
+    ):
         super().__init__(parent)
         self.artikul = artikul
         self.client = client
         self.quantity = 1
         self.stock = stock  # available stock from catalog (None = unknown)
+        self.stock_breakdown = stock_breakdown  # per-order-line quantities, if combined
         self._setup_ui()
 
     def _setup_ui(self):
@@ -219,6 +227,24 @@ class AddToResultsDialog(QDialog):
                 "color: #27ae60; font-size: 14px; font-weight: bold; padding: 4px 0;"
             )
             main_layout.addWidget(stock_label)
+
+        # Combined-order-lines badge (shown only when the stock total was
+        # summed from more than one catalog row, e.g. repeat orders)
+        if self.stock_breakdown and len(self.stock_breakdown) > 1:
+            breakdown_text = "+".join(str(n) for n in self.stock_breakdown)
+            combined_label = QLabel(
+                tr(
+                    "combined_stock_label",
+                    count=len(self.stock_breakdown),
+                    breakdown=breakdown_text,
+                )
+            )
+            combined_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            combined_label.setWordWrap(True)
+            combined_label.setStyleSheet(
+                "color: #7f8c8d; font-size: 12px; padding: 0 0 4px 0;"
+            )
+            main_layout.addWidget(combined_label)
 
         # Quantity input
         qty_layout = QHBoxLayout()
@@ -2381,9 +2407,12 @@ class MainWindow(QWidget):
         catalog_path = self.settings_widget.get_catalog_path()
         remaining = None  # None = no stock column, skip check
         catalog_stock = None
+        stock_breakdown = None
         if catalog_path and os.path.exists(catalog_path):
             from gearledger.excel_utils import get_catalog_stock
-            catalog_stock = get_catalog_stock(catalog_path, artikul)
+            stock_result = get_catalog_stock(catalog_path, artikul, client)
+            if stock_result is not None:
+                catalog_stock, stock_breakdown = stock_result
 
         if catalog_stock is not None:
             from gearledger.data_layer import get_results_quantity
@@ -2394,7 +2423,9 @@ class MainWindow(QWidget):
                 _show_out_of_stock_dialog(self, artikul, catalog_stock, already_added)
                 return
 
-        dialog = AddToResultsDialog(self, artikul, client, stock=remaining)
+        dialog = AddToResultsDialog(
+            self, artikul, client, stock=remaining, stock_breakdown=stock_breakdown
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 

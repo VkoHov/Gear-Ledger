@@ -180,6 +180,10 @@ TRANSLATIONS = {
         "en": "Available: {count} pcs",
         "ru": "Доступно: {count} шт.",
     },
+    "combined_stock_label": {
+        "en": "ⓘ Combined from {count} order lines ({breakdown})",
+        "ru": "ⓘ Объединено из {count} строк заказа ({breakdown})",
+    },
     "searching": {
         "en": "Searching...",
         "ru": "Поиск...",

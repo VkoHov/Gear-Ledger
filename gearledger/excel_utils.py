@@ -111,7 +111,7 @@ def _load_catalog(excel_path: str) -> dict:
 
     artikul_col, client_col = _detect_columns(df)
     if not artikul_col:
-        entry = {"mtime": mtime, "lookup": {}, "lookup_nodash": {}, "count_lookup": {}, "error": "no_artikul_col"}
+        entry = {"mtime": mtime, "lookup": {}, "lookup_nodash": {}, "stock_rows": {}, "error": "no_artikul_col"}
         with _catalog_lock:
             _catalog_cache[abs_path] = entry
         return entry
@@ -122,7 +122,12 @@ def _load_catalog(excel_path: str) -> dict:
 
     lookup: dict = {}
     lookup_nodash: dict = {}
-    count_lookup: dict = {}
+    # stock_rows: separator-stripped code → list of every (client, qty) row
+    # sharing that identity, regardless of dash/dot/space style. Lets
+    # get_catalog_stock sum all order-lines for one client instead of only
+    # ever seeing the first row (e.g. the same client ordering the same
+    # part across several separate order lines).
+    stock_rows: dict = {}
 
     for _, row in df.iterrows():
         orig = str(row[artikul_col] or "")
@@ -136,20 +141,18 @@ def _load_catalog(excel_path: str) -> dict:
         if norm_nd and norm_nd != norm:
             lookup_nodash.setdefault(norm_nd, []).append((client_val, orig))
         # Stock count
-        if stock_col is not None and norm not in count_lookup:
+        if stock_col is not None:
             try:
                 cnt = int(pd.to_numeric(row[stock_col], errors="coerce") or 0)
             except Exception:
                 cnt = 0
-            count_lookup[norm] = cnt
-            if norm_nd and norm_nd != norm:
-                count_lookup.setdefault(norm_nd, cnt)
+            stock_rows.setdefault(norm_nd or norm, []).append((client_val, cnt))
 
     entry = {
         "mtime": mtime,
         "lookup": lookup,
         "lookup_nodash": lookup_nodash,
-        "count_lookup": count_lookup,
+        "stock_rows": stock_rows,
         "stock_col": stock_col,
         "artikul_col": artikul_col,
         "client_col": client_col,
@@ -161,11 +164,21 @@ def _load_catalog(excel_path: str) -> dict:
     return entry
 
 
-def get_catalog_stock(excel_path: str, artikul: str) -> Optional[int]:
+def get_catalog_stock(
+    excel_path: str, artikul: str, client: str = None
+) -> Optional[Tuple[int, List[int]]]:
     """
-    Return the available stock count for *artikul* from the catalog.
-    Returns None if the catalog has no stock column or the file can't be read.
-    Returns an int (possibly 0) if a stock column exists.
+    Return the available stock for *artikul* from the catalog, summed across
+    every order-line that matches it (same client can appear on several rows,
+    e.g. repeat orders). Returns (total, breakdown) where breakdown is the
+    list of individual row quantities that were summed (len > 1 means the
+    total was combined from multiple order-lines).
+
+    If *client* is given, only rows for that client (case/space-insensitive)
+    are counted. If *client* is None, all rows for the code are summed.
+
+    Returns None if the catalog has no stock column, the file can't be read,
+    or no matching rows have a stock value.
     """
     if not os.path.exists(excel_path):
         return None
@@ -173,15 +186,18 @@ def get_catalog_stock(excel_path: str, artikul: str) -> Optional[int]:
         catalog = _load_catalog(excel_path)
     except ExcelReadError:
         return None
-    count_lookup = catalog.get("count_lookup")
-    if not count_lookup and catalog.get("stock_col") is None:
+    stock_rows = catalog.get("stock_rows")
+    if not stock_rows and catalog.get("stock_col") is None:
         return None  # Catalog has no stock column at all
-    q = _space_norm(artikul)
-    count = count_lookup.get(q)
-    if count is None:
-        q_nd = _strip_seps(q)
-        count = count_lookup.get(q_nd)
-    return count  # may be None if artikul not found
+    q_nd = _strip_seps(_space_norm(artikul))
+    rows = stock_rows.get(q_nd) or []
+    if client is not None:
+        client_key = client.strip().upper()
+        rows = [r for r in rows if r[0].strip().upper() == client_key]
+    breakdown = [cnt for _client, cnt in rows]
+    if not breakdown:
+        return None
+    return sum(breakdown), breakdown
 
 
 def invalidate_catalog_cache(excel_path: str = None):
@@ -224,8 +240,12 @@ def find_all_matches_in_excel(excel_path: str, query_raw: str) -> List[Tuple[str
     def _add(hit):
         if hit:
             client_val, orig = hit
-            if orig not in seen:
-                seen.add(orig)
+            # Dedup by (client, orig) — not orig alone — so two different
+            # clients who happen to use the exact same code text aren't
+            # silently collapsed into a single picker entry.
+            key = (client_val.strip().upper(), orig)
+            if key not in seen:
+                seen.add(key)
                 results.append((client_val, orig))
 
     def _add_all(hits):

@@ -33,6 +33,7 @@ class SSEClientThread(QThread):
         self._running = False
         self._should_stop = False
         self._connected = False  # Actual connection state (True when stream is open)
+        self._response = None  # Current response, kept so stop() can close it
 
     def run(self):
         """Run the SSE client in background thread."""
@@ -46,7 +47,7 @@ class SSEClientThread(QThread):
                 url = f"{self.server_url}/api/events"
                 print(f"[SSE_CLIENT] Connecting to {url}")
 
-                response = requests.get(
+                self._response = requests.get(
                     url,
                     stream=True,
                     timeout=self.timeout,
@@ -55,6 +56,7 @@ class SSEClientThread(QThread):
                         "Cache-Control": "no-cache",
                     },
                 )
+                response = self._response
 
                 if response.status_code != 200:
                     print(f"[SSE_CLIENT] Connection failed: {response.status_code}")
@@ -113,11 +115,12 @@ class SSEClientThread(QThread):
                     self.msleep(5000)
             finally:
                 # Close connection so server detects disconnect and removes from _sse_clients
-                if response is not None:
+                if self._response is not None:
                     try:
-                        response.close()
+                        self._response.close()
                     except Exception:
                         pass
+                    self._response = None
 
         self._running = False
         self._connected = False
@@ -175,7 +178,15 @@ class SSEClientThread(QThread):
         """Stop the SSE client."""
         self._should_stop = True
         self._connected = False
-        self.wait(2000)  # Wait up to 2 seconds for thread to stop
+        # Close the active response to unblock iter_lines() immediately
+        if self._response is not None:
+            try:
+                self._response.close()
+            except Exception:
+                pass
+            self._response = None
+        self.quit()
+        self.wait(5000)  # Wait up to 5 seconds for thread to finish
 
     def is_connected(self) -> bool:
         """Check if SSE client has an active stream connection."""

@@ -258,6 +258,9 @@ class AddToResultsDialog(QDialog):
         max_qty = self.stock if self.stock is not None else 9999
         self.quantity_spin.setMaximum(max_qty)
         self.quantity_spin.setValue(1)
+        self.quantity_spin.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self.quantity_spin.setMinimumHeight(48)
         self.quantity_spin.setMinimumWidth(120)
         spin_font = QFont()
@@ -267,6 +270,17 @@ class AddToResultsDialog(QDialog):
         qty_layout.addWidget(self.quantity_spin)
         qty_layout.addStretch()
         main_layout.addLayout(qty_layout)
+
+        # Inline validation message (hidden until _on_add finds a problem)
+        self.qty_error_label = QLabel("")
+        self.qty_error_label.setStyleSheet(
+            "color: #e74c3c; font-size: 13px; padding: 0 0 0 0;"
+        )
+        self.qty_error_label.setVisible(False)
+        main_layout.addWidget(self.qty_error_label)
+        self.quantity_spin.lineEdit().textEdited.connect(
+            lambda _: self.qty_error_label.setVisible(False)
+        )
 
         main_layout.addStretch()
 
@@ -293,8 +307,20 @@ class AddToResultsDialog(QDialog):
         ok_btn.clicked.connect(self._on_add)
         main_layout.addWidget(ok_btn)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.quantity_spin.setFocus()
+        # Deferred: QAbstractSpinBox selects-all on focus-in, which would
+        # otherwise overwrite the cursor position we set here.
+        QTimer.singleShot(0, lambda: self.quantity_spin.lineEdit().end(False))
+
     def _on_add(self):
-        """Store quantity and close dialog."""
+        """Validate and store quantity, then close dialog."""
+        if not self.quantity_spin.lineEdit().text().strip():
+            self.qty_error_label.setText(tr("enter_quantity"))
+            self.qty_error_label.setVisible(True)
+            self.quantity_spin.setFocus()
+            return
         self.quantity = self.quantity_spin.value()
         self.accept()
 

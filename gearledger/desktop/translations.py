@@ -896,6 +896,10 @@ TRANSLATIONS = {
         "en": "Quantity:",
         "ru": "Количество:",
     },
+    "enter_quantity": {
+        "en": "Please enter a quantity",
+        "ru": "Пожалуйста, введите количество",
+    },
     "reset_tooltip": {
         "en": "Clear selection and start with new empty results file",
         "ru": "Очистить выбор и начать с нового пустого файла результатов",

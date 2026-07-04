@@ -257,6 +257,10 @@ TRANSLATIONS = {
         "en": "Stable Time (sec):",
         "ru": "Время стабилизации (сек):",
     },
+    "advanced_settings": {
+        "en": "Advanced",
+        "ru": "Дополнительно",
+    },
     "pricing": {
         "en": "Pricing",
         "ru": "Цены",
@@ -578,6 +582,10 @@ TRANSLATIONS = {
     "stable_time": {
         "en": "Stable Time (seconds):",
         "ru": "Время стабилизации (сек):",
+    },
+    "advanced_settings": {
+        "en": "Advanced",
+        "ru": "Дополнительно",
     },
     "test_scale_connection": {
         "en": "Test Scale Connection",

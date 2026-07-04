@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QFrame,
+    QToolButton,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QObject
 
@@ -159,32 +160,58 @@ class SettingsPage(QWidget):
         scale_group = QGroupBox(tr("scale_configuration"))
         scale_layout = QVBoxLayout(scale_group)
 
+        # Port row (always visible)
         scale_row1 = QHBoxLayout()
         scale_row1.addWidget(QLabel(tr("scale_port")))
         self.scale_port_edit = QLineEdit()
         self.scale_port_edit.setPlaceholderText(tr("scale_port_placeholder"))
         scale_row1.addWidget(self.scale_port_edit, 1)
-
-        scale_row1.addWidget(QLabel(tr("baudrate")))
-        self.scale_baudrate_spin = QSpinBox()
-        self.scale_baudrate_spin.setRange(1200, 230400)
-        scale_row1.addWidget(self.scale_baudrate_spin)
         scale_layout.addLayout(scale_row1)
 
-        scale_row2 = QHBoxLayout()
-        scale_row2.addWidget(QLabel(tr("weight_threshold")))
+        # Advanced toggle button
+        self._scale_advanced_btn = QToolButton()
+        self._scale_advanced_btn.setCheckable(True)
+        self._scale_advanced_btn.setChecked(False)
+        self._scale_advanced_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._scale_advanced_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self._scale_advanced_btn.setText(tr("advanced_settings"))
+        self._scale_advanced_btn.setStyleSheet("QToolButton { border: none; color: #555; font-size: 12px; }")
+        self._scale_advanced_btn.toggled.connect(self._toggle_scale_advanced)
+        adv_btn_row = QHBoxLayout()
+        adv_btn_row.addWidget(self._scale_advanced_btn)
+        adv_btn_row.addStretch(1)
+        scale_layout.addLayout(adv_btn_row)
+
+        # Advanced section (hidden by default)
+        self._scale_advanced_widget = QWidget()
+        self._scale_advanced_widget.setVisible(False)
+        adv_layout = QVBoxLayout(self._scale_advanced_widget)
+        adv_layout.setContentsMargins(0, 0, 0, 0)
+
+        adv_row1 = QHBoxLayout()
+        adv_row1.addWidget(QLabel(tr("baudrate")))
+        self.scale_baudrate_spin = QSpinBox()
+        self.scale_baudrate_spin.setRange(1200, 230400)
+        adv_row1.addWidget(self.scale_baudrate_spin)
+        adv_row1.addStretch(1)
+        adv_layout.addLayout(adv_row1)
+
+        adv_row2 = QHBoxLayout()
+        adv_row2.addWidget(QLabel(tr("weight_threshold")))
         self.weight_threshold_spin = QDoubleSpinBox()
         self.weight_threshold_spin.setRange(0.001, 10.0)
         self.weight_threshold_spin.setDecimals(3)
-        scale_row2.addWidget(self.weight_threshold_spin)
+        adv_row2.addWidget(self.weight_threshold_spin)
 
-        scale_row2.addWidget(QLabel(tr("stable_time")))
+        adv_row2.addWidget(QLabel(tr("stable_time")))
         self.stable_time_spin = QDoubleSpinBox()
         self.stable_time_spin.setRange(0.1, 10.0)
         self.stable_time_spin.setDecimals(1)
-        scale_row2.addWidget(self.stable_time_spin)
-        scale_row2.addStretch(1)
-        scale_layout.addLayout(scale_row2)
+        adv_row2.addWidget(self.stable_time_spin)
+        adv_row2.addStretch(1)
+        adv_layout.addLayout(adv_row2)
+
+        scale_layout.addWidget(self._scale_advanced_widget)
 
         # Test scale button
         test_scale_btn = QPushButton(tr("test_scale_connection"))
@@ -513,6 +540,12 @@ class SettingsPage(QWidget):
 
         default_path = get_default_result_file()
         self.default_result_file_edit.setText(default_path)
+
+    def _toggle_scale_advanced(self, checked: bool):
+        self._scale_advanced_widget.setVisible(checked)
+        self._scale_advanced_btn.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
 
     def _test_scale(self):
         """Test scale connection."""

@@ -350,6 +350,38 @@ TRANSLATIONS = {
         "en": "Reset",
         "ru": "Сброс",
     },
+    "versions": {
+        "en": "Versions",
+        "ru": "Версии",
+    },
+    "versions_tooltip": {
+        "en": "View and export previous result-file versions saved by Reset",
+        "ru": "Просмотр и экспорт предыдущих версий файла результатов, сохранённых при сбросе",
+    },
+    "previous_versions_title": {
+        "en": "Previous Versions",
+        "ru": "Предыдущие версии",
+    },
+    "no_previous_versions": {
+        "en": "No previous versions yet — they appear here after you use Reset.",
+        "ru": "Пока нет предыдущих версий — они появятся здесь после сброса.",
+    },
+    "version_row_label": {
+        "en": "{date} ({count} items)",
+        "ru": "{date} ({count} поз.)",
+    },
+    "open_version": {
+        "en": "Open",
+        "ru": "Открыть",
+    },
+    "export_version": {
+        "en": "Export",
+        "ru": "Экспорт",
+    },
+    "close": {
+        "en": "Close",
+        "ru": "Закрыть",
+    },
     "download": {
         "en": "Download",
         "ru": "Скачать",

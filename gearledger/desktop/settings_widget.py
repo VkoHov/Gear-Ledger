@@ -66,12 +66,15 @@ class SettingsWidget(QGroupBox):
         self.btn_results = QPushButton(tr("browse"))
         self.btn_reset_results = QPushButton(tr("reset"))
         self.btn_reset_results.setToolTip(tr("reset_tooltip"))
+        self.btn_versions = QPushButton(tr("versions"))
+        self.btn_versions.setToolTip(tr("versions_tooltip"))
         self.btn_download = QPushButton(tr("download"))
         self.btn_generate_invoice = QPushButton(tr("generate_invoice"))
         self.btn_generate_invoice.setStyleSheet("background-color: #27ae60;")
         results_layout.addWidget(self.results_edit, 1)
         results_layout.addWidget(self.btn_results)
         results_layout.addWidget(self.btn_reset_results)
+        results_layout.addWidget(self.btn_versions)
         results_layout.addWidget(self.btn_download)
         results_layout.addWidget(self.btn_generate_invoice)
         layout.addLayout(results_layout)
@@ -119,6 +122,7 @@ class SettingsWidget(QGroupBox):
         self.btn_catalog.clicked.connect(self.pick_catalog_excel)
         self.btn_results.clicked.connect(self.pick_results_excel)
         self.btn_reset_results.clicked.connect(self.reset_results_excel)
+        self.btn_versions.clicked.connect(self.show_versions_dialog)
         self.btn_download.clicked.connect(self.download_results_excel)
         self.btn_generate_invoice.clicked.connect(self.generate_invoice)
         self.btn_add_manual.clicked.connect(self.add_manual_entry)
@@ -268,7 +272,6 @@ class SettingsWidget(QGroupBox):
         from PyQt6.QtWidgets import QMessageBox
         import datetime
         import pandas as pd
-        from gearledger.config import ROOT_DIR
         from gearledger.result_ledger import COLUMNS
 
         # Ask for confirmation
@@ -336,30 +339,59 @@ class SettingsWidget(QGroupBox):
                     )
                     return
 
-            # Standalone mode - create new Excel file
-            # Generate new filename with timestamp
-            default_filename = (
-                f"results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            # Standalone mode - archive the current file (if it has data) as a
+            # version, then recreate a fresh empty file at the same path.
+            import shutil
+            from gearledger.desktop.settings_manager import (
+                load_settings,
+                save_settings,
+                get_default_result_file,
+                get_versions_dir,
             )
-            new_path = str(ROOT_DIR / default_filename)
+
+            target_path = self.get_results_path() or get_default_result_file()
+
+            if os.path.exists(target_path):
+                try:
+                    had_rows = len(pd.read_excel(target_path)) > 0
+                except Exception:
+                    had_rows = True  # unreadable — archive rather than silently drop
+                if had_rows:
+                    versions_dir = get_versions_dir()
+                    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    archive_path = os.path.join(versions_dir, f"results_{stamp}.xlsx")
+                    suffix = 1
+                    while os.path.exists(archive_path):
+                        archive_path = os.path.join(
+                            versions_dir, f"results_{stamp}_{suffix}.xlsx"
+                        )
+                        suffix += 1
+                    shutil.move(target_path, archive_path)
 
             # Create empty DataFrame with column headers
             df = pd.DataFrame(columns=COLUMNS)
 
-            # Save empty file
-            df.to_excel(new_path, index=False)
+            # Save empty file at the same path so it keeps being the active one
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            df.to_excel(target_path, index=False)
 
             # Update UI
-            self.results_edit.setText(new_path)
+            self.results_edit.setText(target_path)
 
             # Notify that the results path has changed
             if self.on_results_changed:
-                self.on_results_changed(new_path)
+                self.on_results_changed(target_path)
+
+            # Persist so relaunching the app keeps using this file instead of
+            # reverting to whatever default_result_file was last saved
+            settings = load_settings()
+            settings.default_result_file = target_path
+            save_settings(settings)
 
             QMessageBox.information(
                 self,
                 tr("reset_complete"),
-                tr("reset_complete_msg", path=new_path),
+                tr("reset_complete_msg", path=target_path),
             )
         except Exception as e:
             QMessageBox.critical(
@@ -367,6 +399,104 @@ class SettingsWidget(QGroupBox):
                 tr("reset_failed"),
                 tr("reset_failed_msg", error=str(e)),
             )
+
+    def show_versions_dialog(self):
+        """List archived result-file versions (created by Reset) with Open/Export actions."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+        from gearledger.desktop.settings_manager import get_versions_dir
+        import datetime
+        import pandas as pd
+
+        versions_dir = get_versions_dir()
+        try:
+            filenames = sorted(
+                (f for f in os.listdir(versions_dir) if f.lower().endswith(".xlsx")),
+                reverse=True,
+            )
+        except OSError:
+            filenames = []
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("previous_versions_title"))
+        dlg.setModal(True)
+        dlg.setMinimumWidth(440)
+        layout = QVBoxLayout(dlg)
+
+        if not filenames:
+            layout.addWidget(QLabel(tr("no_previous_versions")))
+        else:
+            for fname in filenames:
+                fpath = os.path.join(versions_dir, fname)
+                try:
+                    count = len(pd.read_excel(fpath))
+                except Exception:
+                    count = 0
+                mtime = datetime.datetime.fromtimestamp(os.path.getmtime(fpath))
+
+                row = QHBoxLayout()
+                row.addWidget(
+                    QLabel(
+                        tr(
+                            "version_row_label",
+                            date=mtime.strftime("%Y-%m-%d %H:%M"),
+                            count=count,
+                        )
+                    ),
+                    1,
+                )
+                open_btn = QPushButton(tr("open_version"))
+                export_btn = QPushButton(tr("export_version"))
+                open_btn.clicked.connect(self._make_open_version_handler(fpath))
+                export_btn.clicked.connect(self._make_export_version_handler(fpath))
+                row.addWidget(open_btn)
+                row.addWidget(export_btn)
+                layout.addLayout(row)
+
+        close_btn = QPushButton(tr("close"))
+        close_btn.clicked.connect(dlg.reject)
+        layout.addWidget(close_btn)
+
+        dlg.exec()
+
+    def _make_open_version_handler(self, path: str):
+        def _open():
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtGui import QDesktopServices
+
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+        return _open
+
+    def _make_export_version_handler(self, path: str):
+        def _export():
+            from PyQt6.QtWidgets import QFileDialog, QMessageBox
+            import shutil
+
+            fn, _ = QFileDialog.getSaveFileName(
+                self,
+                tr("save_results_excel"),
+                filter=tr("excel_filter"),
+                initialFilter="Excel (*.xlsx)",
+            )
+            if not fn:
+                return
+            try:
+                if not fn.endswith(".xlsx"):
+                    fn += ".xlsx"
+                shutil.copy2(path, fn)
+                QMessageBox.information(
+                    self,
+                    tr("download_complete"),
+                    tr("download_complete_msg", path=fn),
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    tr("download_failed"),
+                    tr("download_failed_msg", error=str(e)),
+                )
+
+        return _export
 
     def download_results_excel(self):
         """Save results Excel file to a chosen location."""

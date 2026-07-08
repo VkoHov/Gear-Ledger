@@ -68,6 +68,14 @@ def get_default_result_file() -> str:
     return default_path
 
 
+def get_versions_dir() -> str:
+    """Get (and ensure) the directory where retired result-file versions are archived."""
+    ensure_dirs()
+    versions_dir = os.path.join(APP_DIR, "data", "versions")
+    os.makedirs(versions_dir, exist_ok=True)
+    return versions_dir
+
+
 def load_settings() -> Settings:
     """Load settings from disk, or create defaults if not found."""
     ensure_dirs()

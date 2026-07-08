@@ -474,7 +474,9 @@ class GearLedgerServer:
             client = data.get("client")
 
             db = self._get_db()
-            count = db.clear_all_results(client)
+            from .desktop.settings_manager import get_versions_dir
+
+            count = db.archive_results_before_clear(get_versions_dir(), client)
 
             # Increment data version for sync
             self._data_version += 1

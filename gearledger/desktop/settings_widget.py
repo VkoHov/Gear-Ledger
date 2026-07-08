@@ -274,9 +274,9 @@ class SettingsWidget(QGroupBox):
         the same second don't silently overwrite one another.
         """
         import shutil
-        import datetime
         import pandas as pd
         from gearledger.desktop.settings_manager import get_versions_dir
+        from gearledger.result_ledger import unique_version_path
 
         if not os.path.exists(path):
             return
@@ -287,14 +287,7 @@ class SettingsWidget(QGroupBox):
         if not had_rows:
             return
 
-        versions_dir = get_versions_dir()
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        archive_path = os.path.join(versions_dir, f"results_{stamp}.xlsx")
-        suffix = 1
-        while os.path.exists(archive_path):
-            archive_path = os.path.join(versions_dir, f"results_{stamp}_{suffix}.xlsx")
-            suffix += 1
-        shutil.move(path, archive_path)
+        shutil.move(path, unique_version_path(get_versions_dir()))
 
     def _set_active_results_path(self, path: str):
         """Point the app at *path* as the active results file and remember it."""
@@ -335,12 +328,13 @@ class SettingsWidget(QGroupBox):
             mode = get_network_mode()
 
             if mode == "server":
-                # Clear the database
+                # Archive current results to a version file, then clear the database
                 from gearledger.database import get_database
+                from gearledger.desktop.settings_manager import get_versions_dir
 
                 db = get_database()
-                count = db.clear_all_results()
-                print(f"[RESET] Cleared {count} results from database")
+                count = db.archive_results_before_clear(get_versions_dir())
+                print(f"[RESET] Archived and cleared {count} results from database")
 
                 # Force refresh results pane
                 if hasattr(self, "on_results_refresh") and self.on_results_refresh:
@@ -869,6 +863,7 @@ class SettingsWidget(QGroupBox):
             self.results_edit.setVisible(False)
             self.btn_results.setVisible(False)
             self.btn_reset_results.setVisible(False)
+            self.btn_versions.setVisible(False)
             self.btn_download.setVisible(False)
             self.btn_generate_invoice.setVisible(False)
             self.results_info_label.setVisible(True)
@@ -897,6 +892,7 @@ class SettingsWidget(QGroupBox):
             self.results_edit.setVisible(True)
             self.btn_results.setVisible(True)
             self.btn_reset_results.setVisible(True)
+            self.btn_versions.setVisible(True)
             self.btn_download.setVisible(True)
             self.btn_generate_invoice.setVisible(True)
             self.results_info_label.setVisible(False)

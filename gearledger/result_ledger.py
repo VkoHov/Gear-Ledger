@@ -22,6 +22,39 @@ def _norm(s: str) -> str:
     return re.sub(r"[ \t\n\r\-.:/]", "", str(s or "")).upper()
 
 
+def unique_version_path(versions_dir: str) -> str:
+    """Return a collision-safe path for a new results_<timestamp>.xlsx archive,
+    so two versions created within the same second don't overwrite each other."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(versions_dir, f"results_{stamp}.xlsx")
+    suffix = 1
+    while os.path.exists(path):
+        path = os.path.join(versions_dir, f"results_{stamp}_{suffix}.xlsx")
+        suffix += 1
+    return path
+
+
+def rows_to_dataframe(rows) -> pd.DataFrame:
+    """Map database result rows (dicts with artikul/client/quantity/... keys)
+    to the standard results-ledger DataFrame shape, for archiving DB-backed
+    (server/client mode) results to an Excel version file."""
+    data = [
+        {
+            "Артикул": r.get("artikul", ""),
+            "Клиент": r.get("client", ""),
+            "Количество": r.get("quantity", 0),
+            "Вес": r.get("weight", 0),
+            "Последнее обновление": r.get("last_updated", ""),
+            "Брэнд": r.get("brand", ""),
+            "Описание": r.get("description", ""),
+            "Цена продажи": r.get("sale_price", 0),
+            "Сумма продажи": r.get("total_price", 0),
+        }
+        for r in rows
+    ]
+    return pd.DataFrame(data, columns=COLUMNS)
+
+
 def record_match(
     path: str,
     artikul: str,

@@ -261,6 +261,21 @@ class Database:
         conn.commit()
         return cursor.rowcount
 
+    def archive_results_before_clear(self, versions_dir: str, client: str = None) -> int:
+        """Export current results to an Excel version file, then clear them.
+
+        Used by server/client-mode Reset so a database wipe gets the same
+        version-history safety net as the standalone Excel file does.
+        Returns the number of rows cleared.
+        """
+        rows = self.get_all_results(client)
+        if rows:
+            from .result_ledger import rows_to_dataframe, unique_version_path
+
+            df = rows_to_dataframe(rows)
+            df.to_excel(unique_version_path(versions_dir), index=False)
+        return self.clear_all_results(client)
+
     def get_clients(self) -> List[str]:
         """Get list of unique clients."""
         conn = self._get_connection()

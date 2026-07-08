@@ -907,12 +907,18 @@ class SettingsWidget(QGroupBox):
                 from gearledger.desktop.settings_manager import (
                     load_settings,
                     get_default_result_file,
+                    is_path_for_this_platform,
                 )
                 import os
 
                 settings = load_settings()
-                # Use configured default, or fall back to app data directory
-                if settings.default_result_file:
+                # Use configured default, or fall back to app data directory.
+                # Ignore a stored path that doesn't belong to this OS (e.g.
+                # settings.json copied over from a different machine) instead
+                # of trying to use/create a foreign, nonsensical path.
+                if settings.default_result_file and is_path_for_this_platform(
+                    settings.default_result_file
+                ):
                     path = settings.default_result_file
                 else:
                     path = get_default_result_file()

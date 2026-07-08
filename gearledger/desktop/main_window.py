@@ -2578,18 +2578,48 @@ class MainWindow(QWidget):
         """Handle invoice generation request."""
         from PyQt6.QtWidgets import QMessageBox, QFileDialog
         from gearledger.invoice_generator import generate_invoice_from_results
+        from gearledger.data_layer import get_network_mode
 
-        # Validate files exist
-        results_path = self.settings_widget.get_results_path()
-        catalog_path = self.settings_widget.get_catalog_path()
+        # In server mode, results live in the database — new scans never
+        # touch the local results.xlsx, so generating from that file would
+        # always show stale/old data. Export current DB rows to a temp file
+        # in the same ledger shape and generate from that instead.
+        temp_results_path = None
+        default_invoice_name = None
+        if get_network_mode() == "server":
+            from gearledger.database import get_database
+            from gearledger.result_ledger import rows_to_dataframe
+            import tempfile
+            import datetime
 
-        if not results_path or not os.path.exists(results_path):
-            QMessageBox.warning(
-                self,
-                tr("generate_invoice_title"),
-                tr("no_results_file_invoice"),
+            db = get_database()
+            rows = db.get_all_results()
+            if not rows:
+                QMessageBox.warning(
+                    self,
+                    tr("generate_invoice_title"),
+                    tr("no_results_file_invoice"),
+                )
+                return
+            df = rows_to_dataframe(rows)
+            fd, temp_results_path = tempfile.mkstemp(suffix=".xlsx")
+            os.close(fd)
+            df.to_excel(temp_results_path, index=False)
+            results_path = temp_results_path
+            default_invoice_name = (
+                f"invoice_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             )
-            return
+        else:
+            # Validate files exist
+            results_path = self.settings_widget.get_results_path()
+
+            if not results_path or not os.path.exists(results_path):
+                QMessageBox.warning(
+                    self,
+                    tr("generate_invoice_title"),
+                    tr("no_results_file_invoice"),
+                )
+                return
 
         if not self.settings_widget.validate_catalog():
             QMessageBox.critical(
@@ -2613,7 +2643,7 @@ class MainWindow(QWidget):
             return
 
         # Ask user where to save the invoice
-        default_name = f"invoice_{os.path.basename(results_path)}"
+        default_name = default_invoice_name or f"invoice_{os.path.basename(results_path)}"
         output_path, _ = QFileDialog.getSaveFileName(
             self,
             tr("save_invoice_as"),
@@ -2623,6 +2653,8 @@ class MainWindow(QWidget):
         )
 
         if not output_path:
+            if temp_results_path and os.path.exists(temp_results_path):
+                os.remove(temp_results_path)
             return  # User cancelled
 
         # Ensure .xlsx extension
@@ -2633,9 +2665,13 @@ class MainWindow(QWidget):
 
         # Generate invoice
         weight_price = self.settings_widget.get_weight_price()
-        result = generate_invoice_from_results(
-            results_path, catalog_path, output_path, weight_price
-        )
+        try:
+            result = generate_invoice_from_results(
+                results_path, catalog_path, output_path, weight_price
+            )
+        finally:
+            if temp_results_path and os.path.exists(temp_results_path):
+                os.remove(temp_results_path)
 
         if result.get("ok"):
             self.append_logs(

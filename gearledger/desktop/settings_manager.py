@@ -68,6 +68,23 @@ def get_default_result_file() -> str:
     return default_path
 
 
+def is_path_for_this_platform(path: str) -> bool:
+    """Check whether *path* looks like it was saved on this OS.
+
+    settings.json can end up on a different machine/OS than it was written
+    on (e.g. a copied config, or a synced app-data folder). A path saved on
+    macOS/Linux (e.g. "/Users/name/...") is syntactically "absolute" on
+    Windows too (rooted, just driveless) — os.path.isabs() alone won't catch
+    the mismatch — so check for a drive letter/UNC prefix on Windows instead.
+    """
+    if not path:
+        return False
+    if os.name == "nt":
+        drive, _ = os.path.splitdrive(path)
+        return bool(drive)
+    return path.startswith("/") or path.startswith(os.path.expanduser("~"))
+
+
 def get_versions_dir() -> str:
     """Get (and ensure) the directory where retired result-file versions are archived."""
     ensure_dirs()

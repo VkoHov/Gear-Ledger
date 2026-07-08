@@ -267,10 +267,52 @@ class SettingsWidget(QGroupBox):
             if self.on_results_changed:
                 self.on_results_changed(fn)
 
+    def _archive_active_file_if_needed(self, path: str):
+        """Move *path* into the versions folder if it exists and has data.
+
+        Uses a collision-safe timestamp suffix so two archives created within
+        the same second don't silently overwrite one another.
+        """
+        import shutil
+        import datetime
+        import pandas as pd
+        from gearledger.desktop.settings_manager import get_versions_dir
+
+        if not os.path.exists(path):
+            return
+        try:
+            had_rows = len(pd.read_excel(path)) > 0
+        except Exception:
+            had_rows = True  # unreadable — archive rather than silently drop
+        if not had_rows:
+            return
+
+        versions_dir = get_versions_dir()
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_path = os.path.join(versions_dir, f"results_{stamp}.xlsx")
+        suffix = 1
+        while os.path.exists(archive_path):
+            archive_path = os.path.join(versions_dir, f"results_{stamp}_{suffix}.xlsx")
+            suffix += 1
+        shutil.move(path, archive_path)
+
+    def _set_active_results_path(self, path: str):
+        """Point the app at *path* as the active results file and remember it."""
+        from gearledger.desktop.settings_manager import load_settings, save_settings
+
+        self.results_edit.setText(path)
+        if self.on_results_changed:
+            self.on_results_changed(path)
+
+        # Persist so relaunching the app keeps using this file instead of
+        # reverting to whatever default_result_file was last saved
+        settings = load_settings()
+        settings.default_result_file = path
+        save_settings(settings)
+
     def reset_results_excel(self):
         """Reset results file to a new empty file (or clear database in network mode)."""
         from PyQt6.QtWidgets import QMessageBox
-        import datetime
         import pandas as pd
         from gearledger.result_ledger import COLUMNS
 
@@ -341,52 +383,18 @@ class SettingsWidget(QGroupBox):
 
             # Standalone mode - archive the current file (if it has data) as a
             # version, then recreate a fresh empty file at the same path.
-            import shutil
-            from gearledger.desktop.settings_manager import (
-                load_settings,
-                save_settings,
-                get_default_result_file,
-                get_versions_dir,
-            )
+            from gearledger.desktop.settings_manager import get_default_result_file
 
             target_path = self.get_results_path() or get_default_result_file()
+            self._archive_active_file_if_needed(target_path)
 
-            if os.path.exists(target_path):
-                try:
-                    had_rows = len(pd.read_excel(target_path)) > 0
-                except Exception:
-                    had_rows = True  # unreadable — archive rather than silently drop
-                if had_rows:
-                    versions_dir = get_versions_dir()
-                    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    archive_path = os.path.join(versions_dir, f"results_{stamp}.xlsx")
-                    suffix = 1
-                    while os.path.exists(archive_path):
-                        archive_path = os.path.join(
-                            versions_dir, f"results_{stamp}_{suffix}.xlsx"
-                        )
-                        suffix += 1
-                    shutil.move(target_path, archive_path)
-
-            # Create empty DataFrame with column headers
+            # Create empty DataFrame with column headers, saved at the same
+            # path so it keeps being the one relaunch picks up
             df = pd.DataFrame(columns=COLUMNS)
-
-            # Save empty file at the same path so it keeps being the active one
             os.makedirs(os.path.dirname(target_path), exist_ok=True)
             df.to_excel(target_path, index=False)
 
-            # Update UI
-            self.results_edit.setText(target_path)
-
-            # Notify that the results path has changed
-            if self.on_results_changed:
-                self.on_results_changed(target_path)
-
-            # Persist so relaunching the app keeps using this file instead of
-            # reverting to whatever default_result_file was last saved
-            settings = load_settings()
-            settings.default_result_file = target_path
-            save_settings(settings)
+            self._set_active_results_path(target_path)
 
             QMessageBox.information(
                 self,
@@ -404,9 +412,11 @@ class SettingsWidget(QGroupBox):
         """List archived result-file versions (created by Reset) with Open/Export actions."""
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
         from gearledger.desktop.settings_manager import get_versions_dir
+        from gearledger.data_layer import get_network_mode
         import datetime
         import pandas as pd
 
+        can_restore = get_network_mode() == "standalone"
         versions_dir = get_versions_dir()
         try:
             filenames = sorted(
@@ -450,6 +460,12 @@ class SettingsWidget(QGroupBox):
                 export_btn.clicked.connect(self._make_export_version_handler(fpath))
                 row.addWidget(open_btn)
                 row.addWidget(export_btn)
+                if can_restore:
+                    restore_btn = QPushButton(tr("restore_version"))
+                    restore_btn.clicked.connect(
+                        self._make_restore_version_handler(fpath, dlg)
+                    )
+                    row.addWidget(restore_btn)
                 layout.addLayout(row)
 
         close_btn = QPushButton(tr("close"))
@@ -497,6 +513,61 @@ class SettingsWidget(QGroupBox):
                 )
 
         return _export
+
+    def _make_restore_version_handler(self, path: str, dlg):
+        def _restore():
+            from PyQt6.QtWidgets import QMessageBox
+
+            reply = QMessageBox.question(
+                self,
+                tr("restore_version_title"),
+                tr("restore_version_confirm"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            if self._restore_version(path):
+                dlg.accept()
+
+        return _restore
+
+    def _restore_version(self, version_path: str) -> bool:
+        """Make an archived version the active results file again.
+
+        Whatever is currently active gets archived first (same rule as
+        Reset: only if it has data), so switching back never loses work.
+        Returns True on success.
+        """
+        import shutil
+        from PyQt6.QtWidgets import QMessageBox
+        from gearledger.desktop.settings_manager import get_default_result_file
+
+        try:
+            target_path = self.get_results_path() or get_default_result_file()
+            self._archive_active_file_if_needed(target_path)
+
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            shutil.copy2(version_path, target_path)  # keep the archived copy intact
+
+            self._set_active_results_path(target_path)
+
+            if hasattr(self, "on_results_refresh") and self.on_results_refresh:
+                self.on_results_refresh()
+
+            QMessageBox.information(
+                self,
+                tr("restore_complete"),
+                tr("restore_complete_msg", path=target_path),
+            )
+            return True
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                tr("restore_failed"),
+                tr("restore_failed_msg", error=str(e)),
+            )
+            return False
 
     def download_results_excel(self):
         """Save results Excel file to a chosen location."""

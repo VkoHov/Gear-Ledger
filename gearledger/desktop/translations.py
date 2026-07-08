@@ -378,6 +378,34 @@ TRANSLATIONS = {
         "en": "Export",
         "ru": "Экспорт",
     },
+    "restore_version": {
+        "en": "Restore",
+        "ru": "Восстановить",
+    },
+    "restore_version_title": {
+        "en": "Restore Version",
+        "ru": "Восстановить версию",
+    },
+    "restore_version_confirm": {
+        "en": "Make this version the active results file? The current file will be archived as a new version first, so nothing is lost.",
+        "ru": "Сделать эту версию активным файлом результатов? Текущий файл будет сначала сохранён как новая версия, поэтому ничего не потеряется.",
+    },
+    "restore_complete": {
+        "en": "Restore Complete",
+        "ru": "Восстановление завершено",
+    },
+    "restore_complete_msg": {
+        "en": "Restored version is now the active results file:\n{path}",
+        "ru": "Восстановленная версия теперь является активным файлом результатов:\n{path}",
+    },
+    "restore_failed": {
+        "en": "Restore Failed",
+        "ru": "Ошибка восстановления",
+    },
+    "restore_failed_msg": {
+        "en": "Could not restore this version:\n{error}",
+        "ru": "Не удалось восстановить эту версию:\n{error}",
+    },
     "close": {
         "en": "Close",
         "ru": "Закрыть",

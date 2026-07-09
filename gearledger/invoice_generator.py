@@ -418,10 +418,7 @@ def _lookup_in_catalog(
     artikul: str, catalog_df: pd.DataFrame, col_mapping: Dict[str, str]
 ) -> Dict[str, Any]:
     """Look up item details in catalog by artikul."""
-
-    def normalize(s: str) -> str:
-        s = str(s or "").replace("\xa0", " ").replace("—", "-").replace("–", "-")
-        return s.replace(" ", "").replace("-", "").replace(".", "").upper()
+    from .result_ledger import _norm as normalize
 
     artikul_norm = normalize(artikul)
 

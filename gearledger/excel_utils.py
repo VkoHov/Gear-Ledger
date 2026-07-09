@@ -34,18 +34,32 @@ class ExcelReadError(Exception):
 def _space_norm(s) -> str:
     # Trim edges, uppercase, then normalize all dash variants to a regular
     # hyphen so em-dash / en-dash in Excel cells match user-typed hyphens.
-    # Internal spaces and dots are kept as-is (not stripped) so catalog
-    # entries that differ only by separator style — e.g. "75.5", "75 5",
-    # "755" — get distinct lookup keys instead of silently colliding into
-    # one; _strip_seps() below provides the separator-agnostic fallback
-    # that cross-matches them and feeds the multi-match picker.
-    s = str(s or "").strip().upper()
+    # Non-breaking spaces are canonicalized to a regular space here too —
+    # unlike dash/dot/space style (which is preserved so genuinely distinct
+    # catalog rows keep distinct keys), a non-breaking space is essentially
+    # always an accidental OCR/copy-paste artifact, not a meaningful
+    # distinction worth preserving as a separate picker candidate.
+    # Internal spaces and dots are otherwise kept as-is (not stripped) so
+    # catalog entries that differ only by separator style — e.g. "75.5",
+    # "75 5", "755" — get distinct lookup keys instead of silently
+    # colliding into one; _strip_seps() below provides the
+    # separator-agnostic fallback that cross-matches them and feeds the
+    # multi-match picker.
+    s = str(s or "").strip().upper().replace("\xa0", " ")
     return s.replace("—", "-").replace("–", "-")
 
 
 def _strip_seps(s: str) -> str:
-    """Remove all separator characters (-, ., space) for fallback matching."""
-    return s.replace("-", "").replace(".", "").replace(" ", "")
+    """Remove all separator characters (-, ., space, :, /) for fallback
+    matching — matches the character set the rest of the app's artikul
+    normalization (result_ledger._norm) already treats as noise."""
+    return (
+        s.replace("-", "")
+        .replace(".", "")
+        .replace(" ", "")
+        .replace(":", "")
+        .replace("/", "")
+    )
 
 
 def _detect_columns(df):

@@ -95,21 +95,10 @@ class Database:
         cursor = conn.cursor()
         now = datetime.datetime.now().isoformat()
 
-        # Normalize artikul for matching
-        artikul_norm = self._normalize(artikul)
-        print(f"[DATABASE]   normalized artikul: {artikul_norm}")
-
-        # Check if exists
-        cursor.execute(
-            """
-            SELECT id, quantity, weight, sale_price 
-            FROM results 
-            WHERE REPLACE(REPLACE(REPLACE(UPPER(artikul), ' ', ''), '-', ''), '.', '') = ?
-            AND UPPER(client) = UPPER(?)
-            """,
-            (artikul_norm, client),
-        )
-        existing = cursor.fetchone()
+        # Check if exists (normalization comparison done in Python, see
+        # _find_by_key, so it can't drift out of sync with a hand-written
+        # SQL REPLACE() chain)
+        existing = self._find_by_key(cursor, artikul, client)
         print(f"[DATABASE]   existing record: {dict(existing) if existing else None}")
 
         if existing:
@@ -245,19 +234,33 @@ class Database:
         conn.commit()
         return cursor.rowcount > 0
 
+    def _find_by_key(self, cursor, artikul: str, client: str):
+        """Find the single results row matching (artikul, client).
+
+        Does the normalization comparison in Python (via self._normalize)
+        instead of duplicating it as a hand-written SQL REPLACE() chain —
+        three separate copies of that chain drifting out of sync with the
+        Python-side normalizer was exactly how this class of bug happened
+        before, so there's now exactly one place to update.
+        """
+        artikul_norm = self._normalize(artikul)
+        cursor.execute(
+            "SELECT * FROM results WHERE UPPER(client) = UPPER(?)",
+            (client,),
+        )
+        for row in cursor.fetchall():
+            if self._normalize(row["artikul"]) == artikul_norm:
+                return row
+        return None
+
     def delete_result_by_key(self, artikul: str, client: str) -> int:
         """Delete the result row matching (artikul, client). Returns rows deleted."""
         conn = self._get_connection()
         cursor = conn.cursor()
-        artikul_norm = self._normalize(artikul)
-        cursor.execute(
-            """
-            DELETE FROM results
-            WHERE REPLACE(REPLACE(REPLACE(UPPER(artikul), ' ', ''), '-', ''), '.', '') = ?
-            AND UPPER(client) = UPPER(?)
-            """,
-            (artikul_norm, client),
-        )
+        row = self._find_by_key(cursor, artikul, client)
+        if not row:
+            return 0
+        cursor.execute("DELETE FROM results WHERE id = ?", (row["id"],))
         conn.commit()
         return cursor.rowcount
 
@@ -267,16 +270,7 @@ class Database:
         row was updated."""
         conn = self._get_connection()
         cursor = conn.cursor()
-        artikul_norm = self._normalize(artikul)
-        cursor.execute(
-            """
-            SELECT id, sale_price FROM results
-            WHERE REPLACE(REPLACE(REPLACE(UPPER(artikul), ' ', ''), '-', ''), '.', '') = ?
-            AND UPPER(client) = UPPER(?)
-            """,
-            (artikul_norm, client),
-        )
-        row = cursor.fetchone()
+        row = self._find_by_key(cursor, artikul, client)
         if not row:
             return False
         total = (row["sale_price"] or 0) * new_quantity
@@ -337,15 +331,11 @@ class Database:
         return by_client
 
     def _normalize(self, s: str) -> str:
-        """Normalize string for matching.
+        """Normalize string for matching — delegates to the single shared
+        normalizer (result_ledger._norm) instead of keeping its own copy."""
+        from .result_ledger import _norm
 
-        Canonicalize non-breaking spaces and em/en-dashes first — a code
-        scanned from a label often comes back with these instead of plain
-        ASCII, so it wouldn't otherwise match a manually-typed query that
-        looks identical but isn't byte-identical.
-        """
-        s = str(s or "").replace("\xa0", " ").replace("—", "-").replace("–", "-")
-        return s.replace(" ", "").replace("-", "").replace(".", "").upper()
+        return _norm(s)
 
     def close(self):
         """Close database connection."""

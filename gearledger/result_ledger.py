@@ -494,14 +494,10 @@ def _lookup_catalog_data(artikul: str, catalog_path: str = None, catalog_bytes: 
             return {}
 
         # Normalize for matching
-        def normalize(s: str) -> str:
-            s = str(s or "").replace("\xa0", " ").replace("—", "-").replace("–", "-")
-            return s.replace(" ", "").replace("-", "").replace(".", "").upper()
-
-        artikul_norm = normalize(artikul)
+        artikul_norm = _norm(artikul)
         print(f"[DEBUG] Looking for part: '{artikul}' -> normalized: '{artikul_norm}'")
 
-        catalog_df["_NORM_TEMP"] = catalog_df[номер_col].astype(str).apply(normalize)
+        catalog_df["_NORM_TEMP"] = catalog_df[номер_col].astype(str).apply(_norm)
 
         # Show some examples from the catalog
         print(

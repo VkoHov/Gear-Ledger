@@ -67,6 +67,7 @@ def generate_invoice_from_results(
 
         # Create invoice workbook
         wb = Workbook()
+        wb.remove(wb.active)  # no combined summary page — per-client sheets only
 
         # Group results by client
         if "Клиент" not in results_df.columns:
@@ -77,46 +78,6 @@ def generate_invoice_from_results(
             }
 
         clients = results_df["Клиент"].unique()
-
-        # Create summary sheet (first tab) with all clients
-        summary_ws = wb.active
-        summary_ws.title = "Summary"
-        current_row = 1
-
-        for client in clients:
-            if pd.isna(client) or str(client).strip() == "":
-                continue
-
-            client_items = results_df[results_df["Клиент"] == client]
-
-            # Write client section to summary sheet (first copy)
-            current_row = _write_client_section(
-                summary_ws,
-                client,
-                client_items,
-                catalog_df,
-                col_mapping,
-                current_row,
-                weight_price,
-                is_duplicate=False,
-            )
-
-            # Add 5 empty rows for cutting line
-            current_row += 15
-
-            # Write duplicate table (second copy for customer)
-            current_row = _write_client_section(
-                summary_ws,
-                client,
-                client_items,
-                catalog_df,
-                col_mapping,
-                current_row,
-                weight_price,
-                is_duplicate=True,
-            )
-
-            current_row += 2  # Add spacing between clients
 
         # Create individual client sheets
         for client in clients:
@@ -142,8 +103,8 @@ def generate_invoice_from_results(
                 is_duplicate=False,
             )
 
-            # Add 5 empty rows for cutting line
-            end_row += 15
+            # Add empty rows for cutting line
+            end_row += 6
 
             # Write duplicate table (second copy for customer)
             _write_client_section(

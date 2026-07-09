@@ -63,7 +63,7 @@ class PandasModel(QAbstractTableModel):
 
         if role == int(Qt.ItemDataRole.TextAlignmentRole):
             col = self._df.columns[index.column()]
-            if col in ("Количество", "Вес"):
+            if col in ("Количество", "Вес (за шт.)", "Общий вес"):
                 return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
@@ -316,6 +316,21 @@ class ResultsPane(QWidget):
             )
         except Exception:
             pass
+        return ResultsPane._with_total_weight(df)
+
+    @staticmethod
+    def _with_total_weight(df: pd.DataFrame) -> pd.DataFrame:
+        """Add a derived "Общий вес" (total weight) column for display, and
+        relabel "Вес" so it's clear it's the per-item weight — Вес is stored
+        per single item, so total = Вес * Количество."""
+        if "Вес" not in df.columns or "Количество" not in df.columns:
+            return df
+        df = df.copy()
+        qty = pd.to_numeric(df["Количество"], errors="coerce").fillna(0)
+        weight = pd.to_numeric(df["Вес"], errors="coerce").fillna(0)
+        weight_idx = df.columns.get_loc("Вес")
+        df.insert(weight_idx + 1, "Общий вес", qty * weight)
+        df.rename(columns={"Вес": "Вес (за шт.)"}, inplace=True)
         return df
 
     @staticmethod
@@ -383,4 +398,4 @@ class ResultsPane(QWidget):
         except Exception:
             pass
 
-        return df
+        return ResultsPane._with_total_weight(df)

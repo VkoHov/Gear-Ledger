@@ -248,7 +248,7 @@ def _write_client_section(
         "Номер",
         "Описание",
         "Кол.",
-        "Вес",
+        "Общий вес",
         "Цена продажи",
         "Сумма продажи",
     ]
@@ -332,7 +332,11 @@ def _write_client_section(
 
         total = price * quantity
         total_sum += total
-        total_weight += weight
+        # Вес stores weight per single item; the invoice shows total weight
+        # for the row (and the Итого row sums those row totals), while the
+        # weight-based price above correctly stays per-item * weight_price.
+        row_total_weight = weight * quantity
+        total_weight += row_total_weight
         total_price += price  # Sum of individual prices for Итого row
 
         # Write row
@@ -341,7 +345,7 @@ def _write_client_section(
         ws[f"C{current_row}"] = number
         ws[f"D{current_row}"] = description
         ws[f"E{current_row}"] = quantity
-        ws[f"F{current_row}"] = f"{weight:.3f}"
+        ws[f"F{current_row}"] = f"{row_total_weight:.3f}"
         ws[f"G{current_row}"] = f"{price:.2f}"
         ws[f"H{current_row}"] = f"{total:.2f}"
 

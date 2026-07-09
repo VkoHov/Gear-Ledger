@@ -254,6 +254,11 @@ class AddToResultsDialog(QDialog):
         qty_font.setPointSize(18)
         qty_label.setFont(qty_font)
         qty_layout.addWidget(qty_label)
+
+        self.btn_qty_min = QPushButton(tr("qty_min"))
+        self.btn_qty_min.setMinimumHeight(48)
+        qty_layout.addWidget(self.btn_qty_min)
+
         self.quantity_spin = QSpinBox()
         self.quantity_spin.setMinimum(1)
         max_qty = self.stock if self.stock is not None else 9999
@@ -269,6 +274,21 @@ class AddToResultsDialog(QDialog):
         self.quantity_spin.setFont(spin_font)
         self.quantity_spin.setStyleSheet("font-size: 18px; padding: 8px;")
         qty_layout.addWidget(self.quantity_spin)
+
+        self.btn_qty_max = QPushButton(tr("qty_max"))
+        self.btn_qty_max.setMinimumHeight(48)
+        self.btn_qty_max.setVisible(self.stock is not None)
+        qty_layout.addWidget(self.btn_qty_max)
+
+        self.btn_qty_min.clicked.connect(
+            lambda: self.quantity_spin.setValue(self.quantity_spin.minimum())
+        )
+        self.btn_qty_max.clicked.connect(
+            lambda: self.quantity_spin.setValue(self.quantity_spin.maximum())
+        )
+        self.quantity_spin.valueChanged.connect(self._update_qty_button_states)
+        self._update_qty_button_states(self.quantity_spin.value())
+
         qty_layout.addStretch()
         main_layout.addLayout(qty_layout)
 
@@ -314,6 +334,11 @@ class AddToResultsDialog(QDialog):
         # Deferred: QAbstractSpinBox selects-all on focus-in, which would
         # otherwise overwrite the cursor position we set here.
         QTimer.singleShot(0, lambda: self.quantity_spin.lineEdit().end(False))
+
+    def _update_qty_button_states(self, value: int):
+        """Disable Min/Max when the quantity is already at that bound."""
+        self.btn_qty_min.setEnabled(value > self.quantity_spin.minimum())
+        self.btn_qty_max.setEnabled(value < self.quantity_spin.maximum())
 
     def _on_add(self):
         """Validate and store quantity, then close dialog."""
@@ -672,6 +697,9 @@ class MainWindow(QWidget):
         )
         self.settings_widget.set_generate_invoice_requested_callback(
             self._on_generate_invoice_requested
+        )
+        self.settings_widget.set_check_completeness_requested_callback(
+            self._on_check_completeness_requested
         )
 
         # Results widget callbacks
@@ -2700,6 +2728,352 @@ class MainWindow(QWidget):
                 tr("invoice_generation_failed"),
                 tr("invoice_generation_failed_msg", error=result.get("error")),
             )
+
+    def _on_check_completeness_requested(self):
+        """Compare recorded results against catalog demand and show any gaps."""
+        from PyQt6.QtWidgets import QMessageBox
+        from gearledger.data_layer import check_catalog_completeness
+
+        if not self.settings_widget.validate_catalog():
+            QMessageBox.critical(
+                self,
+                tr("check_completeness"),
+                tr("choose_valid_catalog_first"),
+            )
+            return
+
+        catalog_path = self.settings_widget.get_catalog_path()
+        results_path = self.settings_widget.get_results_path()
+
+        result = check_catalog_completeness(catalog_path, results_path)
+
+        if not result.get("ok"):
+            QMessageBox.warning(
+                self,
+                tr("check_completeness"),
+                tr("no_quantity_column_msg"),
+            )
+            return
+
+        self._show_completeness_dialog(result, results_path)
+
+    def _show_completeness_dialog(self, result: dict, results_path: str):
+        """Show the Not Started / Partial breakdown with an Export option."""
+        from PyQt6.QtWidgets import (
+            QDialog,
+            QVBoxLayout,
+            QHBoxLayout,
+            QLabel,
+            QPushButton,
+            QScrollArea,
+            QWidget,
+            QFileDialog,
+            QMessageBox,
+            QInputDialog,
+        )
+        from PyQt6.QtCore import Qt
+
+        not_started = result["not_started"]
+        partial = result["partial"]
+        over_recorded = list(result["over_recorded"])
+        not_in_catalog = list(result["not_in_catalog"])
+        complete_count = result["complete_count"]
+        total_count = result["total_count"]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("check_completeness"))
+        dlg.setModal(True)
+        dlg.setMinimumWidth(520)
+        dlg.setMinimumHeight(420)
+
+        outer = QVBoxLayout(dlg)
+
+        summary = QLabel(
+            tr("completeness_summary", complete=complete_count, total=total_count)
+        )
+        summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        summary.setStyleSheet("font-size: 16px; font-weight: bold; padding: 8px;")
+        summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        outer.addWidget(summary)
+
+        def _section_label(text, color):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                f"font-size: 14px; font-weight: bold; color: {color}; padding-top: 8px;"
+            )
+            lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            return lbl
+
+        def _row_label(title, detail):
+            lbl = QLabel(f"<b>{title}</b><br><span style='color:#7f8c8d;'>{detail}</span>")
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("padding: 4px 0;")
+            lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            return lbl
+
+        def _not_in_catalog_row(item):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 4, 0, 4)
+            lbl = QLabel(
+                f"<b>{item['client']} — {item['artikul']}</b><br>"
+                f"<span style='color:#7f8c8d;'>"
+                f"{tr('not_in_catalog_detail', recorded=item['recorded'])}</span>"
+            )
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            lbl.setWordWrap(True)
+            lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            row_layout.addWidget(lbl, 1)
+
+            del_btn = QPushButton(tr("delete_item"))
+            del_btn.setStyleSheet("background-color: #e74c3c; color: white;")
+            row_layout.addWidget(del_btn)
+
+            def _delete():
+                reply = QMessageBox.question(
+                    dlg,
+                    tr("delete_item_confirm_title"),
+                    tr(
+                        "delete_item_confirm_msg",
+                        artikul=item["artikul"],
+                        client=item["client"],
+                    ),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+                from gearledger.data_layer import delete_result_unified
+
+                ok = delete_result_unified(item["artikul"], item["client"], results_path)
+                if ok:
+                    row_widget.setParent(None)
+                    if item in not_in_catalog:
+                        not_in_catalog.remove(item)
+                    self.results_pane.refresh()
+                else:
+                    QMessageBox.warning(
+                        dlg, tr("delete_item_confirm_title"), tr("delete_item_failed")
+                    )
+
+            del_btn.clicked.connect(_delete)
+            return row_widget
+
+        def _over_recorded_row(item):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 4, 0, 4)
+            lbl = QLabel(
+                f"<b>{item['client']} — {item['artikul']}</b><br>"
+                f"<span style='color:#7f8c8d;'>"
+                f"{tr('completeness_over_recorded_detail', ordered=item['ordered'], recorded=item['recorded'], excess=item['excess'])}"
+                f"</span>"
+            )
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            lbl.setWordWrap(True)
+            lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            row_layout.addWidget(lbl, 1)
+
+            adjust_btn = QPushButton(tr("adjust_quantity"))
+            adjust_btn.setStyleSheet("background-color: #2980b9; color: white;")
+            row_layout.addWidget(adjust_btn)
+
+            def _adjust():
+                new_qty, ok_pressed = QInputDialog.getInt(
+                    dlg,
+                    tr("adjust_quantity_title"),
+                    tr(
+                        "adjust_quantity_prompt",
+                        artikul=item["artikul"],
+                        client=item["client"],
+                    ),
+                    item["ordered"],
+                    0,
+                    1_000_000,
+                )
+                if not ok_pressed:
+                    return
+                from gearledger.data_layer import set_result_quantity_unified
+
+                ok = set_result_quantity_unified(
+                    item["artikul"], item["client"], new_qty, results_path
+                )
+                if ok:
+                    row_widget.setParent(None)
+                    if item in over_recorded:
+                        over_recorded.remove(item)
+                    self.results_pane.refresh()
+                else:
+                    QMessageBox.warning(
+                        dlg, tr("adjust_quantity_title"), tr("adjust_quantity_failed")
+                    )
+
+            adjust_btn.clicked.connect(_adjust)
+            return row_widget
+
+        if not not_started and not partial and not over_recorded and not not_in_catalog:
+            ok_lbl = QLabel(tr("completeness_all_done"))
+            ok_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ok_lbl.setStyleSheet("color: #27ae60; font-size: 14px; padding: 24px;")
+            ok_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            outer.addWidget(ok_lbl)
+        else:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            content = QWidget()
+            content_layout = QVBoxLayout(content)
+
+            if not_started:
+                content_layout.addWidget(
+                    _section_label(
+                        tr("not_started_section", count=len(not_started)), "#e74c3c"
+                    )
+                )
+                for item in not_started:
+                    content_layout.addWidget(
+                        _row_label(
+                            f"{item['client']} — {item['artikul']}",
+                            tr(
+                                "completeness_not_started_detail",
+                                ordered=item["ordered"],
+                            ),
+                        )
+                    )
+
+            if partial:
+                content_layout.addWidget(
+                    _section_label(tr("partial_section", count=len(partial)), "#f39c12")
+                )
+                for item in partial:
+                    content_layout.addWidget(
+                        _row_label(
+                            f"{item['client']} — {item['artikul']}",
+                            tr(
+                                "completeness_partial_detail",
+                                ordered=item["ordered"],
+                                recorded=item["recorded"],
+                                missing=item["missing"],
+                            ),
+                        )
+                    )
+
+            if over_recorded:
+                content_layout.addWidget(
+                    _section_label(
+                        tr("over_recorded_section", count=len(over_recorded)), "#2980b9"
+                    )
+                )
+                for item in list(over_recorded):
+                    content_layout.addWidget(_over_recorded_row(item))
+
+            if not_in_catalog:
+                content_layout.addWidget(
+                    _section_label(
+                        tr("not_in_catalog_section", count=len(not_in_catalog)),
+                        "#8e44ad",
+                    )
+                )
+                for item in list(not_in_catalog):
+                    content_layout.addWidget(_not_in_catalog_row(item))
+
+            content_layout.addStretch()
+            scroll.setWidget(content)
+            outer.addWidget(scroll, 1)
+
+        btn_row = QHBoxLayout()
+        invoice_btn = QPushButton(tr("generate_invoice"))
+        invoice_btn.setStyleSheet("background-color: #27ae60; color: white; font-weight: bold;")
+        btn_row.addWidget(invoice_btn)
+        btn_row.addStretch()
+        export_btn = QPushButton(tr("export_version"))
+        close_btn = QPushButton(tr("close"))
+        btn_row.addWidget(export_btn)
+        btn_row.addWidget(close_btn)
+        outer.addLayout(btn_row)
+
+        def _export():
+            fn, _ = QFileDialog.getSaveFileName(
+                dlg,
+                tr("save_results_excel"),
+                "completeness_report.xlsx",
+                filter=tr("excel_filter"),
+                initialFilter="Excel (*.xlsx)",
+            )
+            if not fn:
+                return
+            if not fn.endswith(".xlsx"):
+                fn += ".xlsx"
+            try:
+                import pandas as pd
+
+                rows = []
+                for item in not_started:
+                    rows.append(
+                        {
+                            tr("col_status"): tr("not_started_status"),
+                            tr("col_client"): item["client"],
+                            tr("col_artikul"): item["artikul"],
+                            tr("col_ordered"): item["ordered"],
+                            tr("col_recorded"): 0,
+                            tr("col_missing"): item["ordered"],
+                            tr("col_excess"): "",
+                        }
+                    )
+                for item in partial:
+                    rows.append(
+                        {
+                            tr("col_status"): tr("partial_status"),
+                            tr("col_client"): item["client"],
+                            tr("col_artikul"): item["artikul"],
+                            tr("col_ordered"): item["ordered"],
+                            tr("col_recorded"): item["recorded"],
+                            tr("col_missing"): item["missing"],
+                            tr("col_excess"): "",
+                        }
+                    )
+                for item in over_recorded:
+                    rows.append(
+                        {
+                            tr("col_status"): tr("over_recorded_status"),
+                            tr("col_client"): item["client"],
+                            tr("col_artikul"): item["artikul"],
+                            tr("col_ordered"): item["ordered"],
+                            tr("col_recorded"): item["recorded"],
+                            tr("col_missing"): "",
+                            tr("col_excess"): item["excess"],
+                        }
+                    )
+                for item in not_in_catalog:
+                    rows.append(
+                        {
+                            tr("col_status"): tr("not_in_catalog_status"),
+                            tr("col_client"): item["client"],
+                            tr("col_artikul"): item["artikul"],
+                            tr("col_ordered"): "",
+                            tr("col_recorded"): item["recorded"],
+                            tr("col_missing"): "",
+                            tr("col_excess"): "",
+                        }
+                    )
+                pd.DataFrame(rows).to_excel(fn, index=False)
+                QMessageBox.information(
+                    dlg, tr("download_complete"), tr("download_complete_msg", path=fn)
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    dlg, tr("download_failed"), tr("download_failed_msg", error=str(e))
+                )
+
+        def _generate_invoice():
+            dlg.accept()
+            self._on_generate_invoice_requested()
+
+        invoice_btn.clicked.connect(_generate_invoice)
+        export_btn.clicked.connect(_export)
+        close_btn.clicked.connect(dlg.reject)
+
+        dlg.exec()
 
     def append_logs(self, lines):
         """Append log lines to the log widget and persist to file."""

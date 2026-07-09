@@ -334,50 +334,40 @@ def _record_to_database(
 def get_results_quantity(results_path: str, artikul: str, client: str) -> int:
     """
     Return the quantity already recorded for (artikul, client) in the current backend.
-    Standalone → reads results Excel. Server → queries SQLite. Client → returns 0.
+    Standalone → reads results Excel. Server/client → filters get_all_results().
+
+    Previously server/client mode each hand-rolled their own separate
+    artikul-normalization (missing em/en-dash and non-breaking-space
+    handling), and the server-mode SQL query didn't even strip separators
+    from the *stored* column — only from the query parameter — so it could
+    fail to match almost any code containing a dash or space. Routing
+    through get_all_results() + the single shared, already-fixed normalizer
+    keeps this consistent with every other artikul-matching path.
     """
     mode = get_network_mode()
-    if mode == "server":
-        try:
-            from .database import get_database
-            db = get_database()
-            conn = db._get_connection()
-            import re as _re
-            def _norm(s):
-                return _re.sub(r"[ \t\n\r\-.:/]", "", str(s or "")).upper()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT quantity FROM results WHERE UPPER(artikul) = ? AND UPPER(client) = ?",
-                (_norm(artikul), (client or "").upper()),
-            )
-            row = cursor.fetchone()
-            return int(row[0]) if row else 0
-        except Exception:
-            return 0
-    elif mode == "client":
-        try:
-            from .api_client import get_client
-            import re as _re
-            def _norm(s):
-                return _re.sub(r"[ \t\n\r\-.:/]", "", str(s or "")).upper()
-            api_client = get_client()
-            if not api_client or not api_client.is_connected():
-                return 0
-            results = api_client.get_all_results(client)
-            norm_artikul = _norm(artikul)
-            for row in results:
-                if _norm(row.get("artikul", "")) == norm_artikul:
-                    return int(row.get("quantity", 0))
-            return 0
-        except Exception:
-            return 0
-    else:
+    if mode == "standalone":
         from .result_ledger import get_results_quantity as _excel_qty
         return _excel_qty(results_path, artikul, client)
 
+    try:
+        from .result_ledger import _norm
 
-def get_all_results(client_filter: str = None) -> list:
-    """Get all results from the appropriate backend."""
+        target_key = _norm(artikul)
+        total = 0
+        for row in get_all_results(client_filter=client):
+            if _norm(row.get("artikul", "")) == target_key:
+                total += int(row.get("quantity", 0) or 0)
+        return total
+    except Exception:
+        return 0
+
+
+def get_all_results(client_filter: str = None, results_path: str = None) -> list:
+    """Get all results from the appropriate backend.
+
+    results_path is only used in standalone mode, to read the local Excel
+    ledger (server/client mode ignore it, they have their own source).
+    """
     mode = get_network_mode()
 
     if mode == "client":
@@ -393,11 +383,176 @@ def get_all_results(client_filter: str = None) -> list:
         db = get_database()
         return db.get_all_results(client_filter)
     else:
-        # Standalone - not needed for now, results are read from Excel
-        return []
+        # Standalone - read from the local Excel ledger
+        if not results_path:
+            return []
+        from .result_ledger import get_all_results_excel
+
+        rows = get_all_results_excel(results_path)
+        if client_filter:
+            client_upper = client_filter.strip().upper()
+            rows = [
+                r for r in rows if str(r.get("client", "")).strip().upper() == client_upper
+            ]
+        return rows
 
 
 def is_network_mode() -> bool:
     """Check if we're in a network mode (server or client)."""
     mode = get_network_mode()
     return mode in ("server", "client")
+
+
+def delete_result_unified(artikul: str, client: str, results_path: str = None) -> bool:
+    """Delete a recorded (artikul, client) result from the appropriate backend.
+
+    Only standalone and server mode are supported (matches where the
+    Check Order / Generate Invoice actions are available in the UI).
+    """
+    mode = get_network_mode()
+
+    if mode == "server":
+        from .database import get_database
+
+        db = get_database()
+        return db.delete_result_by_key(artikul, client) > 0
+    elif mode == "standalone":
+        if not results_path:
+            return False
+        from .result_ledger import delete_result_excel
+
+        result = delete_result_excel(results_path, artikul, client)
+        return bool(result.get("ok")) and result.get("deleted", 0) > 0
+    else:
+        return False
+
+
+def set_result_quantity_unified(
+    artikul: str, client: str, new_quantity: int, results_path: str = None
+) -> bool:
+    """Correct a recorded (artikul, client) result's quantity in the
+    appropriate backend (e.g. fixing an over-recorded item).
+
+    Only standalone and server mode are supported (matches where the
+    Check Order / Generate Invoice actions are available in the UI).
+    """
+    mode = get_network_mode()
+
+    if mode == "server":
+        from .database import get_database
+
+        db = get_database()
+        return db.update_result_quantity_by_key(artikul, client, new_quantity)
+    elif mode == "standalone":
+        if not results_path:
+            return False
+        from .result_ledger import set_result_quantity_excel
+
+        result = set_result_quantity_excel(results_path, artikul, client, new_quantity)
+        return bool(result.get("ok")) and result.get("updated", 0) > 0
+    else:
+        return False
+
+
+def check_catalog_completeness(catalog_path: str, results_path: str = None) -> dict:
+    """
+    Compare every (client, artikul) demand line in the catalog against what's
+    actually been recorded, so the user can catch anything they forgot
+    before finishing a session.
+
+    Matching uses the same separator-stripped normalization as the rest of
+    the catalog code (dash/dot/space variants of a code are treated as the
+    same item), and exact (trimmed, case-insensitive) client-name matching.
+
+    Returns {
+        "ok": bool,
+        "error": Optional[str],           # "no_quantity_column" if catalog has none
+        "not_started": [{"client", "artikul", "ordered"}],
+        "partial": [{"client", "artikul", "ordered", "recorded", "missing"}],
+        "over_recorded": [{"client", "artikul", "ordered", "recorded", "excess"}],
+        "not_in_catalog": [{"client", "artikul", "recorded"}],
+        "complete_count": int,
+        "total_count": int,
+    }
+    """
+    from .excel_utils import list_catalog_demand, _space_norm, _strip_seps
+
+    demand = list_catalog_demand(catalog_path)
+    if not demand:
+        return {
+            "ok": False,
+            "error": "no_quantity_column",
+            "not_started": [],
+            "partial": [],
+            "over_recorded": [],
+            "not_in_catalog": [],
+            "complete_count": 0,
+            "total_count": 0,
+        }
+
+    results_rows = get_all_results(results_path=results_path)
+
+    recorded_lookup: dict = {}
+    recorded_display: dict = {}
+    for r in results_rows:
+        artikul_r = r.get("artikul", "")
+        client_r = r.get("client", "")
+        key = (_strip_seps(_space_norm(artikul_r)), str(client_r).strip().upper())
+        recorded_lookup[key] = recorded_lookup.get(key, 0) + int(r.get("quantity", 0) or 0)
+        recorded_display.setdefault(key, (client_r, artikul_r))
+
+    not_started = []
+    partial = []
+    over_recorded = []
+    complete_count = 0
+    catalog_keys = set()
+    for d in demand:
+        key = (_strip_seps(_space_norm(d["artikul"])), d["client"].strip().upper())
+        catalog_keys.add(key)
+        recorded = recorded_lookup.get(key, 0)
+        ordered = d["ordered_qty"]
+        if recorded <= 0:
+            not_started.append(
+                {"client": d["client"], "artikul": d["artikul"], "ordered": ordered}
+            )
+        elif recorded < ordered:
+            partial.append(
+                {
+                    "client": d["client"],
+                    "artikul": d["artikul"],
+                    "ordered": ordered,
+                    "recorded": recorded,
+                    "missing": ordered - recorded,
+                }
+            )
+        elif recorded > ordered:
+            over_recorded.append(
+                {
+                    "client": d["client"],
+                    "artikul": d["artikul"],
+                    "ordered": ordered,
+                    "recorded": recorded,
+                    "excess": recorded - ordered,
+                }
+            )
+        else:
+            complete_count += 1
+
+    not_in_catalog = []
+    for key, qty in recorded_lookup.items():
+        if key not in catalog_keys and qty > 0:
+            client_disp, artikul_disp = recorded_display[key]
+            not_in_catalog.append(
+                {"client": client_disp, "artikul": artikul_disp, "recorded": qty}
+            )
+
+    return {
+        "ok": True,
+        "error": None,
+        "not_started": not_started,
+        "partial": partial,
+        "over_recorded": over_recorded,
+        "not_in_catalog": not_in_catalog,
+        "complete_count": complete_count,
+        "total_count": len(demand),
+    }

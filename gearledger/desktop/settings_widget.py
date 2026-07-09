@@ -28,6 +28,7 @@ class SettingsWidget(QGroupBox):
         self.on_results_changed: Callable[[str], None] | None = None
         self.on_manual_entry_requested: Callable[[str, float], None] | None = None
         self.on_generate_invoice_requested: Callable[[], None] | None = None
+        self.on_check_completeness_requested: Callable[[], None] | None = None
 
         self._setup_ui()
         self._setup_connections()
@@ -71,12 +72,15 @@ class SettingsWidget(QGroupBox):
         self.btn_download = QPushButton(tr("download"))
         self.btn_generate_invoice = QPushButton(tr("generate_invoice"))
         self.btn_generate_invoice.setStyleSheet("background-color: #27ae60;")
+        self.btn_check_completeness = QPushButton(tr("check_completeness"))
+        self.btn_check_completeness.setToolTip(tr("check_completeness_tooltip"))
         results_layout.addWidget(self.results_edit, 1)
         results_layout.addWidget(self.btn_results)
         results_layout.addWidget(self.btn_reset_results)
         results_layout.addWidget(self.btn_versions)
         results_layout.addWidget(self.btn_download)
         results_layout.addWidget(self.btn_generate_invoice)
+        results_layout.addWidget(self.btn_check_completeness)
         layout.addLayout(results_layout)
 
         # Results info (client mode only - shows server results status)
@@ -125,6 +129,7 @@ class SettingsWidget(QGroupBox):
         self.btn_versions.clicked.connect(self.show_versions_dialog)
         self.btn_download.clicked.connect(self.download_results_excel)
         self.btn_generate_invoice.clicked.connect(self.generate_invoice)
+        self.btn_check_completeness.clicked.connect(self.check_completeness)
         self.btn_add_manual.clicked.connect(self.add_manual_entry)
 
     def set_catalog_changed_callback(self, callback: Callable[[str], None]):
@@ -144,6 +149,10 @@ class SettingsWidget(QGroupBox):
     def set_generate_invoice_requested_callback(self, callback: Callable[[], None]):
         """Set callback for when invoice generation is requested."""
         self.on_generate_invoice_requested = callback
+
+    def set_check_completeness_requested_callback(self, callback: Callable[[], None]):
+        """Set callback for when the completeness check is requested."""
+        self.on_check_completeness_requested = callback
 
     def set_results_refresh_callback(self, callback: Callable[[], None]):
         """Set callback to force refresh of results pane."""
@@ -611,6 +620,11 @@ class SettingsWidget(QGroupBox):
         if self.on_generate_invoice_requested:
             self.on_generate_invoice_requested()
 
+    def check_completeness(self):
+        """Compare recorded results against catalog demand."""
+        if self.on_check_completeness_requested:
+            self.on_check_completeness_requested()
+
     def add_manual_entry(self):
         """Handle manual entry request."""
         from PyQt6.QtWidgets import QMessageBox
@@ -866,6 +880,7 @@ class SettingsWidget(QGroupBox):
             self.btn_versions.setVisible(False)
             self.btn_download.setVisible(False)
             self.btn_generate_invoice.setVisible(False)
+            self.btn_check_completeness.setVisible(False)
             self.results_info_label.setVisible(True)
             if connected:
                 self.results_info_label.setText(
@@ -895,6 +910,7 @@ class SettingsWidget(QGroupBox):
             self.btn_versions.setVisible(True)
             self.btn_download.setVisible(True)
             self.btn_generate_invoice.setVisible(True)
+            self.btn_check_completeness.setVisible(True)
             self.results_info_label.setVisible(False)
 
     def get_results_path(self) -> str:
@@ -1017,6 +1033,7 @@ class SettingsWidget(QGroupBox):
             self.btn_reset_results,
             self.btn_download,
             self.btn_generate_invoice,
+            self.btn_check_completeness,
             self.manual_part_code,
             self.manual_weight,
             self.btn_add_manual,

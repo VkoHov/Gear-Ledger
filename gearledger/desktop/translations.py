@@ -430,6 +430,134 @@ TRANSLATIONS = {
         "en": "Generate Invoice",
         "ru": "Создать накладную",
     },
+    "check_completeness": {
+        "en": "Check Order",
+        "ru": "Проверить заказ",
+    },
+    "check_completeness_tooltip": {
+        "en": "Compare recorded results against the catalog and show anything not fully scanned",
+        "ru": "Сравнить записанные результаты с каталогом и показать то, что отсканировано не полностью",
+    },
+    "no_quantity_column_msg": {
+        "en": "The catalog has no quantity column, so there's nothing to compare recorded results against.",
+        "ru": "В каталоге нет столбца с количеством, поэтому не с чем сравнивать записанные результаты.",
+    },
+    "completeness_summary": {
+        "en": "{complete} of {total} items fully recorded",
+        "ru": "{complete} из {total} позиций полностью записано",
+    },
+    "completeness_all_done": {
+        "en": "Everything in the catalog has been fully recorded. ✓",
+        "ru": "Всё в каталоге полностью записано. ✓",
+    },
+    "not_started_section": {
+        "en": "Not Started ({count})",
+        "ru": "Не начато ({count})",
+    },
+    "partial_section": {
+        "en": "Partial ({count})",
+        "ru": "Частично ({count})",
+    },
+    "completeness_not_started_detail": {
+        "en": "Ordered: {ordered}, Recorded: 0",
+        "ru": "Заказано: {ordered}, Записано: 0",
+    },
+    "completeness_partial_detail": {
+        "en": "Ordered: {ordered}, Recorded: {recorded}, Missing: {missing}",
+        "ru": "Заказано: {ordered}, Записано: {recorded}, Не хватает: {missing}",
+    },
+    "over_recorded_section": {
+        "en": "Over-Recorded ({count})",
+        "ru": "Записано больше ({count})",
+    },
+    "completeness_over_recorded_detail": {
+        "en": "Ordered: {ordered}, Recorded: {recorded}, Excess: {excess}",
+        "ru": "Заказано: {ordered}, Записано: {recorded}, Излишек: {excess}",
+    },
+    "over_recorded_status": {
+        "en": "Over-Recorded",
+        "ru": "Записано больше",
+    },
+    "adjust_quantity": {
+        "en": "Adjust",
+        "ru": "Исправить",
+    },
+    "adjust_quantity_title": {
+        "en": "Adjust Quantity",
+        "ru": "Исправить количество",
+    },
+    "adjust_quantity_prompt": {
+        "en": "New quantity for {artikul} — {client}:",
+        "ru": "Новое количество для {artikul} — {client}:",
+    },
+    "adjust_quantity_failed": {
+        "en": "Could not adjust this item's quantity.",
+        "ru": "Не удалось изменить количество для этого элемента.",
+    },
+    "col_status": {
+        "en": "Status",
+        "ru": "Статус",
+    },
+    "col_client": {
+        "en": "Client",
+        "ru": "Клиент",
+    },
+    "col_artikul": {
+        "en": "Artikul",
+        "ru": "Артикул",
+    },
+    "col_ordered": {
+        "en": "Ordered",
+        "ru": "Заказано",
+    },
+    "col_recorded": {
+        "en": "Recorded",
+        "ru": "Записано",
+    },
+    "col_missing": {
+        "en": "Missing",
+        "ru": "Не хватает",
+    },
+    "col_excess": {
+        "en": "Excess",
+        "ru": "Излишек",
+    },
+    "not_started_status": {
+        "en": "Not Started",
+        "ru": "Не начато",
+    },
+    "partial_status": {
+        "en": "Partial",
+        "ru": "Частично",
+    },
+    "not_in_catalog_section": {
+        "en": "Not in Catalog ({count})",
+        "ru": "Нет в каталоге ({count})",
+    },
+    "not_in_catalog_detail": {
+        "en": "Recorded: {recorded} — this code/client isn't in the catalog",
+        "ru": "Записано: {recorded} — этого кода/клиента нет в каталоге",
+    },
+    "not_in_catalog_status": {
+        "en": "Not in Catalog",
+        "ru": "Нет в каталоге",
+    },
+    "delete_item": {
+        "en": "Delete",
+        "ru": "Удалить",
+    },
+    "delete_item_confirm_title": {
+        "en": "Delete Result",
+        "ru": "Удалить результат",
+    },
+    "delete_item_confirm_msg": {
+        "en": "Delete {artikul} — {client} from results? This cannot be undone.",
+        "ru": "Удалить {artikul} — {client} из результатов? Это действие необратимо.",
+    },
+    "delete_item_failed": {
+        "en": "Could not delete this item.",
+        "ru": "Не удалось удалить этот элемент.",
+    },
     "choose_catalog_excel": {
         "en": "Choose Catalog Excel (lookup)",
         "ru": "Выберите каталог Excel (поиск)",
@@ -955,6 +1083,14 @@ TRANSLATIONS = {
     "quantity_label": {
         "en": "Quantity:",
         "ru": "Количество:",
+    },
+    "qty_min": {
+        "en": "Min",
+        "ru": "Мин",
+    },
+    "qty_max": {
+        "en": "Max",
+        "ru": "Макс",
     },
     "enter_quantity": {
         "en": "Please enter a quantity",

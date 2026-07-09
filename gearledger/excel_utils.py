@@ -14,7 +14,7 @@ import pandas as pd
 # Protected by a lock because _ManualSearchWorker runs on a background thread.
 # ---------------------------------------------------------------------------
 import threading
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 _catalog_cache: dict = {}
 _catalog_lock = threading.Lock()
 
@@ -111,7 +111,14 @@ def _load_catalog(excel_path: str) -> dict:
 
     artikul_col, client_col = _detect_columns(df)
     if not artikul_col:
-        entry = {"mtime": mtime, "lookup": {}, "lookup_nodash": {}, "stock_rows": {}, "error": "no_artikul_col"}
+        entry = {
+            "mtime": mtime,
+            "lookup": {},
+            "lookup_nodash": {},
+            "stock_rows": {},
+            "demand_by_group": {},
+            "error": "no_artikul_col",
+        }
         with _catalog_lock:
             _catalog_cache[abs_path] = entry
         return entry
@@ -128,6 +135,12 @@ def _load_catalog(excel_path: str) -> dict:
     # ever seeing the first row (e.g. the same client ordering the same
     # part across several separate order lines).
     stock_rows: dict = {}
+    # demand_by_group: (norm_nd, CLIENT_UPPER) → {"client", "artikul", "qty"}
+    # One entry per distinct client+code combo, qty summed across every
+    # order-line/dash-variant row for that combo. Powers the completeness
+    # check (ordered vs. recorded), which needs every demand line, not just
+    # a single queried code.
+    demand_by_group: dict = {}
 
     for _, row in df.iterrows():
         orig = str(row[artikul_col] or "")
@@ -146,13 +159,21 @@ def _load_catalog(excel_path: str) -> dict:
                 cnt = int(pd.to_numeric(row[stock_col], errors="coerce") or 0)
             except Exception:
                 cnt = 0
-            stock_rows.setdefault(norm_nd or norm, []).append((client_val, cnt))
+            key_nd = norm_nd or norm
+            stock_rows.setdefault(key_nd, []).append((client_val, cnt))
+
+            group_key = (key_nd, client_val.strip().upper())
+            group = demand_by_group.setdefault(
+                group_key, {"client": client_val, "artikul": orig, "qty": 0}
+            )
+            group["qty"] += cnt
 
     entry = {
         "mtime": mtime,
         "lookup": lookup,
         "lookup_nodash": lookup_nodash,
         "stock_rows": stock_rows,
+        "demand_by_group": demand_by_group,
         "stock_col": stock_col,
         "artikul_col": artikul_col,
         "client_col": client_col,
@@ -162,6 +183,29 @@ def _load_catalog(excel_path: str) -> dict:
     with _catalog_lock:
         _catalog_cache[abs_path] = entry
     return entry
+
+
+def list_catalog_demand(excel_path: str) -> List[Dict[str, Any]]:
+    """
+    Return every distinct (client, artikul) demand line in the catalog, with
+    quantity summed across every order-line/dash-variant row sharing that
+    client+code. Used by the completeness check (ordered vs. recorded).
+
+    Returns [] if the file doesn't exist, can't be read, has no artikul
+    column, or has no quantity/stock column (nothing to compare against).
+    """
+    if not os.path.exists(excel_path):
+        return []
+    try:
+        catalog = _load_catalog(excel_path)
+    except ExcelReadError:
+        return []
+    if catalog.get("error") == "no_artikul_col" or catalog.get("stock_col") is None:
+        return []
+    return [
+        {"client": g["client"], "artikul": g["artikul"], "ordered_qty": g["qty"]}
+        for g in catalog["demand_by_group"].values()
+    ]
 
 
 def get_catalog_stock(

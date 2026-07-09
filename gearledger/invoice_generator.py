@@ -455,7 +455,8 @@ def _lookup_in_catalog(
     """Look up item details in catalog by artikul."""
 
     def normalize(s: str) -> str:
-        return str(s or "").replace(" ", "").replace("-", "").replace(".", "").upper()
+        s = str(s or "").replace("\xa0", " ").replace("—", "-").replace("–", "-")
+        return s.replace(" ", "").replace("-", "").replace(".", "").upper()
 
     artikul_norm = normalize(artikul)
 

@@ -245,6 +245,48 @@ class Database:
         conn.commit()
         return cursor.rowcount > 0
 
+    def delete_result_by_key(self, artikul: str, client: str) -> int:
+        """Delete the result row matching (artikul, client). Returns rows deleted."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        artikul_norm = self._normalize(artikul)
+        cursor.execute(
+            """
+            DELETE FROM results
+            WHERE REPLACE(REPLACE(REPLACE(UPPER(artikul), ' ', ''), '-', ''), '.', '') = ?
+            AND UPPER(client) = UPPER(?)
+            """,
+            (artikul_norm, client),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+    def update_result_quantity_by_key(self, artikul: str, client: str, new_quantity: int) -> bool:
+        """Set the recorded quantity for (artikul, client), recomputing
+        total_price from the existing per-unit sale_price. Returns True if a
+        row was updated."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        artikul_norm = self._normalize(artikul)
+        cursor.execute(
+            """
+            SELECT id, sale_price FROM results
+            WHERE REPLACE(REPLACE(REPLACE(UPPER(artikul), ' ', ''), '-', ''), '.', '') = ?
+            AND UPPER(client) = UPPER(?)
+            """,
+            (artikul_norm, client),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return False
+        total = (row["sale_price"] or 0) * new_quantity
+        cursor.execute(
+            "UPDATE results SET quantity = ?, total_price = ?, last_updated = ? WHERE id = ?",
+            (new_quantity, total, datetime.datetime.now().isoformat(), row["id"]),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
     def clear_all_results(self, client: str = None) -> int:
         """Clear all results, optionally for a specific client."""
         conn = self._get_connection()
@@ -295,8 +337,15 @@ class Database:
         return by_client
 
     def _normalize(self, s: str) -> str:
-        """Normalize string for matching."""
-        return str(s or "").replace(" ", "").replace("-", "").replace(".", "").upper()
+        """Normalize string for matching.
+
+        Canonicalize non-breaking spaces and em/en-dashes first — a code
+        scanned from a label often comes back with these instead of plain
+        ASCII, so it wouldn't otherwise match a manually-typed query that
+        looks identical but isn't byte-identical.
+        """
+        s = str(s or "").replace("\xa0", " ").replace("—", "-").replace("–", "-")
+        return s.replace(" ", "").replace("-", "").replace(".", "").upper()
 
     def close(self):
         """Close database connection."""

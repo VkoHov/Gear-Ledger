@@ -18,8 +18,15 @@ COLUMNS = [
 
 
 def _norm(s: str) -> str:
-    """Uppercase, strip spaces/dashes/dots/slashes/colons to unify the key."""
-    return re.sub(r"[ \t\n\r\-.:/]", "", str(s or "")).upper()
+    """Uppercase, strip spaces/dashes/dots/slashes/colons to unify the key.
+
+    Non-breaking spaces and em/en-dashes are canonicalized first — a code
+    scanned from a label often comes back with these instead of a plain
+    ASCII space/hyphen, so a manually-typed "correct" query wouldn't match
+    the stored row otherwise (looks identical, isn't byte-identical).
+    """
+    s = str(s or "").replace("\xa0", " ").replace("—", "-").replace("–", "-")
+    return re.sub(r"[ \t\n\r\-.:/]", "", s).upper()
 
 
 def unique_version_path(versions_dir: str) -> str:
@@ -255,6 +262,124 @@ def cleanup_orphan_tmp(path: str):
         print(f"[WARNING] Could not remove orphan temp file {tmp_path}: {e}")
 
 
+def get_all_results_excel(path: str) -> list:
+    """Read every row from the results ledger Excel file as a list of dicts
+    shaped like database result rows (artikul, client, quantity, ...), so
+    standalone and server/client mode can be consumed the same way."""
+    if not os.path.exists(path):
+        return []
+    try:
+        df = pd.read_excel(path)
+    except Exception:
+        return []
+    rows = []
+    for _, row in df.iterrows():
+        rows.append(
+            {
+                "artikul": str(row.get("Артикул", "") or ""),
+                "client": str(row.get("Клиент", "") or ""),
+                "quantity": int(pd.to_numeric(row.get("Количество", 0), errors="coerce") or 0),
+                "weight": float(pd.to_numeric(row.get("Вес", 0), errors="coerce") or 0),
+                "brand": str(row.get("Брэнд", "") or ""),
+                "description": str(row.get("Описание", "") or ""),
+                "sale_price": float(pd.to_numeric(row.get("Цена продажи", 0), errors="coerce") or 0),
+                "total_price": float(pd.to_numeric(row.get("Сумма продажи", 0), errors="coerce") or 0),
+                "last_updated": str(row.get("Последнее обновление", "") or ""),
+            }
+        )
+    return rows
+
+
+def delete_result_excel(path: str, artikul: str, client: str) -> Dict[str, any]:
+    """Remove the row(s) matching (artikul, client) from the results ledger.
+    Returns {"ok", "deleted", "error"} — deleted is the number of rows removed.
+    """
+    if not os.path.exists(path):
+        return {"ok": False, "deleted": 0, "error": "File not found"}
+    try:
+        df = pd.read_excel(path)
+    except Exception as e:
+        return {"ok": False, "deleted": 0, "error": str(e)}
+
+    if "Артикул" not in df.columns or "Клиент" not in df.columns:
+        return {"ok": False, "deleted": 0, "error": "Missing Артикул/Клиент columns"}
+
+    key_norm = _norm(artikul)
+    client_upper = (client or "").strip().upper()
+    mask = (df["Артикул"].astype(str).map(_norm) == key_norm) & (
+        df["Клиент"].astype(str).str.strip().str.upper() == client_upper
+    )
+    deleted = int(mask.sum())
+    if deleted == 0:
+        return {"ok": True, "deleted": 0, "error": ""}
+
+    df = df.loc[~mask].reset_index(drop=True)
+
+    base, ext = os.path.splitext(path)
+    tmp_path = base + ".__tmp__" + ext
+    try:
+        df.to_excel(tmp_path, index=False)
+        os.replace(tmp_path, path)
+        return {"ok": True, "deleted": deleted, "error": ""}
+    except Exception as e:
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
+        return {"ok": False, "deleted": 0, "error": str(e)}
+
+
+def set_result_quantity_excel(
+    path: str, artikul: str, client: str, new_quantity: int
+) -> Dict[str, any]:
+    """Set the recorded quantity for the row matching (artikul, client),
+    recomputing Сумма продажи from the existing per-unit Цена продажи.
+    Returns {"ok", "updated", "error"} — updated is the number of rows changed.
+    """
+    if not os.path.exists(path):
+        return {"ok": False, "updated": 0, "error": "File not found"}
+    try:
+        df = pd.read_excel(path)
+    except Exception as e:
+        return {"ok": False, "updated": 0, "error": str(e)}
+
+    if "Артикул" not in df.columns or "Клиент" not in df.columns:
+        return {"ok": False, "updated": 0, "error": "Missing Артикул/Клиент columns"}
+
+    key_norm = _norm(artikul)
+    client_upper = (client or "").strip().upper()
+    mask = (df["Артикул"].astype(str).map(_norm) == key_norm) & (
+        df["Клиент"].astype(str).str.strip().str.upper() == client_upper
+    )
+    updated = int(mask.sum())
+    if updated == 0:
+        return {"ok": True, "updated": 0, "error": ""}
+
+    df.loc[mask, "Количество"] = new_quantity
+    if "Цена продажи" in df.columns:
+        price = pd.to_numeric(df.loc[mask, "Цена продажи"], errors="coerce").fillna(0)
+        if "Сумма продажи" in df.columns:
+            df.loc[mask, "Сумма продажи"] = price * new_quantity
+    if "Последнее обновление" in df.columns:
+        df["Последнее обновление"] = df["Последнее обновление"].astype(object)
+        df.loc[mask, "Последнее обновление"] = datetime.datetime.now().isoformat()
+
+    base, ext = os.path.splitext(path)
+    tmp_path = base + ".__tmp__" + ext
+    try:
+        df.to_excel(tmp_path, index=False)
+        os.replace(tmp_path, path)
+        return {"ok": True, "updated": updated, "error": ""}
+    except Exception as e:
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
+        return {"ok": False, "updated": 0, "error": str(e)}
+
+
 def get_results_quantity(path: str, artikul: str, client: str) -> int:
     """Return the quantity already recorded in results for (artikul, client). 0 if not found."""
     if not os.path.exists(path):
@@ -370,9 +495,8 @@ def _lookup_catalog_data(artikul: str, catalog_path: str = None, catalog_bytes: 
 
         # Normalize for matching
         def normalize(s: str) -> str:
-            return (
-                str(s or "").replace(" ", "").replace("-", "").replace(".", "").upper()
-            )
+            s = str(s or "").replace("\xa0", " ").replace("—", "-").replace("–", "-")
+            return s.replace(" ", "").replace("-", "").replace(".", "").upper()
 
         artikul_norm = normalize(artikul)
         print(f"[DEBUG] Looking for part: '{artikul}' -> normalized: '{artikul_norm}'")

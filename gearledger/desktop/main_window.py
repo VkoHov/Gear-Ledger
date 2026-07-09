@@ -67,7 +67,7 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 # Out-of-stock dialog with large, readable text
 # ---------------------------------------------------------------------------
-def _show_out_of_stock_dialog(parent, artikul: str, total: int, added: int):
+def _show_out_of_stock_dialog(parent, artikul: str, total: int, added: int, client: str = None):
     from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
     from PyQt6.QtCore import Qt
 
@@ -86,8 +86,9 @@ def _show_out_of_stock_dialog(parent, artikul: str, total: int, added: int):
     icon_lbl.setStyleSheet("font-size: 52px;")
     layout.addWidget(icon_lbl)
 
-    # Artikul
-    code_lbl = QLabel(artikul)
+    # Artikul (+ client, if known)
+    code_text = f"{artikul} → {client}" if client else artikul
+    code_lbl = QLabel(code_text)
     code_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     code_lbl.setStyleSheet(
         "font-size: 28px; font-weight: bold; color: #2c3e50; "
@@ -2446,7 +2447,7 @@ class MainWindow(QWidget):
             already_added = get_results_quantity(results_path, artikul, client)
             remaining = catalog_stock - already_added
             if remaining <= 0:
-                _show_out_of_stock_dialog(self, artikul, catalog_stock, already_added)
+                _show_out_of_stock_dialog(self, artikul, catalog_stock, already_added, client)
                 return
 
         dialog = AddToResultsDialog(

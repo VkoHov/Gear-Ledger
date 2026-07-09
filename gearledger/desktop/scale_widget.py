@@ -21,6 +21,9 @@ from PyQt6.QtWidgets import (
 from gearledger.desktop.scale import read_weight_once, parse_weight
 from gearledger.desktop.translations import tr
 
+# The scale hardware reads consistently light; compensate every live reading.
+SCALE_WEIGHT_CORRECTION = 1.04
+
 
 class ScaleWidget(QGroupBox):
     """Scale integration widget for automatic weight reading."""
@@ -621,7 +624,7 @@ class ScaleWidget(QGroupBox):
             return
 
         try:
-            new_weight = float(weight_str.split()[0])
+            new_weight = float(weight_str.split()[0]) * SCALE_WEIGHT_CORRECTION
 
             # Ignore zero values completely if we have a meaningful weight (> 0.01 kg)
             # This prevents oscillation between 0.00 and actual weight

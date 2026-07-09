@@ -2804,6 +2804,32 @@ class MainWindow(QWidget):
             lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             return lbl
 
+        # Filled in once the sections below are built, so the delete/adjust
+        # handlers can keep the "(N)" count in the header in sync instead of
+        # leaving it stuck at the count from when the dialog first opened.
+        over_recorded_header = None
+        not_in_catalog_header = None
+
+        def _update_over_recorded_header():
+            if over_recorded_header is None:
+                return
+            if over_recorded:
+                over_recorded_header.setText(
+                    tr("over_recorded_section", count=len(over_recorded))
+                )
+            else:
+                over_recorded_header.setVisible(False)
+
+        def _update_not_in_catalog_header():
+            if not_in_catalog_header is None:
+                return
+            if not_in_catalog:
+                not_in_catalog_header.setText(
+                    tr("not_in_catalog_section", count=len(not_in_catalog))
+                )
+            else:
+                not_in_catalog_header.setVisible(False)
+
         def _row_label(title, detail):
             lbl = QLabel(f"<b>{title}</b><br><span style='color:#7f8c8d;'>{detail}</span>")
             lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -2851,6 +2877,7 @@ class MainWindow(QWidget):
                     row_widget.setParent(None)
                     if item in not_in_catalog:
                         not_in_catalog.remove(item)
+                    _update_not_in_catalog_header()
                     self.results_pane.refresh()
                 else:
                     QMessageBox.warning(
@@ -2903,6 +2930,7 @@ class MainWindow(QWidget):
                     row_widget.setParent(None)
                     if item in over_recorded:
                         over_recorded.remove(item)
+                    _update_over_recorded_header()
                     self.results_pane.refresh()
                 else:
                     QMessageBox.warning(
@@ -2959,21 +2987,19 @@ class MainWindow(QWidget):
                     )
 
             if over_recorded:
-                content_layout.addWidget(
-                    _section_label(
-                        tr("over_recorded_section", count=len(over_recorded)), "#2980b9"
-                    )
+                over_recorded_header = _section_label(
+                    tr("over_recorded_section", count=len(over_recorded)), "#2980b9"
                 )
+                content_layout.addWidget(over_recorded_header)
                 for item in list(over_recorded):
                     content_layout.addWidget(_over_recorded_row(item))
 
             if not_in_catalog:
-                content_layout.addWidget(
-                    _section_label(
-                        tr("not_in_catalog_section", count=len(not_in_catalog)),
-                        "#8e44ad",
-                    )
+                not_in_catalog_header = _section_label(
+                    tr("not_in_catalog_section", count=len(not_in_catalog)),
+                    "#8e44ad",
                 )
+                content_layout.addWidget(not_in_catalog_header)
                 for item in list(not_in_catalog):
                     content_layout.addWidget(_not_in_catalog_row(item))
 

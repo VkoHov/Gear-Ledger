@@ -5,7 +5,10 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Catalog cache — keyed by absolute path; invalidated when mtime changes.
 # Each entry: {"mtime": float, "lookup": dict, "lookup_nodash": dict}
-# lookup maps  space-normalised code  →  (client_str, orig_artikul_str)
+# lookup maps  space-normalised code  →  list of (client_str, orig_artikul_str),
+# one entry per distinct client sharing that exact code (e.g. two different
+# customers both ordering "336758J") — first-seen orig kept per client, so
+# repeat order-lines for the same client don't create duplicate entries.
 # lookup_nodash maps the same codes with hyphens stripped → list of
 # (client_str, orig_artikul_str), since multiple dashed catalog entries
 # can share the same hyphen-stripped form (e.g. "70-06-5-5" and "700-655"
@@ -141,6 +144,11 @@ def _load_catalog(excel_path: str) -> dict:
     # check (ordered vs. recorded), which needs every demand line, not just
     # a single queried code.
     demand_by_group: dict = {}
+    # Tracks which clients have already been added to `lookup` per norm key,
+    # so a client with 5 order-lines of the same exact code contributes one
+    # picker entry, not five — but a *different* client with the identical
+    # code still gets their own entry instead of being silently shadowed.
+    _lookup_seen_clients: dict = {}
 
     for _, row in df.iterrows():
         orig = str(row[artikul_col] or "")
@@ -148,8 +156,11 @@ def _load_catalog(excel_path: str) -> dict:
         if not norm or norm == "NAN":
             continue
         client_val = str(row[client_col]) if client_col != artikul_col else ""
-        if norm not in lookup:
-            lookup[norm] = (client_val, orig)
+        client_key = client_val.strip().upper()
+        seen_for_norm = _lookup_seen_clients.setdefault(norm, set())
+        if client_key not in seen_for_norm:
+            seen_for_norm.add(client_key)
+            lookup.setdefault(norm, []).append((client_val, orig))
         norm_nd = _strip_seps(norm)
         if norm_nd and norm_nd != norm:
             lookup_nodash.setdefault(norm_nd, []).append((client_val, orig))
@@ -296,11 +307,11 @@ def find_all_matches_in_excel(excel_path: str, query_raw: str) -> List[Tuple[str
         for hit in hits or []:
             _add(hit)
 
-    _add(lookup.get(q))               # exact match
-    _add_all(lookup_nodash.get(q))    # dashed catalog entries that strip to q  (e.g. "7-1-3" when q="713")
+    _add_all(lookup.get(q))            # exact matches (one per distinct client)
+    _add_all(lookup_nodash.get(q))     # dashed catalog entries that strip to q  (e.g. "7-1-3" when q="713")
     if q_nd != q:
-        _add(lookup.get(q_nd))            # exact catalog entry equal to dash-stripped query (e.g. "713" when q="7-1-3")
-        _add_all(lookup_nodash.get(q_nd)) # dashed entries that strip to q_nd
+        _add_all(lookup.get(q_nd))         # exact catalog entries equal to dash-stripped query (e.g. "713" when q="7-1-3")
+        _add_all(lookup_nodash.get(q_nd))  # dashed entries that strip to q_nd
 
     return results
 
@@ -331,7 +342,8 @@ def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
     ]
 
     # Try with original spaces-stripped form first
-    hit = lookup.get(q)
+    q_hits = lookup.get(q)
+    hit = q_hits[0] if q_hits else None
     if hit:
         client_val, orig = hit
         debug_lines.append(f"✓ MATCH: ‘{q}’ → ‘{orig}’ | client: ‘{client_val}’")
@@ -341,8 +353,9 @@ def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
     q_nd = _strip_seps(q)
     if q_nd and q_nd != q:
         debug_lines.append(f"Trying no-dash variant: ‘{q_nd}’")
+        q_nd_hits = lookup.get(q_nd)
         nd_hits = lookup_nodash.get(q_nd)
-        hit = lookup.get(q_nd) or (nd_hits[0] if nd_hits else None)
+        hit = (q_nd_hits[0] if q_nd_hits else None) or (nd_hits[0] if nd_hits else None)
         if hit:
             client_val, orig = hit
             debug_lines.append(f"✓ MATCH (no-dash): ‘{q_nd}’ → ‘{orig}’ | client: ‘{client_val}’")

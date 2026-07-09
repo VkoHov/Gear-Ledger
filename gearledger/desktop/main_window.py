@@ -2417,6 +2417,12 @@ class MainWindow(QWidget):
             return
 
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+        from gearledger.excel_utils import get_catalog_stock
+        from gearledger.data_layer import get_results_quantity
+
+        catalog_path = self.settings_widget.get_catalog_path()
+        results_path = self.settings_widget.get_results_path()
+
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("multiple_matches_title"))
         dlg.setModal(True)
@@ -2424,8 +2430,22 @@ class MainWindow(QWidget):
         layout.addWidget(QLabel(tr("multiple_matches_msg")))
 
         for client, artikul in matches:
-            btn = QPushButton(f"{artikul}  →  {client}")
+            remaining = None
+            if catalog_path and os.path.exists(catalog_path):
+                stock_result = get_catalog_stock(catalog_path, artikul, client)
+                if stock_result is not None:
+                    catalog_stock, _breakdown = stock_result
+                    already_added = get_results_quantity(results_path, artikul, client)
+                    remaining = catalog_stock - already_added
+
+            label = f"{artikul}  →  {client}"
+            if remaining is not None:
+                label += f"   ({tr('in_stock_label', count=max(remaining, 0))})"
+
+            btn = QPushButton(label)
             btn.setMinimumHeight(40)
+            if remaining is not None and remaining <= 0:
+                btn.setEnabled(False)
 
             def _make_handler(a, c):
                 def _handler():

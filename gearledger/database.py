@@ -301,16 +301,92 @@ class Database:
         """Export current results to an Excel version file, then clear them.
 
         Used by server/client-mode Reset so a database wipe gets the same
-        version-history safety net as the standalone Excel file does.
+        version-history safety net as the standalone Excel file does. Skips
+        creating the archive (but still clears) if the current data is
+        unchanged since the last Restore — otherwise restoring back and
+        forth with nothing recorded in between piles up duplicate versions.
+
         Returns the number of rows cleared.
         """
         rows = self.get_all_results(client)
-        if rows:
+        if rows and not self._is_redundant_of_last_restore(rows, versions_dir):
             from .result_ledger import rows_to_dataframe, unique_version_path
 
             df = rows_to_dataframe(rows)
             df.to_excel(unique_version_path(versions_dir), index=False)
         return self.clear_all_results(client)
+
+    def _is_redundant_of_last_restore(self, current_rows: list, versions_dir: str) -> bool:
+        """True if current_rows are unchanged since the last Restore — i.e.
+        archiving them now would just duplicate the version already
+        restored from.
+
+        Deliberately restore-only, not import: an imported file can live
+        anywhere on disk (outside our control — the user could move/delete
+        it), so import always creates its own internal version copy rather
+        than relying on the external source file staying put.
+        """
+        try:
+            import os
+
+            from .desktop.settings_manager import load_settings
+            from .result_ledger import get_all_results_excel, rows_equal
+
+            settings = load_settings()
+            if settings.last_results_action != "restore":
+                return False
+            source_path = os.path.join(
+                versions_dir, settings.last_results_action_detail
+            )
+            if not os.path.exists(source_path):
+                return False
+            return rows_equal(current_rows, get_all_results_excel(source_path))
+        except Exception:
+            return False
+
+    def restore_from_version(self, version_path: str, versions_dir: str) -> Dict[str, Any]:
+        """Replace current DB results with the contents of an archived
+        version file, archiving whatever's currently active first (same
+        safety net Reset uses) so nothing is lost in the swap.
+
+        Returns {"ok", "error", "restored"} — restored is the row count
+        loaded from the version file.
+        """
+        if not Path(version_path).exists():
+            return {"ok": False, "error": "Version file not found", "restored": 0}
+
+        from .result_ledger import get_all_results_excel
+
+        try:
+            rows = get_all_results_excel(version_path)
+        except Exception as e:
+            return {"ok": False, "error": str(e), "restored": 0}
+
+        self.archive_results_before_clear(versions_dir)
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        for r in rows:
+            cursor.execute(
+                """
+                INSERT INTO results
+                (artikul, client, quantity, weight, last_updated, brand, description, sale_price, total_price)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    r.get("artikul", ""),
+                    r.get("client", ""),
+                    r.get("quantity", 0),
+                    r.get("weight", 0),
+                    str(r.get("last_updated", "") or ""),
+                    r.get("brand", ""),
+                    r.get("description", ""),
+                    r.get("sale_price", 0),
+                    r.get("total_price", 0),
+                ),
+            )
+        conn.commit()
+        return {"ok": True, "error": None, "restored": len(rows)}
 
     def get_clients(self) -> List[str]:
         """Get list of unique clients."""

@@ -50,6 +50,12 @@ class Settings:
     server_address: str = (
         ""  # Address to connect to in client mode (e.g., "192.168.1.100:8080")
     )
+    # Last Reset/Restore breadcrumb — informational only, not true version
+    # tracking (the app has no notion of "is the live data still exactly
+    # version X" once anything changes after a restore).
+    last_results_action: str = ""  # "reset" or "restore", empty = never happened
+    last_results_action_at: str = ""  # ISO timestamp
+    last_results_action_detail: str = ""  # e.g. archived version filename
 
 
 def ensure_dirs():
@@ -122,6 +128,19 @@ def save_settings(s: Settings):
             json.dump(asdict(s), f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[ERROR] Failed to save settings: {e}")
+
+
+def record_last_results_action(action: str, detail: str = ""):
+    """Record a Reset/Restore breadcrumb — informational provenance only,
+    not true version tracking (once anything changes after a restore, the
+    live data is no longer verifiably "exactly" that version)."""
+    import datetime
+
+    settings = load_settings()
+    settings.last_results_action = action
+    settings.last_results_action_at = datetime.datetime.now().isoformat()
+    settings.last_results_action_detail = detail
+    save_settings(settings)
 
 
 def get_settings_path() -> str:

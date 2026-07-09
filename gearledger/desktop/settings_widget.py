@@ -32,6 +32,7 @@ class SettingsWidget(QGroupBox):
 
         self._setup_ui()
         self._setup_connections()
+        self._update_last_action_label()
 
     def _setup_ui(self):
         """Set up the user interface."""
@@ -65,6 +66,8 @@ class SettingsWidget(QGroupBox):
         self.results_edit = QLineEdit()
         # Leave empty initially - will auto-generate on first use
         self.btn_results = QPushButton(tr("browse"))
+        self.btn_import_results = QPushButton(tr("import_results"))
+        self.btn_import_results.setToolTip(tr("import_results_tooltip"))
         self.btn_reset_results = QPushButton(tr("reset"))
         self.btn_reset_results.setToolTip(tr("reset_tooltip"))
         self.btn_versions = QPushButton(tr("versions"))
@@ -76,6 +79,7 @@ class SettingsWidget(QGroupBox):
         self.btn_check_completeness.setToolTip(tr("check_completeness_tooltip"))
         results_layout.addWidget(self.results_edit, 1)
         results_layout.addWidget(self.btn_results)
+        results_layout.addWidget(self.btn_import_results)
         results_layout.addWidget(self.btn_reset_results)
         results_layout.addWidget(self.btn_versions)
         results_layout.addWidget(self.btn_download)
@@ -93,6 +97,17 @@ class SettingsWidget(QGroupBox):
         self.results_info_label.setVisible(False)  # Only visible in client mode
         results_info_layout.addWidget(self.results_info_label, 1)
         layout.addLayout(results_info_layout)
+
+        # Last Reset/Restore breadcrumb (standalone/server only, not client —
+        # informational provenance, not true version tracking)
+        last_action_layout = QHBoxLayout()
+        self.last_action_label = QLabel("")
+        self.last_action_label.setWordWrap(True)
+        self.last_action_label.setStyleSheet(
+            "color: #7f8c8d; font-size: 11px; padding: 0 4px 4px 4px;"
+        )
+        last_action_layout.addWidget(self.last_action_label, 1)
+        layout.addLayout(last_action_layout)
 
         # Manual entry section (hidden by default, shown only in Manual tab)
         self.manual_entry_box = QGroupBox(tr("manual_entry_without_scanning"))
@@ -125,6 +140,7 @@ class SettingsWidget(QGroupBox):
         """Set up signal connections."""
         self.btn_catalog.clicked.connect(self.pick_catalog_excel)
         self.btn_results.clicked.connect(self.pick_results_excel)
+        self.btn_import_results.clicked.connect(self.import_results_excel)
         self.btn_reset_results.clicked.connect(self.reset_results_excel)
         self.btn_versions.clicked.connect(self.show_versions_dialog)
         self.btn_download.clicked.connect(self.download_results_excel)
@@ -276,11 +292,93 @@ class SettingsWidget(QGroupBox):
             if self.on_results_changed:
                 self.on_results_changed(fn)
 
+    def import_results_excel(self):
+        """Import an external Excel file's rows into the database (server
+        mode only — standalone just uses Browse directly).
+
+        Validates the file has our expected column structure first, then
+        archives whatever's currently in the database (same safety net
+        Restore uses, including skipping a redundant duplicate archive)
+        before loading the imported rows in.
+        """
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        import pandas as pd
+
+        fn, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("import_results_title"),
+            filter="Excel (*.xlsx *.xlsm *.xls);;All files (*)",
+        )
+        if not fn:
+            return
+
+        try:
+            header_df = pd.read_excel(fn, nrows=0)
+        except Exception as e:
+            QMessageBox.critical(
+                self, tr("import_failed"), tr("import_failed_msg", error=str(e))
+            )
+            return
+
+        required_cols = ["Артикул", "Клиент", "Количество"]
+        missing = [c for c in required_cols if c not in header_df.columns]
+        if missing:
+            QMessageBox.critical(
+                self,
+                tr("import_invalid_title"),
+                tr("import_invalid_msg", columns=", ".join(missing)),
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            tr("import_confirm_title"),
+            tr("import_confirm_msg"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from gearledger.database import get_database
+        from gearledger.desktop.settings_manager import (
+            get_versions_dir,
+            record_last_results_action,
+        )
+
+        db = get_database()
+        result = db.restore_from_version(fn, get_versions_dir())
+        if not result.get("ok"):
+            QMessageBox.critical(
+                self,
+                tr("import_failed"),
+                tr("import_failed_msg", error=result.get("error", "")),
+            )
+            return
+
+        self._notify_server_clients_data_changed()
+        # Store the full path (not just a basename like restore does) since
+        # an imported file can live anywhere on disk, not just our own
+        # versions folder.
+        record_last_results_action("import", fn)
+        self._update_last_action_label()
+        if hasattr(self, "on_results_refresh") and self.on_results_refresh:
+            self.on_results_refresh()
+
+        QMessageBox.information(
+            self,
+            tr("import_complete_title"),
+            tr("import_complete_msg", count=result.get("restored", 0)),
+        )
+
     def _archive_active_file_if_needed(self, path: str):
         """Move *path* into the versions folder if it exists and has data.
 
         Uses a collision-safe timestamp suffix so two archives created within
-        the same second don't silently overwrite one another.
+        the same second don't silently overwrite one another. Skips
+        archiving if the data is unchanged since the last Restore —
+        otherwise restoring back and forth with nothing recorded in
+        between piles up duplicate versions.
         """
         import shutil
         import pandas as pd
@@ -296,7 +394,42 @@ class SettingsWidget(QGroupBox):
         if not had_rows:
             return
 
+        if self._is_redundant_of_last_restore(path):
+            return
+
         shutil.move(path, unique_version_path(get_versions_dir()))
+
+    def _is_redundant_of_last_restore(self, current_path: str) -> bool:
+        """True if current_path's data is unchanged since the last Restore —
+        i.e. archiving it now would just duplicate the version already
+        restored from.
+
+        Deliberately restore-only, not import: an imported file can live
+        anywhere on disk (outside our control), so import always creates
+        its own internal version copy rather than relying on the external
+        source file staying put.
+        """
+        try:
+            from gearledger.desktop.settings_manager import (
+                load_settings,
+                get_versions_dir,
+            )
+            from gearledger.result_ledger import get_all_results_excel, rows_equal
+
+            settings = load_settings()
+            if settings.last_results_action != "restore":
+                return False
+            source_path = os.path.join(
+                get_versions_dir(), settings.last_results_action_detail
+            )
+            if not os.path.exists(source_path):
+                return False
+            return rows_equal(
+                get_all_results_excel(current_path),
+                get_all_results_excel(source_path),
+            )
+        except Exception:
+            return False
 
     def _set_active_results_path(self, path: str):
         """Point the app at *path* as the active results file and remember it."""
@@ -311,6 +444,62 @@ class SettingsWidget(QGroupBox):
         settings = load_settings()
         settings.default_result_file = path
         save_settings(settings)
+
+    def _notify_server_clients_data_changed(self):
+        """Broadcast a results_changed SSE event to any connected clients.
+
+        Server-mode actions triggered locally by the operator (Reset,
+        Restore) call the database directly in the same process, bypassing
+        the HTTP API routes that already broadcast this event on remote
+        writes — so without this, connected clients would keep looking at
+        stale data until they happened to reconnect.
+        """
+        try:
+            from gearledger.server import get_server
+
+            server = get_server()
+            if server and server.is_running():
+                server._data_version += 1
+                server._broadcast_sse_event(
+                    {"type": "results_changed", "version": server._data_version}
+                )
+        except Exception:
+            pass
+
+    def _update_last_action_label(self):
+        """Refresh the "last Reset/Restore" breadcrumb from settings.
+
+        Purely informational provenance (when + what) — not true version
+        tracking, since the live data can diverge from that version the
+        moment anything new is recorded afterward.
+        """
+        try:
+            from gearledger.desktop.settings_manager import load_settings
+            import datetime
+
+            settings = load_settings()
+            action = settings.last_results_action
+            if not action:
+                self.last_action_label.setText("")
+                return
+
+            try:
+                dt = datetime.datetime.fromisoformat(settings.last_results_action_at)
+                time_str = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                time_str = settings.last_results_action_at
+
+            key_map = {
+                "restore": "last_action_restore",
+                "import": "last_action_import",
+            }
+            key = key_map.get(action, "last_action_reset")
+            detail = settings.last_results_action_detail
+            if action == "import":
+                detail = os.path.basename(detail)  # stored as full path
+            self.last_action_label.setText(tr(key, detail=detail, time=time_str))
+        except Exception:
+            self.last_action_label.setText("")
 
     def reset_results_excel(self):
         """Reset results file to a new empty file (or clear database in network mode)."""
@@ -339,11 +528,17 @@ class SettingsWidget(QGroupBox):
             if mode == "server":
                 # Archive current results to a version file, then clear the database
                 from gearledger.database import get_database
-                from gearledger.desktop.settings_manager import get_versions_dir
+                from gearledger.desktop.settings_manager import (
+                    get_versions_dir,
+                    record_last_results_action,
+                )
 
                 db = get_database()
                 count = db.archive_results_before_clear(get_versions_dir())
                 print(f"[RESET] Archived and cleared {count} results from database")
+                self._notify_server_clients_data_changed()
+                record_last_results_action("reset", f"{count} items cleared")
+                self._update_last_action_label()
 
                 # Force refresh results pane
                 if hasattr(self, "on_results_refresh") and self.on_results_refresh:
@@ -386,7 +581,10 @@ class SettingsWidget(QGroupBox):
 
             # Standalone mode - archive the current file (if it has data) as a
             # version, then recreate a fresh empty file at the same path.
-            from gearledger.desktop.settings_manager import get_default_result_file
+            from gearledger.desktop.settings_manager import (
+                get_default_result_file,
+                record_last_results_action,
+            )
 
             target_path = self.get_results_path() or get_default_result_file()
             self._archive_active_file_if_needed(target_path)
@@ -398,6 +596,8 @@ class SettingsWidget(QGroupBox):
             df.to_excel(target_path, index=False)
 
             self._set_active_results_path(target_path)
+            record_last_results_action("reset", os.path.basename(target_path))
+            self._update_last_action_label()
 
             QMessageBox.information(
                 self,
@@ -413,13 +613,20 @@ class SettingsWidget(QGroupBox):
 
     def show_versions_dialog(self):
         """List archived result-file versions (created by Reset) with Open/Export actions."""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+        from PyQt6.QtWidgets import (
+            QDialog,
+            QVBoxLayout,
+            QHBoxLayout,
+            QLabel,
+            QPushButton,
+            QWidget,
+        )
         from gearledger.desktop.settings_manager import get_versions_dir
         from gearledger.data_layer import get_network_mode
         import datetime
         import pandas as pd
 
-        can_restore = get_network_mode() == "standalone"
+        can_restore = get_network_mode() in ("standalone", "server")
         versions_dir = get_versions_dir()
         try:
             filenames = sorted(
@@ -432,44 +639,74 @@ class SettingsWidget(QGroupBox):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("previous_versions_title"))
         dlg.setModal(True)
-        dlg.setMinimumWidth(440)
+        dlg.setMinimumWidth(480)
         layout = QVBoxLayout(dlg)
 
-        if not filenames:
-            layout.addWidget(QLabel(tr("no_previous_versions")))
-        else:
-            for fname in filenames:
-                fpath = os.path.join(versions_dir, fname)
-                try:
-                    count = len(pd.read_excel(fpath))
-                except Exception:
-                    count = 0
-                mtime = datetime.datetime.fromtimestamp(os.path.getmtime(fpath))
+        no_versions_label = QLabel(tr("no_previous_versions"))
+        no_versions_label.setVisible(not filenames)
+        layout.addWidget(no_versions_label)
 
-                row = QHBoxLayout()
-                row.addWidget(
-                    QLabel(
-                        tr(
-                            "version_row_label",
-                            date=mtime.strftime("%Y-%m-%d %H:%M"),
-                            count=count,
-                        )
-                    ),
-                    1,
+        def _make_delete_handler(fpath, row_widget, label):
+            def _delete():
+                from PyQt6.QtWidgets import QMessageBox
+
+                reply = QMessageBox.question(
+                    dlg,
+                    tr("delete_version_confirm_title"),
+                    tr("delete_version_confirm_msg", version=label),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
                 )
-                open_btn = QPushButton(tr("open_version"))
-                export_btn = QPushButton(tr("export_version"))
-                open_btn.clicked.connect(self._make_open_version_handler(fpath))
-                export_btn.clicked.connect(self._make_export_version_handler(fpath))
-                row.addWidget(open_btn)
-                row.addWidget(export_btn)
-                if can_restore:
-                    restore_btn = QPushButton(tr("restore_version"))
-                    restore_btn.clicked.connect(
-                        self._make_restore_version_handler(fpath, dlg)
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+                try:
+                    os.remove(fpath)
+                    row_widget.setParent(None)
+                    no_versions_label.setVisible(
+                        not any(f.lower().endswith(".xlsx") for f in os.listdir(versions_dir))
                     )
-                    row.addWidget(restore_btn)
-                layout.addLayout(row)
+                except OSError as e:
+                    QMessageBox.critical(
+                        dlg, tr("delete_version_confirm_title"), str(e)
+                    )
+
+            return _delete
+
+        for fname in filenames:
+            fpath = os.path.join(versions_dir, fname)
+            try:
+                count = len(pd.read_excel(fpath))
+            except Exception:
+                count = 0
+            mtime = datetime.datetime.fromtimestamp(os.path.getmtime(fpath))
+            date_str = mtime.strftime("%Y-%m-%d %H:%M")
+
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 4, 0, 4)
+            row.addWidget(
+                QLabel(tr("version_row_label", date=date_str, count=count)),
+                1,
+            )
+            open_btn = QPushButton(tr("open_version"))
+            export_btn = QPushButton(tr("export_version"))
+            open_btn.clicked.connect(self._make_open_version_handler(fpath))
+            export_btn.clicked.connect(self._make_export_version_handler(fpath))
+            row.addWidget(open_btn)
+            row.addWidget(export_btn)
+            if can_restore:
+                restore_btn = QPushButton(tr("restore_version"))
+                restore_btn.clicked.connect(
+                    self._make_restore_version_handler(fpath, dlg)
+                )
+                row.addWidget(restore_btn)
+            delete_btn = QPushButton(tr("delete_version"))
+            delete_btn.setStyleSheet("background-color: #e74c3c; color: white;")
+            delete_btn.clicked.connect(
+                _make_delete_handler(fpath, row_widget, f"{date_str} ({count})")
+            )
+            row.addWidget(delete_btn)
+            layout.addWidget(row_widget)
 
         close_btn = QPushButton(tr("close"))
         close_btn.clicked.connect(dlg.reject)
@@ -520,23 +757,71 @@ class SettingsWidget(QGroupBox):
     def _make_restore_version_handler(self, path: str, dlg):
         def _restore():
             from PyQt6.QtWidgets import QMessageBox
+            from gearledger.data_layer import get_network_mode
 
+            is_server = get_network_mode() == "server"
+            confirm_msg = (
+                tr("restore_version_confirm_server")
+                if is_server
+                else tr("restore_version_confirm")
+            )
             reply = QMessageBox.question(
                 self,
                 tr("restore_version_title"),
-                tr("restore_version_confirm"),
+                confirm_msg,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-            if self._restore_version(path):
+            ok = (
+                self._restore_version_server(path)
+                if is_server
+                else self._restore_version(path)
+            )
+            if ok:
                 dlg.accept()
 
         return _restore
 
+    def _restore_version_server(self, version_path: str) -> bool:
+        """Replace the database's current results with an archived version
+        (server mode). Whatever's currently active gets archived first, and
+        connected clients are notified so they don't keep showing stale
+        data. Returns True on success."""
+        from PyQt6.QtWidgets import QMessageBox
+        from gearledger.database import get_database
+        from gearledger.desktop.settings_manager import (
+            get_versions_dir,
+            record_last_results_action,
+        )
+
+        db = get_database()
+        result = db.restore_from_version(version_path, get_versions_dir())
+        if not result.get("ok"):
+            QMessageBox.critical(
+                self,
+                tr("restore_failed"),
+                tr("restore_failed_msg", error=result.get("error", "")),
+            )
+            return False
+
+        self._notify_server_clients_data_changed()
+        record_last_results_action("restore", os.path.basename(version_path))
+        self._update_last_action_label()
+        if hasattr(self, "on_results_refresh") and self.on_results_refresh:
+            self.on_results_refresh()
+
+        QMessageBox.information(
+            self,
+            tr("restore_complete"),
+            tr("restore_complete_msg", path=f"Database ({result.get('restored', 0)} items)"),
+        )
+        return True
+
     def _restore_version(self, version_path: str) -> bool:
-        """Make an archived version the active results file again.
+        """Make an archived version the active results file again
+        (standalone mode).
 
         Whatever is currently active gets archived first (same rule as
         Reset: only if it has data), so switching back never loses work.
@@ -544,7 +829,10 @@ class SettingsWidget(QGroupBox):
         """
         import shutil
         from PyQt6.QtWidgets import QMessageBox
-        from gearledger.desktop.settings_manager import get_default_result_file
+        from gearledger.desktop.settings_manager import (
+            get_default_result_file,
+            record_last_results_action,
+        )
 
         try:
             target_path = self.get_results_path() or get_default_result_file()
@@ -554,6 +842,8 @@ class SettingsWidget(QGroupBox):
             shutil.copy2(version_path, target_path)  # keep the archived copy intact
 
             self._set_active_results_path(target_path)
+            record_last_results_action("restore", os.path.basename(version_path))
+            self._update_last_action_label()
 
             if hasattr(self, "on_results_refresh") and self.on_results_refresh:
                 self.on_results_refresh()
@@ -573,18 +863,35 @@ class SettingsWidget(QGroupBox):
             return False
 
     def download_results_excel(self):
-        """Save results Excel file to a chosen location."""
+        """Save results Excel file to a chosen location.
+
+        In server mode, results live in the database, not the local Excel
+        file (which nothing writes to anymore) — so this exports the live
+        database contents instead of copying that unused local file.
+        """
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
         import shutil
+        from gearledger.data_layer import get_network_mode
 
-        current_path = self.get_results_path()
-        if not current_path or not os.path.exists(current_path):
-            QMessageBox.warning(
-                self,
-                tr("download_results"),
-                tr("no_results_file"),
-            )
-            return
+        is_server = get_network_mode() == "server"
+
+        if is_server:
+            from gearledger.database import get_database
+            from gearledger.result_ledger import rows_to_dataframe
+
+            rows = get_database().get_all_results()
+            if not rows:
+                QMessageBox.warning(self, tr("download_results"), tr("no_results_file"))
+                return
+        else:
+            current_path = self.get_results_path()
+            if not current_path or not os.path.exists(current_path):
+                QMessageBox.warning(
+                    self,
+                    tr("download_results"),
+                    tr("no_results_file"),
+                )
+                return
 
         # Get save location
         fn, _ = QFileDialog.getSaveFileName(
@@ -600,8 +907,10 @@ class SettingsWidget(QGroupBox):
                 if not fn.endswith(".xlsx"):
                     fn += ".xlsx"
 
-                # Copy the file
-                shutil.copy2(current_path, fn)
+                if is_server:
+                    rows_to_dataframe(rows).to_excel(fn, index=False)
+                else:
+                    shutil.copy2(current_path, fn)
 
                 QMessageBox.information(
                     self,
@@ -876,11 +1185,13 @@ class SettingsWidget(QGroupBox):
             self.results_label.setVisible(False)
             self.results_edit.setVisible(False)
             self.btn_results.setVisible(False)
+            self.btn_import_results.setVisible(False)
             self.btn_reset_results.setVisible(False)
             self.btn_versions.setVisible(False)
             self.btn_download.setVisible(False)
             self.btn_generate_invoice.setVisible(False)
             self.btn_check_completeness.setVisible(False)
+            self.last_action_label.setVisible(False)
             self.results_info_label.setVisible(True)
             if connected:
                 self.results_info_label.setText(
@@ -897,21 +1208,33 @@ class SettingsWidget(QGroupBox):
                     "color: #e74c3c; font-size: 11px; padding: 4px;"
                 )
         else:
-            # In server/standalone mode: show catalog and results selection, hide status
+            # In server/standalone mode: show catalog selection, hide status
+            is_server = mode == "server"
             self.catalog_label.setVisible(True)
             self.catalog_edit.setVisible(True)
             self.btn_catalog.setVisible(True)
             self.catalog_info_label.setVisible(False)
 
-            self.results_label.setVisible(True)
-            self.results_edit.setVisible(True)
-            self.btn_results.setVisible(True)
+            # Results Excel path/Browse only apply in standalone mode — in
+            # server mode nothing reads or writes that local file anymore,
+            # everything goes through the database instead.
+            self.results_label.setVisible(not is_server)
+            self.results_edit.setVisible(not is_server)
+            self.btn_results.setVisible(not is_server)
+            self.btn_import_results.setVisible(is_server)
             self.btn_reset_results.setVisible(True)
             self.btn_versions.setVisible(True)
             self.btn_download.setVisible(True)
             self.btn_generate_invoice.setVisible(True)
             self.btn_check_completeness.setVisible(True)
-            self.results_info_label.setVisible(False)
+            self.last_action_label.setVisible(True)
+            self.results_info_label.setVisible(is_server)
+            if is_server:
+                self.results_info_label.setText(f"📄 {tr('results_status_database')}")
+                self.results_info_label.setStyleSheet(
+                    "color: #7f8c8d; font-size: 11px; padding: 4px;"
+                )
+            self._update_last_action_label()
 
     def get_results_path(self) -> str:
         """Get the current results file path. Uses default from settings if not set."""
@@ -1030,6 +1353,7 @@ class SettingsWidget(QGroupBox):
             self.results_edit,
             self.btn_catalog,
             self.btn_results,
+            self.btn_import_results,
             self.btn_reset_results,
             self.btn_download,
             self.btn_generate_invoice,

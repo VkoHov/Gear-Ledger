@@ -262,6 +262,14 @@ def cleanup_orphan_tmp(path: str):
         print(f"[WARNING] Could not remove orphan temp file {tmp_path}: {e}")
 
 
+def _safe_num(value, cast=float, default=0):
+    """Coerce value to a number, defaulting on NaN — `X or default` doesn't
+    work for this since NaN is truthy in Python, so a corrupted/non-numeric
+    cell would otherwise raise instead of falling back."""
+    num = pd.to_numeric(value, errors="coerce")
+    return default if pd.isna(num) else cast(num)
+
+
 def get_all_results_excel(path: str) -> list:
     """Read every row from the results ledger Excel file as a list of dicts
     shaped like database result rows (artikul, client, quantity, ...), so
@@ -278,16 +286,39 @@ def get_all_results_excel(path: str) -> list:
             {
                 "artikul": str(row.get("Артикул", "") or ""),
                 "client": str(row.get("Клиент", "") or ""),
-                "quantity": int(pd.to_numeric(row.get("Количество", 0), errors="coerce") or 0),
-                "weight": float(pd.to_numeric(row.get("Вес", 0), errors="coerce") or 0),
+                "quantity": _safe_num(row.get("Количество", 0), int, 0),
+                "weight": _safe_num(row.get("Вес", 0), float, 0.0),
                 "brand": str(row.get("Брэнд", "") or ""),
                 "description": str(row.get("Описание", "") or ""),
-                "sale_price": float(pd.to_numeric(row.get("Цена продажи", 0), errors="coerce") or 0),
-                "total_price": float(pd.to_numeric(row.get("Сумма продажи", 0), errors="coerce") or 0),
+                "sale_price": _safe_num(row.get("Цена продажи", 0), float, 0.0),
+                "total_price": _safe_num(row.get("Сумма продажи", 0), float, 0.0),
                 "last_updated": str(row.get("Последнее обновление", "") or ""),
             }
         )
     return rows
+
+
+def rows_equal(rows_a, rows_b) -> bool:
+    """Compare two lists of result-row dicts for equality, ignoring row
+    order and last_updated timestamps (only the actual inventory data —
+    artikul/client/quantity/weight/price — matters for "did anything
+    change"). Used to skip archiving a redundant duplicate version when
+    restoring/resetting back-to-back with nothing recorded in between.
+    """
+
+    def _key(r):
+        return (
+            str(r.get("artikul", "")).strip().upper(),
+            str(r.get("client", "")).strip().upper(),
+            r.get("quantity"),
+            r.get("weight"),
+            str(r.get("brand", "")).strip(),
+            str(r.get("description", "")).strip(),
+            r.get("sale_price"),
+            r.get("total_price"),
+        )
+
+    return sorted(map(_key, rows_a)) == sorted(map(_key, rows_b))
 
 
 def delete_result_excel(path: str, artikul: str, client: str) -> Dict[str, any]:

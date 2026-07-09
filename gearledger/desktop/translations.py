@@ -330,6 +330,10 @@ TRANSLATIONS = {
         "en": "Results: Available from server",
         "ru": "Результаты: Доступны с сервера",
     },
+    "results_status_database": {
+        "en": "Results are stored in the database",
+        "ru": "Результаты хранятся в базе данных",
+    },
     "results_status_not_connected": {
         "en": "Results: Not connected",
         "ru": "Результаты: Не подключено",
@@ -345,6 +349,50 @@ TRANSLATIONS = {
     "browse": {
         "en": "Browse…",
         "ru": "Обзор…",
+    },
+    "import_results": {
+        "en": "Import…",
+        "ru": "Импорт…",
+    },
+    "import_results_tooltip": {
+        "en": "Import an external Excel file's rows into the database",
+        "ru": "Импортировать строки из внешнего файла Excel в базу данных",
+    },
+    "import_results_title": {
+        "en": "Import Results Excel",
+        "ru": "Импорт файла результатов Excel",
+    },
+    "import_invalid_title": {
+        "en": "Invalid File",
+        "ru": "Неверный файл",
+    },
+    "import_invalid_msg": {
+        "en": "This file doesn't match the expected format — missing column(s): {columns}",
+        "ru": "Этот файл не соответствует ожидаемому формату — отсутствуют столбцы: {columns}",
+    },
+    "import_confirm_title": {
+        "en": "Import Results",
+        "ru": "Импорт результатов",
+    },
+    "import_confirm_msg": {
+        "en": "Import this file into the database? The current data will be archived as a new version first, so nothing is lost.",
+        "ru": "Импортировать этот файл в базу данных? Текущие данные будут сначала сохранены как новая версия, поэтому ничего не потеряется.",
+    },
+    "import_complete_title": {
+        "en": "Import Complete",
+        "ru": "Импорт завершён",
+    },
+    "import_complete_msg": {
+        "en": "Imported {count} rows into the database.",
+        "ru": "В базу данных импортировано строк: {count}.",
+    },
+    "import_failed": {
+        "en": "Import Failed",
+        "ru": "Ошибка импорта",
+    },
+    "import_failed_msg": {
+        "en": "Could not import this file:\n{error}",
+        "ru": "Не удалось импортировать этот файл:\n{error}",
     },
     "reset": {
         "en": "Reset",
@@ -382,6 +430,18 @@ TRANSLATIONS = {
         "en": "Restore",
         "ru": "Восстановить",
     },
+    "delete_version": {
+        "en": "Delete",
+        "ru": "Удалить",
+    },
+    "delete_version_confirm_title": {
+        "en": "Delete Version",
+        "ru": "Удалить версию",
+    },
+    "delete_version_confirm_msg": {
+        "en": "Delete version {version}? This cannot be undone.",
+        "ru": "Удалить версию {version}? Это действие необратимо.",
+    },
     "restore_version_title": {
         "en": "Restore Version",
         "ru": "Восстановить версию",
@@ -389,6 +449,10 @@ TRANSLATIONS = {
     "restore_version_confirm": {
         "en": "Make this version the active results file? The current file will be archived as a new version first, so nothing is lost.",
         "ru": "Сделать эту версию активным файлом результатов? Текущий файл будет сначала сохранён как новая версия, поэтому ничего не потеряется.",
+    },
+    "restore_version_confirm_server": {
+        "en": "Restore this version? This changes results for everyone currently connected — the current data will be archived as a new version first, so nothing is lost.",
+        "ru": "Восстановить эту версию? Это изменит результаты для всех, кто сейчас подключён — текущие данные будут сначала сохранены как новая версия, поэтому ничего не потеряется.",
     },
     "restore_complete": {
         "en": "Restore Complete",
@@ -401,6 +465,18 @@ TRANSLATIONS = {
     "restore_failed": {
         "en": "Restore Failed",
         "ru": "Ошибка восстановления",
+    },
+    "last_action_reset": {
+        "en": "Last action: reset ({detail}) at {time}",
+        "ru": "Последнее действие: сброс ({detail}) в {time}",
+    },
+    "last_action_restore": {
+        "en": "Last action: restored from {detail} at {time}",
+        "ru": "Последнее действие: восстановлено из {detail} в {time}",
+    },
+    "last_action_import": {
+        "en": "Last action: imported from {detail} at {time}",
+        "ru": "Последнее действие: импортировано из {detail} в {time}",
     },
     "restore_failed_msg": {
         "en": "Could not restore this version:\n{error}",

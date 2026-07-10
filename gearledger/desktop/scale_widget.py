@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
 )
 
-from gearledger.desktop.scale import read_weight_once, parse_weight
+from gearledger.desktop.scale import open_and_read_weight_once, parse_weight
 from gearledger.desktop.translations import tr
 
 # The scale hardware reads consistently light; compensate every live reading.
@@ -411,7 +411,7 @@ class ScaleWidget(QGroupBox):
 
         # Create worker thread for connection (non-blocking)
         class ConnectionWorker(QThread):
-            finished = pyqtSignal(object, str, int)  # result, port, baudrate
+            finished = pyqtSignal(object, str, int, object)  # result, port, baudrate, open serial.Serial
             error = pyqtSignal(str, str, int)  # error_msg, port, baudrate
 
             def __init__(self, port, baudrate):
@@ -421,9 +421,19 @@ class ScaleWidget(QGroupBox):
 
             def run(self):
                 try:
-                    # Reduced timeout from 3.0 to 1.5 seconds for faster connection
-                    test = read_weight_once(self.port, self.baudrate, timeout=1.5)
-                    self.finished.emit(test, self.port, self.baudrate)
+                    # Reduced timeout from 3.0 to 1.5 seconds for faster connection.
+                    # The connection stays open on success — it's reused directly
+                    # for continuous monitoring instead of being closed and
+                    # reopened, which some USB-serial adapters handle unreliably.
+                    test, ser = open_and_read_weight_once(
+                        self.port, self.baudrate, timeout=1.5
+                    )
+                    if ser is None:
+                        self.error.emit(
+                            f"Could not open port '{self.port}'", self.port, self.baudrate
+                        )
+                        return
+                    self.finished.emit(test, self.port, self.baudrate, ser)
                 except Exception as e:
                     self.error.emit(str(e), self.port, self.baudrate)
 
@@ -433,7 +443,7 @@ class ScaleWidget(QGroupBox):
         self._connection_thread.error.connect(self._on_scale_connection_error)
         self._connection_thread.start()
 
-    def _on_scale_connected(self, test, port, baudrate):
+    def _on_scale_connected(self, test, port, baudrate, ser):
         """Handle successful scale connection (called from worker thread)."""
         # If we got here, the port is OK – even if test is None.
         self.scale_port = port
@@ -461,39 +471,16 @@ class ScaleWidget(QGroupBox):
             """
         )
 
-        # Open persistent serial connection. The test connection above just
-        # closed this same port a moment ago — some USB-serial adapters
-        # (certain CH340 clones included) need a brief moment to actually
-        # release it before it can be reopened, so a handful of retries with
-        # a short delay avoids failing on what's usually a transient hiccup.
-        import serial
-
-        self._serial_port = None
-        last_error = None
-        for attempt in range(4):
-            try:
-                self._serial_port = serial.Serial(
-                    port=port,
-                    baudrate=baudrate,
-                    timeout=1.0,  # 1 second timeout for readline
-                )
-                break
-            except Exception as e:
-                last_error = e
-                if attempt < 3:
-                    time.sleep(0.3)
-
-        if self._serial_port is None:
-            QMessageBox.critical(
-                self,
-                tr("scale_connection_title"),
-                tr("failed_persistent_connection", error=last_error),
-            )
-            self.is_monitoring = False
-            self.btn_connect.setEnabled(True)
-            self.btn_disconnect.setEnabled(False)
-            self._connection_thread = None
-            return
+        # Reuse the connection already opened for the test above instead of
+        # closing it and opening a new one — some USB-serial adapters (seen
+        # with certain CH340 clones) fail to reconfigure reliably when
+        # reopened immediately after being closed, so avoiding that step
+        # entirely is more robust than retrying around it.
+        self._serial_port = ser
+        try:
+            self._serial_port.timeout = 1.0  # was 0.2 during the test read
+        except Exception:
+            pass
 
         # Start continuous monitoring thread
         self._start_monitoring_thread()

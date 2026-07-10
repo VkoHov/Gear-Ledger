@@ -211,8 +211,8 @@ def _write_client_section(
 
     current_row = start_row
 
-    # Header: Покупатель (merge A-G only, leave H for weight price)
-    ws.merge_cells(f"A{current_row}:G{current_row}")
+    # Header: Покупатель (merge A-I only, leave J for weight price)
+    ws.merge_cells(f"A{current_row}:I{current_row}")
     cell = ws[f"A{current_row}"]
     cell.value = f"Покупатель: {client}"
     cell.font = Font(bold=True, size=14)
@@ -220,9 +220,9 @@ def _write_client_section(
 
     # Weight price in top right corner (on both copies since they can be cut apart)
     if weight_price > 0:
-        ws[f"H{current_row}"] = f"Цена за кг: {weight_price:.2f}"
-        ws[f"H{current_row}"].font = Font(bold=True, size=10)
-        ws[f"H{current_row}"].alignment = Alignment(
+        ws[f"J{current_row}"] = f"Цена за кг: {weight_price:.2f}"
+        ws[f"J{current_row}"].font = Font(bold=True, size=10)
+        ws[f"J{current_row}"].alignment = Alignment(
             horizontal="right", vertical="center"
         )
 
@@ -248,11 +248,13 @@ def _write_client_section(
         "Номер",
         "Описание",
         "Кол.",
+        "Вес (за шт.)",
         "Общий вес",
+        "Цена без веса",
         "Цена продажи",
         "Сумма продажи",
     ]
-    header_cols = ["A", "B", "C", "D", "E", "F", "G", "H"]
+    header_cols = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
 
     for col, header in zip(header_cols, headers):
         cell = ws[f"{col}{current_row}"]
@@ -345,15 +347,17 @@ def _write_client_section(
         ws[f"C{current_row}"] = number
         ws[f"D{current_row}"] = description
         ws[f"E{current_row}"] = quantity
-        ws[f"F{current_row}"] = f"{row_total_weight:.3f}"
-        ws[f"G{current_row}"] = f"{price:.2f}"
-        ws[f"H{current_row}"] = f"{total:.2f}"
+        ws[f"F{current_row}"] = f"{weight:.3f}"
+        ws[f"G{current_row}"] = f"{row_total_weight:.3f}"
+        ws[f"H{current_row}"] = f"{catalog_price:.2f}"
+        ws[f"I{current_row}"] = f"{price:.2f}"
+        ws[f"J{current_row}"] = f"{total:.2f}"
 
         # Format cells
         for col in header_cols:
             cell = ws[f"{col}{current_row}"]
             cell.alignment = Alignment(
-                horizontal="center" if col in ["A", "E", "F"] else "left",
+                horizontal="center" if col in ["A", "E", "F", "G"] else "left",
                 vertical="center",
             )
             cell.border = Border(
@@ -375,20 +379,23 @@ def _write_client_section(
     ws[f"E{current_row}"].font = Font(bold=True)
     ws[f"E{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
-    ws[f"F{current_row}"] = f"{total_weight:.3f}"
-    ws[f"F{current_row}"].font = Font(bold=True)
-    ws[f"F{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
-
-    ws[f"G{current_row}"] = f"{total_price:.2f}"
+    # F (per-item weight) and H (per-item price without weight) are left
+    # blank here — summing per-unit values across different items isn't
+    # meaningful the way summing their row totals is.
+    ws[f"G{current_row}"] = f"{total_weight:.3f}"
     ws[f"G{current_row}"].font = Font(bold=True)
     ws[f"G{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
-    ws[f"H{current_row}"] = f"{total_sum:.2f}"
-    ws[f"H{current_row}"].font = Font(bold=True)
-    ws[f"H{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
+    ws[f"I{current_row}"] = f"{total_price:.2f}"
+    ws[f"I{current_row}"].font = Font(bold=True)
+    ws[f"I{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
+
+    ws[f"J{current_row}"] = f"{total_sum:.2f}"
+    ws[f"J{current_row}"].font = Font(bold=True)
+    ws[f"J{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
     # Add borders to total row
-    for col in ["D", "E", "F", "G", "H"]:
+    for col in ["D", "E", "F", "G", "H", "I", "J"]:
         ws[f"{col}{current_row}"].border = Border(
             left=Side(style="thin"),
             right=Side(style="thin"),
@@ -407,9 +414,11 @@ def _write_client_section(
     ws.column_dimensions["C"].width = 15
     ws.column_dimensions["D"].width = 50
     ws.column_dimensions["E"].width = 8
-    ws.column_dimensions["F"].width = 10  # Weight column
-    ws.column_dimensions["G"].width = 15
-    ws.column_dimensions["H"].width = 15
+    ws.column_dimensions["F"].width = 12  # Weight per item
+    ws.column_dimensions["G"].width = 12  # Total weight
+    ws.column_dimensions["H"].width = 14  # Price without weight surcharge
+    ws.column_dimensions["I"].width = 15  # Final price
+    ws.column_dimensions["J"].width = 15  # Row total
 
     return current_row
 

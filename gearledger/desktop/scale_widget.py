@@ -461,29 +461,42 @@ class ScaleWidget(QGroupBox):
             """
         )
 
-        # Open persistent serial connection
-        try:
-            import serial
+        # Open persistent serial connection. The test connection above just
+        # closed this same port a moment ago — some USB-serial adapters
+        # (certain CH340 clones included) need a brief moment to actually
+        # release it before it can be reopened, so a handful of retries with
+        # a short delay avoids failing on what's usually a transient hiccup.
+        import serial
 
-            self._serial_port = serial.Serial(
-                port=port,
-                baudrate=baudrate,
-                timeout=1.0,  # 1 second timeout for readline
-            )
+        self._serial_port = None
+        last_error = None
+        for attempt in range(4):
+            try:
+                self._serial_port = serial.Serial(
+                    port=port,
+                    baudrate=baudrate,
+                    timeout=1.0,  # 1 second timeout for readline
+                )
+                break
+            except Exception as e:
+                last_error = e
+                if attempt < 3:
+                    time.sleep(0.3)
 
-            # Start continuous monitoring thread
-            self._start_monitoring_thread()
-        except Exception as e:
+        if self._serial_port is None:
             QMessageBox.critical(
                 self,
                 tr("scale_connection_title"),
-                tr("failed_persistent_connection", error=e),
+                tr("failed_persistent_connection", error=last_error),
             )
             self.is_monitoring = False
             self.btn_connect.setEnabled(True)
             self.btn_disconnect.setEnabled(False)
             self._connection_thread = None
             return
+
+        # Start continuous monitoring thread
+        self._start_monitoring_thread()
 
         QMessageBox.information(self, tr("scale_connected_title"), msg)
         self._connection_thread = None

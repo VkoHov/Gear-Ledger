@@ -193,7 +193,7 @@ class ResultsPane(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         # Apply table styling
         self.table.setStyleSheet(
@@ -344,18 +344,26 @@ class ResultsPane(QWidget):
         sel = self.table.selectionModel()
         if not sel or not sel.hasSelection():
             return
-        row = sel.selectedRows()[0].row()
+        rows = sorted(idx.row() for idx in sel.selectedRows())
         df = self.model._df
-        if row < 0 or row >= len(df):
+        targets = [
+            (str(df.iloc[r].get("Артикул", "")), str(df.iloc[r].get("Клиент", "")))
+            for r in rows
+            if 0 <= r < len(df)
+        ]
+        if not targets:
             return
 
-        artikul = str(df.iloc[row].get("Артикул", ""))
-        client = str(df.iloc[row].get("Клиент", ""))
+        if len(targets) == 1:
+            artikul, client = targets[0]
+            confirm_msg = tr("delete_item_confirm_msg", artikul=artikul, client=client)
+        else:
+            confirm_msg = tr("delete_items_confirm_msg", count=len(targets))
 
         reply = QMessageBox.question(
             self,
             tr("delete_item_confirm_title"),
-            tr("delete_item_confirm_msg", artikul=artikul, client=client),
+            confirm_msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -364,13 +372,28 @@ class ResultsPane(QWidget):
 
         from gearledger.data_layer import delete_result_unified
 
-        ok = delete_result_unified(artikul, client, self.ledger_path)
-        if ok:
-            self.refresh()
-        else:
-            QMessageBox.warning(
-                self, tr("delete_item_confirm_title"), tr("delete_item_failed")
-            )
+        deleted = 0
+        for artikul, client in targets:
+            if delete_result_unified(artikul, client, self.ledger_path):
+                deleted += 1
+        self.refresh()
+
+        if deleted < len(targets):
+            if deleted == 0 and len(targets) == 1:
+                QMessageBox.warning(
+                    self, tr("delete_item_confirm_title"), tr("delete_item_failed")
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    tr("delete_item_confirm_title"),
+                    tr(
+                        "delete_items_partial_failed",
+                        deleted=deleted,
+                        total=len(targets),
+                        failed=len(targets) - deleted,
+                    ),
+                )
 
     @staticmethod
     def _read_df_safe(path: str) -> pd.DataFrame:

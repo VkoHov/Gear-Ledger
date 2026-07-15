@@ -634,6 +634,14 @@ TRANSLATIONS = {
         "en": "Could not delete this item.",
         "ru": "Не удалось удалить этот элемент.",
     },
+    "delete_items_confirm_msg": {
+        "en": "Delete {count} selected rows from results? This cannot be undone.",
+        "ru": "Удалить {count} выбранных строк из результатов? Это действие необратимо.",
+    },
+    "delete_items_partial_failed": {
+        "en": "Deleted {deleted} of {total} selected rows. {failed} could not be deleted.",
+        "ru": "Удалено {deleted} из {total} выбранных строк. {failed} не удалось удалить.",
+    },
     "choose_catalog_excel": {
         "en": "Choose Catalog Excel (lookup)",
         "ru": "Выберите каталог Excel (поиск)",

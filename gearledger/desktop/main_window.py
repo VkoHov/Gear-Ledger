@@ -1820,8 +1820,9 @@ class MainWindow(QWidget):
     def _on_network_mode_changed(self, mode: str, address: str):
         """Handle network mode change - update results pane refresh button."""
         print(f"[MAIN_WINDOW] Network mode changed to: {mode}")
-        # Update results pane to show/hide refresh button based on mode
+        # Update results pane to show/hide refresh/delete buttons based on mode
         self.results_pane.update_refresh_button_visibility()
+        self.results_pane.update_delete_button_visibility()
         # Update network status label
         self._update_network_status()
         # Update settings layout (catalog/results visibility) for new mode

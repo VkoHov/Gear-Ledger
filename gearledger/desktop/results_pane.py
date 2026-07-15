@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QHeaderView,
     QPushButton,
+    QAbstractItemView,
+    QMessageBox,
 )
 from PyQt6.QtGui import QFont, QPalette
 
@@ -153,6 +155,34 @@ class ResultsPane(QWidget):
         header_layout.addStretch()
         header_layout.addWidget(self.refresh_btn)
 
+        # Delete-selected-row button — hidden in client mode (client can only
+        # view/add, never modify or delete recorded results).
+        self.delete_btn = QPushButton(tr("delete_item"))
+        self.delete_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #c0392b;
+            }
+            QPushButton:pressed {
+                background-color: #922b21;
+            }
+            QPushButton:disabled {
+                background-color: #bdc3c7;
+            }
+        """
+        )
+        self.delete_btn.setEnabled(False)
+        self.delete_btn.clicked.connect(self.delete_selected_row)
+        header_layout.addWidget(self.delete_btn)
+
         # Initially hide the button (will be shown in client mode)
         self.refresh_btn.setVisible(False)
 
@@ -162,6 +192,8 @@ class ResultsPane(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
         # Apply table styling
         self.table.setStyleSheet(
@@ -230,13 +262,17 @@ class ResultsPane(QWidget):
         df = pd.DataFrame(columns=COLUMNS)
         self.model = PandasModel(df, self)
         self.table.setModel(self.model)
+        self.table.selectionModel().selectionChanged.connect(
+            self._update_delete_button_enabled
+        )
 
         # Load actual data after a short delay (non-blocking)
         if ledger_path:
             QTimer.singleShot(200, self.refresh)
 
-        # Update refresh button visibility based on initial mode
+        # Update refresh/delete button visibility based on initial mode
         QTimer.singleShot(300, self.update_refresh_button_visibility)
+        QTimer.singleShot(300, self.update_delete_button_visibility)
 
         # Create main layout with styling
         lay = QVBoxLayout(self)
@@ -284,6 +320,57 @@ class ResultsPane(QWidget):
         except Exception:
             # If we can't determine mode, hide the button to be safe
             self.refresh_btn.setVisible(False)
+
+    def update_delete_button_visibility(self):
+        """Update delete-row button visibility based on network mode.
+
+        Client mode is view/add-only — it must never expose delete, same as
+        Reset/Create Invoice are hidden there.
+        """
+        try:
+            from gearledger.data_layer import get_network_mode
+
+            mode = get_network_mode()
+            self.delete_btn.setVisible(mode != "client")
+        except Exception:
+            self.delete_btn.setVisible(False)
+        self._update_delete_button_enabled()
+
+    def _update_delete_button_enabled(self):
+        sel = self.table.selectionModel()
+        self.delete_btn.setEnabled(bool(sel and sel.hasSelection()))
+
+    def delete_selected_row(self):
+        sel = self.table.selectionModel()
+        if not sel or not sel.hasSelection():
+            return
+        row = sel.selectedRows()[0].row()
+        df = self.model._df
+        if row < 0 or row >= len(df):
+            return
+
+        artikul = str(df.iloc[row].get("Артикул", ""))
+        client = str(df.iloc[row].get("Клиент", ""))
+
+        reply = QMessageBox.question(
+            self,
+            tr("delete_item_confirm_title"),
+            tr("delete_item_confirm_msg", artikul=artikul, client=client),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from gearledger.data_layer import delete_result_unified
+
+        ok = delete_result_unified(artikul, client, self.ledger_path)
+        if ok:
+            self.refresh()
+        else:
+            QMessageBox.warning(
+                self, tr("delete_item_confirm_title"), tr("delete_item_failed")
+            )
 
     @staticmethod
     def _read_df_safe(path: str) -> pd.DataFrame:

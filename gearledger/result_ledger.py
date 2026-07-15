@@ -24,8 +24,13 @@ def _norm(s: str) -> str:
     scanned from a label often comes back with these instead of a plain
     ASCII space/hyphen, so a manually-typed "correct" query wouldn't match
     the stored row otherwise (looks identical, isn't byte-identical).
+    Apostrophes are dropped outright — Excel's "force text" convention
+    (typing 'RJ30003 to keep a code as text) can leave a literal leading
+    apostrophe baked into the value, so "RJ30003" and "'RJ30003" must key
+    the same.
     """
     s = str(s or "").replace("\xa0", " ").replace("—", "-").replace("–", "-")
+    s = s.replace("'", "").replace("’", "").replace("‘", "")
     return re.sub(r"[ \t\n\r\-.:/]", "", s).upper()
 
 

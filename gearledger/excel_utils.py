@@ -39,6 +39,11 @@ def _space_norm(s) -> str:
     # catalog rows keep distinct keys), a non-breaking space is essentially
     # always an accidental OCR/copy-paste artifact, not a meaningful
     # distinction worth preserving as a separate picker candidate.
+    # Straight/curly apostrophes are stripped outright for the same reason:
+    # Excel's "force text" convention is to prefix a cell like 'RJ30003 with
+    # a leading apostrophe, and that character sometimes ends up baked into
+    # the value itself instead of staying a formula-bar-only hint — so
+    # "RJ30003" and "'RJ30003" must be treated as the same code.
     # Internal spaces and dots are otherwise kept as-is (not stripped) so
     # catalog entries that differ only by separator style — e.g. "75.5",
     # "75 5", "755" — get distinct lookup keys instead of silently
@@ -46,7 +51,8 @@ def _space_norm(s) -> str:
     # separator-agnostic fallback that cross-matches them and feeds the
     # multi-match picker.
     s = str(s or "").strip().upper().replace("\xa0", " ")
-    return s.replace("—", "-").replace("–", "-")
+    s = s.replace("—", "-").replace("–", "-")
+    return s.replace("'", "").replace("’", "").replace("‘", "")
 
 
 def _strip_seps(s: str) -> str:
@@ -363,10 +369,18 @@ def try_match_in_excel(excel_path: str, query_raw: str, *_args, **_kwargs):
         debug_lines.append(f"✓ MATCH: ‘{q}’ → ‘{orig}’ | client: ‘{client_val}’")
         return (client_val, orig, "\n".join(debug_lines))
 
-    # Try hyphen-stripped variant
+    # Try hyphen-stripped variant. NOTE: lookup_nodash must be checked even
+    # when q_nd == q (i.e. the query itself already has no separators) —
+    # it's keyed by the *catalog* entries' stripped forms, which is a
+    # different dict from `lookup` regardless of whether the query had
+    # anything to strip. Gating this on q_nd != q previously meant a
+    # separator-free query (e.g. "740501307010AE") could never match a
+    # catalog entry like "740.50-1307010 AE", while the same query with a
+    # dash or space added back in ("74050-1307010AE") worked fine.
     q_nd = _strip_seps(q)
-    if q_nd and q_nd != q:
-        debug_lines.append(f"Trying no-dash variant: ‘{q_nd}’")
+    if q_nd:
+        if q_nd != q:
+            debug_lines.append(f"Trying no-dash variant: ‘{q_nd}’")
         q_nd_hits = lookup.get(q_nd)
         nd_hits = lookup_nodash.get(q_nd)
         hit = (q_nd_hits[0] if q_nd_hits else None) or (nd_hits[0] if nd_hits else None)

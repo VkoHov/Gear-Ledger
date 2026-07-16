@@ -403,11 +403,14 @@ class NetworkSettingsDialog(QDialog):
                         tr("connected_msg", address=address),
                     )
                 else:
-                    QMessageBox.critical(
-                        self,
-                        tr("connection"),
-                        tr("connection_failed", address=address),
-                    )
+                    from gearledger.api_client import get_last_connect_error
+
+                    detail = get_last_connect_error()
+                    print(f"[NETWORK_SETTINGS] Connection to {address} failed: {detail}")
+                    msg = tr("connection_failed", address=address)
+                    if detail:
+                        msg = f"{msg}\n\n{tr('connection_error', error=detail)}"
+                    QMessageBox.critical(self, tr("connection"), msg)
             except Exception as e:
                 QMessageBox.critical(
                     self, tr("connection"), tr("connection_error", error=str(e))

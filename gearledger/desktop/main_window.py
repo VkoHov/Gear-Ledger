@@ -1352,11 +1352,14 @@ class MainWindow(QWidget):
                     # Delay slightly so any previous SSE thread can fully release resources
                     QTimer.singleShot(300, self._initialize_client_connection)
                 else:
-                    QMessageBox.critical(
-                        self,
-                        tr("connection"),
-                        tr("connection_failed", address=address),
-                    )
+                    from gearledger.api_client import get_last_connect_error
+
+                    detail = get_last_connect_error()
+                    msg = tr("connection_failed", address=address)
+                    if detail:
+                        msg = f"{msg}\n\n{tr('connection_error', error=detail)}"
+                    self.append_logs([f"✗ Connection failed: {detail or 'unknown error'}"])
+                    QMessageBox.critical(self, tr("connection"), msg)
             except Exception as e:
                 QMessageBox.critical(
                     self,
@@ -1862,7 +1865,10 @@ class MainWindow(QWidget):
             return
 
         if not client or not client.is_connected():
-            self.append_logs(["⚠️ Client not connected - cannot initialize"])
+            detail = getattr(client, "last_error", None) if client else None
+            self.append_logs(
+                [f"⚠️ Client not connected - cannot initialize ({detail or 'no client'})"]
+            )
             self._update_client_init_progress("⚠️ Not connected", "#e74c3c")
             return
 

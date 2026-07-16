@@ -20,6 +20,11 @@ class APIClient:
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
         self._connected = False
+        # Human-readable reason the last check_connection() call failed, if
+        # any — check_connection() itself must never raise (callers rely on
+        # a plain bool), so this is the only way to surface *why* a
+        # connection attempt failed instead of just "it didn't work".
+        self.last_error: Optional[str] = None
 
     def check_connection(self) -> bool:
         """Check if server is reachable and register as connected client."""
@@ -31,6 +36,11 @@ class APIClient:
             )
             if response.status_code != 200:
                 self._connected = False
+                self.last_error = (
+                    f"Server responded with HTTP {response.status_code} "
+                    f"at {self.server_url}/api/status"
+                )
+                print(f"[API_CLIENT] check_connection failed: {self.last_error}")
                 return False
 
             # Register as connected client by calling sync/version endpoint
@@ -44,10 +54,27 @@ class APIClient:
                 pass  # Ignore errors, but still mark as connected if status worked
 
             self._connected = True
+            self.last_error = None
             return True
-        except Exception:
-            self._connected = False
-            return False
+        except requests.exceptions.ConnectTimeout:
+            self.last_error = (
+                f"Timed out connecting to {self.server_url} "
+                f"(server unreachable or wrong IP/port — check the address "
+                f"and that the server machine is on the same network)"
+            )
+        except requests.exceptions.ConnectionError as e:
+            self.last_error = (
+                f"Could not reach {self.server_url}: {e} "
+                f"(server not running, wrong IP/port, or blocked by a firewall)"
+            )
+        except requests.exceptions.Timeout as e:
+            self.last_error = f"Request to {self.server_url} timed out: {e}"
+        except Exception as e:
+            self.last_error = f"{type(e).__name__}: {e}"
+
+        print(f"[API_CLIENT] check_connection failed for {self.server_url}: {self.last_error}")
+        self._connected = False
+        return False
 
     def is_connected(self) -> bool:
         """Check if currently connected."""
@@ -212,14 +239,24 @@ def get_client() -> Optional[APIClient]:
     return _client_instance
 
 
+_last_connect_error: Optional[str] = None
+
+
+def get_last_connect_error() -> Optional[str]:
+    """Return why the most recent connect_to_server() call failed, if it did."""
+    return _last_connect_error
+
+
 def connect_to_server(server_url: str, timeout: int = 10) -> Optional[APIClient]:
     """Connect to a server."""
-    global _client_instance
+    global _client_instance, _last_connect_error
 
     client = APIClient(server_url, timeout)
     if client.check_connection():
         _client_instance = client
+        _last_connect_error = None
         return client
+    _last_connect_error = client.last_error
     return None
 
 

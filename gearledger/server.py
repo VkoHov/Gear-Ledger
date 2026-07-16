@@ -145,6 +145,14 @@ class GearLedgerServer:
         # Track data version for sync
         self._data_version = 0
 
+        @self.app.before_request
+        def _log_incoming_request():
+            # Cheap visibility into whether client requests are reaching the
+            # server at all — this is the first thing to check when a
+            # client reports it "can't connect": if nothing shows up here,
+            # the problem is network/firewall, not the app.
+            print(f"[SERVER] {request.method} {request.path} from {request.remote_addr}")
+
         @self.app.route("/api/status", methods=["GET"])
         def status():
             """Check server status."""
@@ -616,6 +624,10 @@ class GearLedgerServer:
             )
             self._thread.start()
             self._running = True
+            print(
+                f"[SERVER] Listening on {self.host}:{self.port} "
+                f"(reachable at {self.get_server_url()} from other devices on the LAN)"
+            )
 
             # Start broadcasting server presence
             self._broadcaster = ServerBroadcaster(self.port)

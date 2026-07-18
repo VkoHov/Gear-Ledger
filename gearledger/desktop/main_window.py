@@ -1,6 +1,7 @@
 # gearledger/desktop/main_window.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+import math
 import os
 import sys
 from pathlib import Path
@@ -2521,8 +2522,13 @@ class MainWindow(QWidget):
             total_weight = self.scale_widget.get_current_weight()
             if total_weight <= 0:
                 total_weight = 1.0
-        # Store weight per item: total_weight / quantity
+        # Store weight per item: total_weight / quantity, rounded UP to 3
+        # decimals (not plain rounding) so the per-item figure shown on the
+        # invoice always multiplies out to at least the true measured
+        # total — weight feeds weight-based pricing, so rounding down (or
+        # to nearest) could quietly undercharge the client.
         weight_per_item = total_weight / quantity if quantity > 0 else total_weight
+        weight_per_item = math.ceil(weight_per_item * 1000) / 1000
 
         from gearledger.data_layer import record_match_unified
 

@@ -25,7 +25,7 @@ class GearLedgerServer:
     def __init__(
         self,
         host: str = "0.0.0.0",
-        port: int = 8080,
+        port: int = 8081,
         db_path: str = None,
         on_data_changed: Callable = None,
         on_client_changed: Callable = None,
@@ -752,7 +752,7 @@ def get_server() -> Optional[GearLedgerServer]:
 
 def start_server(
     host: str = "0.0.0.0",
-    port: int = 8080,
+    port: int = 8081,
     db_path: str = None,
     on_data_changed: Callable = None,
     on_client_changed: Callable = None,

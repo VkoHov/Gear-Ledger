@@ -1832,8 +1832,8 @@ TRANSLATIONS = {
         "ru": "Подключение",
     },
     "enter_server_address": {
-        "en": "Please enter the server address (e.g., 192.168.1.100:8080)",
-        "ru": "Введите адрес сервера (например, 192.168.1.100:8080)",
+        "en": "Please enter the server address (e.g., 192.168.1.100:8081)",
+        "ru": "Введите адрес сервера (например, 192.168.1.100:8081)",
     },
     "discovering_servers": {
         "en": "🔍 Discovering servers on network...",

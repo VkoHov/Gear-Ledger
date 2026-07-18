@@ -398,14 +398,14 @@ class ServerDiscovery:
                                 ips = [single_ip]
 
                             print(
-                                f"[DISCOVERY] Server IPs: {ips}, Port: {message.get('port', 8080)}"
+                                f"[DISCOVERY] Server IPs: {ips}, Port: {message.get('port', 8081)}"
                             )
 
                             # Create server entry for each IP
                             for ip in ips:
                                 server = DiscoveredServer(
                                     ip=ip,
-                                    port=message.get("port", 8080),
+                                    port=message.get("port", 8081),
                                     name=message.get("name", "Gear Ledger Server"),
                                     last_seen=time.time(),
                                 )

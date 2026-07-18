@@ -46,9 +46,15 @@ class Settings:
     piper_binary_path: str = ""  # Custom Piper executable path (optional)
     # Network mode settings
     network_mode: str = "standalone"  # "standalone", "server", or "client"
-    server_port: int = 8080  # Port for server mode
+    # Port for server mode. Default deliberately avoids 8080 — Windows'
+    # Hyper-V/WSL2 virtual switch commonly reserves it as part of an
+    # "excluded port range" for its own NAT, which silently drops inbound
+    # connections to that port even though the app is genuinely listening
+    # on it (confirmed on a real deployment: netsh interface ipv4 show
+    # excludedportrange protocol=tcp showed 8080 reserved).
+    server_port: int = 8081
     server_address: str = (
-        ""  # Address to connect to in client mode (e.g., "192.168.1.100:8080")
+        ""  # Address to connect to in client mode (e.g., "192.168.1.100:8081")
     )
     # Last Reset/Restore breadcrumb — informational only, not true version
     # tracking (the app has no notion of "is the live data still exactly

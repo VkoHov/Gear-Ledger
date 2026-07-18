@@ -101,7 +101,7 @@ class NetworkSettingsDialog(QDialog):
         server_row.addWidget(self.server_port_label)
         self.server_port_spin = QSpinBox()
         self.server_port_spin.setRange(1024, 65535)
-        self.server_port_spin.setValue(8080)
+        self.server_port_spin.setValue(8081)
         server_row.addWidget(self.server_port_spin)
 
         self.start_server_btn = QPushButton(tr("start_server"))
@@ -128,7 +128,7 @@ class NetworkSettingsDialog(QDialog):
         self.server_address_combo = QComboBox()
         self.server_address_combo.setEditable(True)
         self.server_address_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.server_address_combo.lineEdit().setPlaceholderText("192.168.1.100:8080")
+        self.server_address_combo.lineEdit().setPlaceholderText("192.168.1.100:8081")
         self.server_address_combo.lineEdit().setText("")
         client_row.addWidget(self.server_address_combo, 1)
 

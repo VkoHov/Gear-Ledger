@@ -2,6 +2,7 @@
 """
 Generate invoices from results file using catalog data.
 """
+import math
 import os
 import pandas as pd
 from datetime import datetime
@@ -67,7 +68,7 @@ def generate_invoice_from_results(
 
         # Create invoice workbook
         wb = Workbook()
-        wb.remove(wb.active)  # no combined summary page — per-client sheets only
+        wb.remove(wb.active)
 
         # Group results by client
         if "Клиент" not in results_df.columns:
@@ -78,6 +79,12 @@ def generate_invoice_from_results(
             }
 
         clients = results_df["Клиент"].unique()
+
+        # First sheet in the workbook: one combined overview listing every
+        # client's total weight and weight-only price side by side, so
+        # there's a single place to see totals without opening each
+        # client's own sheet.
+        _write_summary_sheet(wb, results_df, weight_price)
 
         # Create individual client sheets
         for client in clients:
@@ -195,6 +202,82 @@ def _clean_sheet_name(name: str) -> str:
         name = "Client"
 
     return name.strip()
+
+
+def _write_summary_sheet(wb, results_df: pd.DataFrame, weight_price: float) -> None:
+    """Write the first sheet in the workbook: one row per client with their
+    total weight and weight-only price (weight * weight_price), plus a grand
+    total row. Purely derived from the results file — no catalog lookup
+    needed, since this is only about weight, not catalog/base pricing."""
+    ws = wb.create_sheet(title="Сводка", index=0)
+
+    ws["A1"] = f"Цена за кг: {weight_price:.2f}"
+    ws["A1"].font = Font(bold=True, size=12)
+
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+
+    header_row = 3
+    headers = ["Клиент", "Общий вес", "Цена за вес"]
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=header)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.fill = PatternFill(
+            start_color="D9D9D9", end_color="D9D9D9", fill_type="solid"
+        )
+        cell.border = thin_border
+
+    row = header_row + 1
+    grand_total_weight = 0.0
+    grand_total_weight_price = 0.0
+
+    for client in results_df["Клиент"].unique():
+        if pd.isna(client) or str(client).strip() == "":
+            continue
+
+        client_items = results_df[results_df["Клиент"] == client]
+        qty = pd.to_numeric(client_items.get("Количество", 0), errors="coerce").fillna(0)
+        weight = pd.to_numeric(client_items.get("Вес", 0), errors="coerce").fillna(0)
+        # Round up (not to-nearest) to 3 decimals — same reasoning as the
+        # per-item weight fix: the price must be computed from the exact
+        # number shown in "Общий вес", not a hidden higher-precision value,
+        # so a client can verify weight × rate by hand and it always
+        # matches, and rounding never quietly undercharges.
+        total_weight = math.ceil(float((qty * weight).sum()) * 1000) / 1000
+        total_weight_price = total_weight * weight_price
+
+        ws.cell(row=row, column=1, value=str(client)).border = thin_border
+        ws.cell(row=row, column=2, value=f"{total_weight:.3f}").border = thin_border
+        ws.cell(
+            row=row, column=3, value=f"{total_weight_price:.2f}"
+        ).border = thin_border
+        for col_idx in (2, 3):
+            ws.cell(row=row, column=col_idx).alignment = Alignment(
+                horizontal="center", vertical="center"
+            )
+
+        grand_total_weight += total_weight
+        grand_total_weight_price += total_weight_price
+        row += 1
+
+    ws.cell(row=row, column=1, value="Итого:").font = Font(bold=True)
+    total_weight_cell = ws.cell(row=row, column=2, value=f"{grand_total_weight:.3f}")
+    total_weight_cell.font = Font(bold=True)
+    total_weight_cell.alignment = Alignment(horizontal="center", vertical="center")
+    total_price_cell = ws.cell(
+        row=row, column=3, value=f"{grand_total_weight_price:.2f}"
+    )
+    total_price_cell.font = Font(bold=True)
+    total_price_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 16
+    ws.column_dimensions["C"].width = 16
 
 
 def _write_client_section(

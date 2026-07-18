@@ -749,6 +749,22 @@ TRANSLATIONS = {
         "en": "Search",
         "ru": "Поиск",
     },
+    "results_search_placeholder": {
+        "en": "🔍 Search results...",
+        "ru": "🔍 Поиск по результатам...",
+    },
+    "find_previous": {
+        "en": "Previous match",
+        "ru": "Предыдущее совпадение",
+    },
+    "find_next": {
+        "en": "Next match",
+        "ru": "Следующее совпадение",
+    },
+    "find_no_matches": {
+        "en": "No matches",
+        "ru": "Нет совпадений",
+    },
     "start_fuzzy_matching": {
         "en": "Start fuzzy matching?",
         "ru": "Запустить нечёткий поиск?",

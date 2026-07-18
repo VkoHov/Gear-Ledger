@@ -9,6 +9,7 @@ from PyQt6.QtCore import (
     QTimer,
     QAbstractTableModel,
     QModelIndex,
+    QItemSelectionModel,
     pyqtSignal,
 )
 from PyQt6.QtWidgets import (
@@ -21,8 +22,10 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QAbstractItemView,
     QMessageBox,
+    QLineEdit,
+    QStyledItemDelegate,
 )
-from PyQt6.QtGui import QFont, QPalette
+from PyQt6.QtGui import QFont, QPalette, QColor, QPen
 
 from gearledger.result_ledger import COLUMNS
 from gearledger.desktop.translations import tr
@@ -105,12 +108,40 @@ class PandasModel(QAbstractTableModel):
         self.endResetModel()
 
 
+class _FindHighlightDelegate(QStyledItemDelegate):
+    """Draws a colored border around one specific cell (the active Find
+    match), on top of normal painting — since the table's row-selection
+    behavior highlights the whole row blue, a plain selection alone can't
+    show which exact cell matched; this makes that cell visually distinct
+    regardless of whether its row is also selected."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.highlight_pos = None  # (row, col) or None
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if self.highlight_pos == (index.row(), index.column()):
+            painter.save()
+            pen = QPen(QColor("#e67e22"))  # orange
+            pen.setWidth(3)
+            painter.setPen(pen)
+            painter.drawRect(option.rect.adjusted(1, 1, -2, -2))
+            painter.restore()
+
+
 class ResultsPane(QWidget):
     ledger_path_changed = pyqtSignal(str)
 
     def __init__(self, ledger_path: str = "", parent=None):
         super().__init__(parent)
         self.ledger_path = ledger_path
+        # Excel-style "Find": search never hides rows, it just jumps the
+        # selection to matching cells. self._matches is a list of (row, col)
+        # positions in the currently displayed dataframe, in top-to-bottom,
+        # left-to-right order; self._match_index tracks which one is active.
+        self._matches: list = []
+        self._match_index: int = -1
 
         # Create header layout with label and refresh button
         header_layout = QHBoxLayout()
@@ -130,6 +161,67 @@ class ResultsPane(QWidget):
         """
         )
         header_layout.addWidget(self.label)
+
+        # Search box — like Excel's Ctrl+F: finds matching cells across every
+        # column (artikul, client, brand, description, etc.), case-insensitive,
+        # without hiding any rows. Jumps the selection to each match in turn.
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText(tr("results_search_placeholder"))
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.setStyleSheet(
+            """
+            QLineEdit {
+                padding: 6px 10px;
+                border: 1px solid #bdc3c7;
+                border-radius: 4px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3498db;
+            }
+        """
+        )
+        self.search_box.setMaximumWidth(220)
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(200)
+        self._search_debounce.timeout.connect(self._on_search_changed)
+        self.search_box.textChanged.connect(lambda _: self._search_debounce.start())
+        self.search_box.returnPressed.connect(self._find_next)
+        header_layout.addWidget(self.search_box)
+
+        # The app-wide QPushButton style (main_window.py) sets 8px/16px
+        # padding — on a narrow fixed-width button that padding alone
+        # exceeds the width and pushes the glyph fully out of view, so
+        # override padding here rather than relying on the global style.
+        nav_btn_style = """
+            QPushButton {
+                padding: 2px;
+                min-height: 0px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+        """
+        self.find_prev_btn = QPushButton("<")
+        self.find_prev_btn.setFixedWidth(32)
+        self.find_prev_btn.setStyleSheet(nav_btn_style)
+        self.find_prev_btn.setToolTip(tr("find_previous"))
+        self.find_prev_btn.clicked.connect(self._find_prev)
+        header_layout.addWidget(self.find_prev_btn)
+
+        self.find_next_btn = QPushButton(">")
+        self.find_next_btn.setFixedWidth(32)
+        self.find_next_btn.setStyleSheet(nav_btn_style)
+        self.find_next_btn.setToolTip(tr("find_next"))
+        self.find_next_btn.clicked.connect(self._find_next)
+        header_layout.addWidget(self.find_next_btn)
+
+        self.match_count_label = QLabel("")
+        self.match_count_label.setStyleSheet("color: #7f8c8d; font-size: 11px;")
+        self.match_count_label.setMinimumWidth(50)
+        header_layout.addWidget(self.match_count_label)
+
+        self._update_match_ui()
 
         # Add refresh button (visible only in client mode)
         self.refresh_btn = QPushButton(tr("refresh_server_data"))
@@ -262,6 +354,8 @@ class ResultsPane(QWidget):
         df = pd.DataFrame(columns=COLUMNS)
         self.model = PandasModel(df, self)
         self.table.setModel(self.model)
+        self._find_delegate = _FindHighlightDelegate(self.table)
+        self.table.setItemDelegate(self._find_delegate)
         self.table.selectionModel().selectionChanged.connect(
             self._update_delete_button_enabled
         )
@@ -298,6 +392,7 @@ class ResultsPane(QWidget):
         try:
             df = self._read_df_safe(self.ledger_path)
             self.model.set_dataframe(df)
+            self._on_search_changed()  # re-find matches against fresh data
         except Exception:
             # file might be locked/being replaced atomically — retry soon
             QTimer.singleShot(300, self._refresh_retry)
@@ -306,8 +401,86 @@ class ResultsPane(QWidget):
         try:
             df = self._read_df_safe(self.ledger_path)
             self.model.set_dataframe(df)
+            self._on_search_changed()
         except Exception:
             pass
+
+    def _on_search_changed(self):
+        """Recompute matching cells for the current search text — like
+        Excel's Ctrl+F, this never hides rows, it just finds cells."""
+        text = self.search_box.text().strip().lower()
+        if not text:
+            self._matches = []
+            self._match_index = -1
+            self._update_match_ui()
+            self.table.clearSelection()
+            self._find_delegate.highlight_pos = None
+            self.table.viewport().update()
+            return
+
+        df = self.model._df
+        if df.empty:
+            self._matches = []
+            self._match_index = -1
+            self._update_match_ui()
+            self._find_delegate.highlight_pos = None
+            self.table.viewport().update()
+            return
+
+        mask = df.apply(
+            lambda col: col.astype(str).str.lower().str.contains(
+                text, na=False, regex=False
+            )
+        )
+        rows, cols = mask.values.nonzero()
+        self._matches = list(zip(rows.tolist(), cols.tolist()))
+        self._match_index = 0 if self._matches else -1
+        self._update_match_ui()
+        if self._matches:
+            self._goto_match(self._matches[0])
+        else:
+            self.table.clearSelection()
+            self._find_delegate.highlight_pos = None
+            self.table.viewport().update()
+
+    def _find_next(self):
+        if not self._matches:
+            return
+        self._match_index = (self._match_index + 1) % len(self._matches)
+        self._goto_match(self._matches[self._match_index])
+        self._update_match_ui()
+
+    def _find_prev(self):
+        if not self._matches:
+            return
+        self._match_index = (self._match_index - 1) % len(self._matches)
+        self._goto_match(self._matches[self._match_index])
+        self._update_match_ui()
+
+    def _goto_match(self, pos):
+        row, col = pos
+        idx = self.model.index(row, col)
+        if not idx.isValid():
+            return
+        sel = self.table.selectionModel()
+        sel.select(idx, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        self.table.setCurrentIndex(idx)
+        self.table.scrollTo(idx, QAbstractItemView.ScrollHint.PositionAtCenter)
+        self._find_delegate.highlight_pos = pos
+        self.table.viewport().update()
+
+    def _update_match_ui(self):
+        has_matches = bool(self._matches)
+        self.find_prev_btn.setEnabled(has_matches)
+        self.find_next_btn.setEnabled(has_matches)
+        if not self.search_box.text().strip():
+            self.match_count_label.setText("")
+        elif has_matches:
+            self.match_count_label.setText(
+                f"{self._match_index + 1}/{len(self._matches)}"
+            )
+        else:
+            self.match_count_label.setText(tr("find_no_matches"))
 
     def update_refresh_button_visibility(self):
         """Update refresh button visibility based on network mode."""

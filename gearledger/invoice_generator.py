@@ -281,7 +281,7 @@ def _write_client_section(
     item_num = 1
     total_sum = 0
     total_weight = 0
-    total_price = 0  # Sum of "Цена продажи" column
+    total_quantity = 0  # Sum of "Количество" column
 
     for _, result_row in items.iterrows():
         artikul = str(result_row.get("Артикул", ""))
@@ -334,12 +334,12 @@ def _write_client_section(
 
         total = price * quantity
         total_sum += total
+        total_quantity += quantity
         # Вес stores weight per single item; the invoice shows total weight
         # for the row (and the Итого row sums those row totals), while the
         # weight-based price above correctly stays per-item * weight_price.
         row_total_weight = weight * quantity
         total_weight += row_total_weight
-        total_price += price  # Sum of individual prices for Итого row
 
         # Write row
         ws[f"A{current_row}"] = item_num
@@ -375,20 +375,16 @@ def _write_client_section(
     ws[f"D{current_row}"].font = Font(bold=True)
     ws[f"D{current_row}"].alignment = Alignment(horizontal="right", vertical="center")
 
-    ws[f"E{current_row}"] = item_num - 1
+    ws[f"E{current_row}"] = total_quantity
     ws[f"E{current_row}"].font = Font(bold=True)
     ws[f"E{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # F (per-item weight) and H (per-item price without weight) are left
-    # blank here — summing per-unit values across different items isn't
-    # meaningful the way summing their row totals is.
+    # F (per-item weight), H (per-item price without weight), and I (per-item
+    # sale price) are left blank here — summing per-unit values across
+    # different items isn't meaningful the way summing their row totals is.
     ws[f"G{current_row}"] = f"{total_weight:.3f}"
     ws[f"G{current_row}"].font = Font(bold=True)
     ws[f"G{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
-
-    ws[f"I{current_row}"] = f"{total_price:.2f}"
-    ws[f"I{current_row}"].font = Font(bold=True)
-    ws[f"I{current_row}"].alignment = Alignment(horizontal="center", vertical="center")
 
     ws[f"J{current_row}"] = f"{total_sum:.2f}"
     ws[f"J{current_row}"].font = Font(bold=True)

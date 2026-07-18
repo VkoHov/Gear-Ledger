@@ -356,7 +356,7 @@ class GearLedgerServer:
                         f"[SERVER] Using in-memory catalog (size: {len(catalog_bytes)} bytes)"
                     )
                     catalog_lookup_result = _lookup_catalog_data(
-                        artikul, catalog_bytes=catalog_bytes
+                        artikul, catalog_bytes=catalog_bytes, client=client
                     )
                     if catalog_lookup_result:
                         # Convert numpy types to native Python types

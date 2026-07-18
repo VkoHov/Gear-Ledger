@@ -103,13 +103,17 @@ def _to_python_type(value):
 
 
 def _lookup_catalog_for_network(
-    artikul: str, catalog_path: str = None
+    artikul: str, catalog_path: str = None, client: str = None
 ) -> Dict[str, Any]:
     """
     Look up catalog data for network modes.
 
     In server mode, ALWAYS checks for in-memory uploaded catalog first (even if catalog_path is provided).
     Falls back to file path if no in-memory catalog is available.
+
+    `client` disambiguates catalog rows when the same artikul appears
+    for multiple clients (e.g. different negotiated prices) — see
+    result_ledger._lookup_catalog_data for details.
     """
     try:
         from .result_ledger import _lookup_catalog_data
@@ -144,12 +148,16 @@ def _lookup_catalog_for_network(
             print(
                 f"[DATA_LAYER] Looking up {artikul} in in-memory catalog (ignoring catalog_path={catalog_path})"
             )
-            data = _lookup_catalog_data(artikul, catalog_bytes=catalog_bytes)
+            data = _lookup_catalog_data(
+                artikul, catalog_bytes=catalog_bytes, client=client
+            )
         elif catalog_path and os.path.exists(catalog_path):
             print(
                 f"[DATA_LAYER] No in-memory catalog available, looking up {artikul} in catalog file: {catalog_path}"
             )
-            data = _lookup_catalog_data(artikul, catalog_path=catalog_path)
+            data = _lookup_catalog_data(
+                artikul, catalog_path=catalog_path, client=client
+            )
         else:
             print(
                 f"[DATA_LAYER] No catalog available: catalog_path={catalog_path}, in_memory={catalog_bytes is not None}"
@@ -193,7 +201,7 @@ def _record_via_api(
         }
 
     # Look up catalog data locally (catalog is local)
-    catalog_data = _lookup_catalog_for_network(artikul, catalog_path)
+    catalog_data = _lookup_catalog_for_network(artikul, catalog_path, client=client)
     brand = catalog_data.get("бренд", "")
     description = catalog_data.get("описание", "")
     sale_price = catalog_data.get("цена", 0)
@@ -280,7 +288,7 @@ def _record_to_database(
     sale_price = 0.0
 
     # Try to look up catalog data (will use in-memory catalog in server mode if available)
-    catalog_data = _lookup_catalog_for_network(artikul, catalog_path)
+    catalog_data = _lookup_catalog_for_network(artikul, catalog_path, client=client)
     if catalog_data:
         brand = catalog_data.get("бренд", "")
         description = catalog_data.get("описание", "")

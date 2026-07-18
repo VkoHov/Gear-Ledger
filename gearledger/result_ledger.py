@@ -121,7 +121,9 @@ def record_match(
 
     if catalog_bytes is not None:
         # Use in-memory catalog
-        catalog_data = _lookup_catalog_data(artikul, catalog_bytes=catalog_bytes)
+        catalog_data = _lookup_catalog_data(
+            artikul, catalog_bytes=catalog_bytes, client=client
+        )
         if catalog_data:
             brand = catalog_data.get("бренд", "")
             description = catalog_data.get("описание", "")
@@ -133,7 +135,9 @@ def record_match(
             print(f"[INFO] No catalog data found for {artikul}")
     elif catalog_path and os.path.exists(catalog_path):
         # Use file-based catalog
-        catalog_data = _lookup_catalog_data(artikul, catalog_path=catalog_path)
+        catalog_data = _lookup_catalog_data(
+            artikul, catalog_path=catalog_path, client=client
+        )
         if catalog_data:
             brand = catalog_data.get("бренд", "")
             description = catalog_data.get("описание", "")
@@ -444,10 +448,25 @@ def get_results_quantity(path: str, artikul: str, client: str) -> int:
         return 0
 
 
-def _lookup_catalog_data(artikul: str, catalog_path: str = None, catalog_bytes: bytes = None) -> Dict[str, any]:
+def _lookup_catalog_data(
+    artikul: str,
+    catalog_path: str = None,
+    catalog_bytes: bytes = None,
+    client: str = None,
+) -> Dict[str, any]:
     """
-    Look up additional data from catalog by artikul.
-    
+    Look up additional data from catalog by artikul (and, when given, client).
+
+    The same artikul can appear on multiple catalog rows for different
+    clients (e.g. different negotiated prices per customer). Without a
+    client filter, this always returned whichever row happened to be
+    first in the file — silently giving every client the same
+    price/brand/description as that first row. When `client` is given
+    and the catalog has a detectable client column, rows for that
+    client are preferred; otherwise falls back to the first match
+    (preserves old behavior for catalogs without a client column, or a
+    client not present for this artikul).
+
     Accepts either a file path (catalog_path) or in-memory bytes (catalog_bytes).
     If both are provided, catalog_bytes takes precedence.
     """
@@ -497,8 +516,15 @@ def _lookup_catalog_data(artikul: str, catalog_path: str = None, catalog_bytes: 
                 "цена" in col_lower and "продажи" in col_lower
             ):
                 col_mapping["цена"] = col
+            if any(
+                k in col_lower
+                for k in ["клиент", "client", "customer", "buyer", "vendor"]
+            ):
+                col_mapping["клиент"] = col
 
         # Fallback to exact names (prioritize Номер over Артикул for new format)
+        if "Клиент" in catalog_df.columns:
+            col_mapping["клиент"] = "Клиент"
         if "Номер" in catalog_df.columns:
             col_mapping["номер"] = "Номер"
         elif "Артикул" in catalog_df.columns:
@@ -554,6 +580,19 @@ def _lookup_catalog_data(artikul: str, catalog_path: str = None, catalog_bytes: 
             return {}
 
         row = matches.iloc[0]
+        client_col = col_mapping.get("клиент")
+        if client and client_col:
+            client_upper = str(client).strip().upper()
+            client_matches = matches[
+                matches[client_col].astype(str).str.strip().str.upper() == client_upper
+            ]
+            if not client_matches.empty:
+                row = client_matches.iloc[0]
+            else:
+                print(
+                    f"[DEBUG] No catalog row for client '{client}' with this artikul — "
+                    f"falling back to first match (client={row.get(client_col, '')})"
+                )
 
         result = {}
         if col_mapping.get("бренд"):

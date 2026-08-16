@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QFrame,
+    QProgressBar,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
@@ -126,12 +127,14 @@ class NetworkSettingsDialog(QDialog):
         self.server_status_label.setStyleSheet("color: #7f8c8d; font-style: italic;")
         network_layout.addWidget(self.server_status_label)
 
-        # Client settings — by default this is just a single Connect button
+        # Client settings — by default this is just Connect + Change Server
         # (the one-touch flow: try the last-known server, then discover on
-        # the LAN, auto-connecting or offering a name-only picker). A
-        # warehouse worker should never need to see or type a network
-        # address; the manual address field is still available for admin
-        # use, but tucked behind "Advanced" and hidden by default.
+        # the LAN, auto-connecting or offering a name-only picker; Change
+        # Server always forces a fresh search + picker, for switching to a
+        # different server on demand). A warehouse worker should never need
+        # to see or type a network address; the manual address field is
+        # still available for admin use, but tucked behind "Advanced" and
+        # hidden by default.
         connect_row = QHBoxLayout()
         self.connect_btn = QPushButton(tr("connect"))
         self.connect_btn.setStyleSheet(
@@ -139,6 +142,26 @@ class NetworkSettingsDialog(QDialog):
         )
         self.connect_btn.clicked.connect(self._toggle_connection)
         connect_row.addWidget(self.connect_btn)
+
+        self.change_server_btn = QPushButton(tr("change_server"))
+        self.change_server_btn.setStyleSheet(
+            "background-color: #8e44ad; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.change_server_btn.clicked.connect(self._refresh_discovery)
+        connect_row.addWidget(self.change_server_btn)
+
+        # Indeterminate progress bar (busy/loading indicator) shown while a
+        # connect or search worker is running — Qt shows this as a
+        # continuously animated bar when min==max==0, no extra assets
+        # needed.
+        self.connect_progress = QProgressBar()
+        self.connect_progress.setRange(0, 0)
+        self.connect_progress.setFixedWidth(80)
+        self.connect_progress.setFixedHeight(18)
+        self.connect_progress.setTextVisible(False)
+        self.connect_progress.setVisible(False)
+        connect_row.addWidget(self.connect_progress)
+
         connect_row.addStretch(1)
 
         self.advanced_toggle_btn = QPushButton(tr("advanced_connection_options"))
@@ -159,9 +182,9 @@ class NetworkSettingsDialog(QDialog):
         connect_row.addWidget(self.advanced_toggle_btn)
         network_layout.addLayout(connect_row)
 
-        # Advanced (hidden by default): manual server address entry + LAN
-        # discovery, for the rare case an admin needs to point at a
-        # specific address instead of the guided one-touch flow.
+        # Advanced (hidden by default): manual server address entry, for
+        # the rare case an admin needs to type a specific address instead
+        # of using the guided Connect / Change Server flow.
         client_row = QHBoxLayout()
         self.server_address_label = QLabel(tr("server_address_label"))
         client_row.addWidget(self.server_address_label)
@@ -173,15 +196,6 @@ class NetworkSettingsDialog(QDialog):
         self.server_address_combo.lineEdit().setPlaceholderText("192.168.1.100:8081")
         self.server_address_combo.lineEdit().setText("")
         client_row.addWidget(self.server_address_combo, 1)
-
-        # Refresh discovery button (manual discovery - click to start/stop)
-        self.refresh_discovery_btn = QPushButton("🔍")
-        self.refresh_discovery_btn.setToolTip(tr("refresh_server_discovery"))
-        self.refresh_discovery_btn.setStyleSheet(
-            "background-color: #95a5a6; color: white; font-weight: bold; padding: 6px 10px;"
-        )
-        self.refresh_discovery_btn.clicked.connect(self._refresh_discovery)
-        client_row.addWidget(self.refresh_discovery_btn)
         network_layout.addLayout(client_row)
 
         # Discovery status
@@ -251,15 +265,15 @@ class NetworkSettingsDialog(QDialog):
         self.server_status_label.setVisible(is_server)
 
         # Show/hide client controls based on mode. The manual address
-        # field + discovery button stay hidden unless "Advanced" is also
-        # toggled on — the default is just the one-touch Connect button.
+        # field stays hidden unless "Advanced" is also toggled on — the
+        # default is just Connect + Change Server.
         is_advanced = self.advanced_toggle_btn.isChecked()
         self.advanced_toggle_btn.setVisible(is_client)
         self.server_address_label.setVisible(is_client and is_advanced)
         self.server_address_combo.setVisible(is_client and is_advanced)
-        self.refresh_discovery_btn.setVisible(is_client and is_advanced)
-        self.discovery_status_label.setVisible(is_client and is_advanced)
+        self.discovery_status_label.setVisible(is_client)
         self.connect_btn.setVisible(is_client)
+        self.change_server_btn.setVisible(is_client)
         self.connection_status_label.setVisible(is_client)
 
         # Enable/disable based on mode
@@ -267,8 +281,8 @@ class NetworkSettingsDialog(QDialog):
         self.start_server_btn.setEnabled(is_server)
 
         self.server_address_combo.setEnabled(is_client)
-        self.refresh_discovery_btn.setEnabled(is_client)
         self.connect_btn.setEnabled(is_client)
+        self.change_server_btn.setEnabled(is_client)
 
         # Update button states based on current connection status
         from gearledger.server import get_server
@@ -440,6 +454,15 @@ class NetworkSettingsDialog(QDialog):
         else:
             self._start_one_touch_connect()
 
+    def _set_connecting_ui(self, active: bool):
+        """Show/hide the loading indicator and disable Connect/Change
+        Server while a connect or search worker is running, so the two
+        can't overlap and there's always clear feedback something is
+        happening instead of the UI looking idle/unresponsive."""
+        self.connect_progress.setVisible(active)
+        self.connect_btn.setEnabled(not active)
+        self.change_server_btn.setEnabled(not active)
+
     def _connect_to_address(self, address: str):
         """Connect directly to a specific address (the manual/advanced
         override path, or a server picked via discovery)."""
@@ -449,12 +472,12 @@ class NetworkSettingsDialog(QDialog):
         if not address.startswith("http://") and not address.startswith("https://"):
             address = f"http://{address}"
 
-        self.connect_btn.setEnabled(False)
+        self._set_connecting_ui(True)
         self.connect_btn.setText(tr("connecting"))
         try:
             self._client = connect_to_server(address)
         except Exception as e:
-            self.connect_btn.setEnabled(True)
+            self._set_connecting_ui(False)
             self.connect_btn.setText(tr("connect"))
             QMessageBox.critical(
                 self, tr("connection"), tr("connection_error", error=str(e))
@@ -465,7 +488,7 @@ class NetworkSettingsDialog(QDialog):
             set_runtime_mode("client")
             self._finish_successful_connect(address)
         else:
-            self.connect_btn.setEnabled(True)
+            self._set_connecting_ui(False)
             self.connect_btn.setText(tr("connect"))
             detail = get_last_connect_error()
             print(f"[NETWORK_SETTINGS] Connection to {address} failed: {detail}")
@@ -496,7 +519,7 @@ class NetworkSettingsDialog(QDialog):
         self.connection_status_label.setStyleSheet(
             "color: #27ae60; font-weight: bold;"
         )
-        self.connect_btn.setEnabled(True)
+        self._set_connecting_ui(False)
         self.connect_btn.setText(tr("disconnect"))
         self.connect_btn.setStyleSheet(
             "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
@@ -518,7 +541,7 @@ class NetworkSettingsDialog(QDialog):
         settings = load_settings()
         saved_address = (settings.server_address or "").strip()
 
-        self.connect_btn.setEnabled(False)
+        self._set_connecting_ui(True)
         self.connect_btn.setText(tr("connecting"))
 
         self._connect_worker = ClientConnectWorker(saved_address, self)
@@ -539,11 +562,10 @@ class NetworkSettingsDialog(QDialog):
         from gearledger.api_client import get_client
 
         self._client = get_client()
-        self.connect_btn.setEnabled(True)
         self._finish_successful_connect(address)
 
     def _on_one_touch_discovery_finished(self, servers: list):
-        self.connect_btn.setEnabled(True)
+        self._set_connecting_ui(False)
         self.connect_btn.setText(tr("connect"))
 
         if not servers:
@@ -611,8 +633,7 @@ class NetworkSettingsDialog(QDialog):
         if getattr(self, "_search_worker", None) is not None:
             return  # already searching
 
-        self.refresh_discovery_btn.setEnabled(False)
-        self.refresh_discovery_btn.setText("🔍 ...")
+        self._set_connecting_ui(True)
         self.discovery_status_label.setText(tr("discovering_servers"))
         self.discovery_status_label.setStyleSheet("color: #7f8c8d; font-size: 11px;")
 
@@ -633,8 +654,7 @@ class NetworkSettingsDialog(QDialog):
             worker.deleteLater()
 
     def _on_advanced_search_finished(self, servers: list):
-        self.refresh_discovery_btn.setEnabled(True)
-        self.refresh_discovery_btn.setText("🔍")
+        self._set_connecting_ui(False)
 
         if not self.client_radio.isChecked():
             return  # user switched modes while the search was running

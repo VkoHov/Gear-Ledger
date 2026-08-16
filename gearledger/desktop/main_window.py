@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSpinBox,
+    QProgressBar,
 )
 from PyQt6.QtGui import QFont
 
@@ -805,6 +806,18 @@ class MainWindow(QWidget):
         self.client_connect_btn.setVisible(False)
         settings_btn_layout.addWidget(self.client_connect_btn)
 
+        # Indeterminate loading indicator shown while connecting/searching
+        # for a server (one-touch flow or startup auto-connect) — makes it
+        # visually obvious something is happening instead of the button
+        # text change being the only feedback.
+        self.client_connect_progress = QProgressBar()
+        self.client_connect_progress.setRange(0, 0)
+        self.client_connect_progress.setFixedWidth(70)
+        self.client_connect_progress.setFixedHeight(16)
+        self.client_connect_progress.setTextVisible(False)
+        self.client_connect_progress.setVisible(False)
+        settings_btn_layout.addWidget(self.client_connect_progress)
+
         self._update_network_status()
 
         # Client initialization progress label (shows initialization steps)
@@ -960,6 +973,10 @@ class MainWindow(QWidget):
         # collect the QThread mid-run.
         self._connect_worker: Optional[Any] = None
         self._auto_connect_worker: Optional[Any] = None
+        # True while any connect/search worker is running — guards the
+        # Connect button's text/enabled state from being stomped by the
+        # periodic 3s status refresh mid-attempt (see _set_connecting_ui).
+        self._connecting_in_progress = False
         # Flag to prevent concurrent catalog sync requests
         self._syncing_catalog = False
         # Flag to track if client is fully initialized (to avoid re-initialization on reconnection)
@@ -1386,6 +1403,14 @@ class MainWindow(QWidget):
 
         self._start_one_touch_connect()
 
+    def _set_connecting_ui(self, active: bool):
+        """Show/hide the loading indicator and disable the Connect button
+        while a connect/search worker is running, so there's always clear
+        visual feedback instead of the UI looking unresponsive."""
+        self._connecting_in_progress = active
+        self.client_connect_progress.setVisible(active)
+        self.client_connect_btn.setEnabled(not active)
+
     def _start_one_touch_connect(self):
         """Kick off the background worker that tries the saved address
         first, then falls back to discovery — never blocks the UI thread."""
@@ -1398,7 +1423,7 @@ class MainWindow(QWidget):
         settings = load_settings()
         saved_address = (settings.server_address or "").strip()
 
-        self.client_connect_btn.setEnabled(False)
+        self._set_connecting_ui(True)
         self.client_connect_btn.setText(tr("connecting"))
         self.append_logs([tr("log_looking_for_server")])
 
@@ -1431,7 +1456,7 @@ class MainWindow(QWidget):
         save_settings(settings)
 
         self.append_logs([f"✓ Connected to {address}"])
-        self.client_connect_btn.setEnabled(True)
+        self._set_connecting_ui(False)
         self._update_network_status()
         self.settings_widget.update_catalog_ui_for_mode()
         # Delay slightly so any previous SSE thread can fully release resources
@@ -1442,7 +1467,7 @@ class MainWindow(QWidget):
         one (auto-connect), or several (let the worker pick by name)."""
         from PyQt6.QtWidgets import QMessageBox
 
-        self.client_connect_btn.setEnabled(True)
+        self._set_connecting_ui(False)
         self.client_connect_btn.setText(tr("connect"))
 
         if not servers:
@@ -1467,12 +1492,12 @@ class MainWindow(QWidget):
         from gearledger.api_client import connect_to_server, get_last_connect_error
 
         address = server.get_url()
-        self.client_connect_btn.setEnabled(False)
+        self._set_connecting_ui(True)
         self.client_connect_btn.setText(tr("connecting"))
         try:
             client = connect_to_server(address)
         finally:
-            self.client_connect_btn.setEnabled(True)
+            self._set_connecting_ui(False)
 
         if client:
             self._on_one_touch_connected(address)
@@ -1672,6 +1697,7 @@ class MainWindow(QWidget):
         if not address.startswith("http://") and not address.startswith("https://"):
             address = f"http://{address}"
 
+        self._set_connecting_ui(True)
         self._auto_connect_worker = _AutoConnectWorker(address, parent=self)
         self._auto_connect_worker.connected.connect(self._on_auto_connect_succeeded)
         self._auto_connect_worker.failed.connect(self._on_auto_connect_failed)
@@ -1691,6 +1717,7 @@ class MainWindow(QWidget):
 
         set_runtime_mode("client")
         self.append_logs([f"✓ Auto-connected to {address}"])
+        self._set_connecting_ui(False)
         self._update_network_status()
         self.settings_widget.update_catalog_ui_for_mode()
         self._initialize_client_connection()
@@ -1699,6 +1726,7 @@ class MainWindow(QWidget):
         self.append_logs(
             [f"⚠️ Auto-connect failed after retrying: {detail or 'server unreachable'}"]
         )
+        self._set_connecting_ui(False)
         self._update_network_status()
 
     def _sync_catalog_from_server(self, force: bool = False):
@@ -2267,14 +2295,22 @@ class MainWindow(QWidget):
         else:
             self.server_toggle_btn.setVisible(False)
 
-        # Update client connect button visibility and text
+        # Update client connect button visibility and text. Skip touching
+        # its text/enabled state while a connect/search worker is active
+        # (self._connecting_in_progress) — otherwise the periodic status
+        # refresh timer (every 3s) would stomp the "Connecting..." state
+        # back to a plain "Connect" mid-attempt, since get_network_mode()
+        # can already report "client" (from saved settings) before the
+        # very first connect of a session has actually succeeded.
+        connecting = getattr(self, "_connecting_in_progress", False)
         if mode == "client":
             self.client_connect_btn.setVisible(True)
             if client and client.is_connected():
-                self.client_connect_btn.setText(tr("disconnect"))
-                self.client_connect_btn.setStyleSheet(
-                    "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
-                )
+                if not connecting:
+                    self.client_connect_btn.setText(tr("disconnect"))
+                    self.client_connect_btn.setStyleSheet(
+                        "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
+                    )
                 # Show Reconnect button when SSE disconnected (API still connected)
                 sse_ok = (
                     not force_sse_disconnected
@@ -2286,10 +2322,11 @@ class MainWindow(QWidget):
                         client.is_connected() and not sse_ok and self._client_initialized
                     )
             else:
-                self.client_connect_btn.setText(tr("connect"))
-                self.client_connect_btn.setStyleSheet(
-                    "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
-                )
+                if not connecting:
+                    self.client_connect_btn.setText(tr("connect"))
+                    self.client_connect_btn.setStyleSheet(
+                        "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
+                    )
                 if hasattr(self, "sse_reconnect_btn"):
                     self.sse_reconnect_btn.setVisible(False)
         else:

@@ -1919,6 +1919,10 @@ TRANSLATIONS = {
         "en": "Advanced ▾",
         "ru": "Дополнительно ▾",
     },
+    "change_server": {
+        "en": "🔄 Change Server",
+        "ru": "🔄 Сменить сервер",
+    },
 }
 
 

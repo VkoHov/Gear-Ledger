@@ -164,6 +164,94 @@ class _ManualSearchWorker(QThread):
             self.error.emit(str(exc))
 
 
+# ---------------------------------------------------------------------------
+# Background worker for the one-touch client connect flow (keeps UI
+# responsive during the network probe and/or discovery listen window).
+# ---------------------------------------------------------------------------
+
+
+class _ClientConnectWorker(QThread):
+    """Tries the last-known server address first (fast path for the common
+    "reopen the app on the same network" case); if that's unset or fails,
+    falls back to LAN discovery and reports whatever it found so the caller
+    can auto-connect (exactly one) or show a picker (more than one)."""
+
+    connected = _pyqtSignal(str)  # address
+    discovery_finished = _pyqtSignal(list)  # List[DiscoveredServer]
+
+    def __init__(self, saved_address: str, parent=None):
+        super().__init__(parent)
+        self._saved_address = (saved_address or "").strip()
+
+    def run(self):
+        from gearledger.api_client import connect_to_server
+
+        if self._saved_address:
+            address = self._saved_address
+            if not address.startswith("http://") and not address.startswith("https://"):
+                address = f"http://{address}"
+            # Short timeout: this is a best-effort fast path, not worth
+            # blocking the worker (and thus the "Connecting..." state) for
+            # the full default timeout if the saved server is gone.
+            try:
+                client = connect_to_server(address, timeout=4)
+            except Exception:
+                client = None
+            if client:
+                self.connected.emit(address)
+                return
+
+        # Fall back to LAN discovery.
+        import time
+        from gearledger.network_discovery import ServerDiscovery
+
+        discovery = ServerDiscovery()
+        discovery.start()
+        time.sleep(4)
+        discovery.stop()
+        self.discovery_finished.emit(discovery.get_discovered_servers())
+
+
+class _AutoConnectWorker(QThread):
+    """Background retry for the startup auto-connect. Runs off the UI
+    thread and retries a few times with a short delay — Windows in
+    particular can still be settling its network stack (or showing a
+    first-run firewall consent prompt) in the first second after launch,
+    so a single unretried attempt was unreliable there. Never falls back
+    to discovery or shows a picker on its own; that would be a surprising
+    thing to pop up unprompted at launch. If every attempt fails, the
+    visible Connect button (full one-touch flow) is always there for the
+    user to tap."""
+
+    connected = _pyqtSignal(str)  # address
+    failed = _pyqtSignal(str)  # last known failure detail
+
+    def __init__(self, address: str, attempts: int = 3, delay_seconds: float = 2.0, parent=None):
+        super().__init__(parent)
+        self._address = address
+        self._attempts = attempts
+        self._delay = delay_seconds
+
+    def run(self):
+        import time
+        from gearledger.api_client import connect_to_server, get_last_connect_error
+
+        last_detail = ""
+        for attempt in range(self._attempts):
+            try:
+                client = connect_to_server(self._address, timeout=6)
+            except Exception as e:
+                client = None
+                last_detail = str(e)
+            if client:
+                self.connected.emit(self._address)
+                return
+            last_detail = get_last_connect_error() or last_detail
+            if attempt < self._attempts - 1:
+                time.sleep(self._delay)
+        self.failed.emit(last_detail)
+
+
 class AddToResultsDialog(QDialog):
     """Dialog to enter quantity and add match to results."""
 
@@ -909,6 +997,11 @@ class MainWindow(QWidget):
         self._sync_version = 0
         # SSE client for real-time event notifications (replaces polling timer)
         self._sse_client: Optional[Any] = None
+        # Background workers for the one-touch connect flow / startup
+        # auto-connect retry — kept as attributes so Qt doesn't garbage
+        # collect the QThread mid-run.
+        self._connect_worker: Optional[Any] = None
+        self._auto_connect_worker: Optional[Any] = None
         # Flag to prevent concurrent catalog sync requests
         self._syncing_catalog = False
         # Flag to track if client is fully initialized (to avoid re-initialization on reconnection)
@@ -1309,14 +1402,16 @@ class MainWindow(QWidget):
                 )
 
     def _on_toggle_client_connection(self):
-        """Connect or disconnect from server from main window."""
-        from gearledger.api_client import (
-            connect_to_server,
-            disconnect_from_server,
-            get_client,
-        )
+        """Connect or disconnect from server from main window.
+
+        One-touch connect: no address field for the worker to fill in.
+        Tapping Connect tries the last-known server first (fast path when
+        reopening on the same network), and falls back to LAN discovery —
+        auto-connecting if exactly one server is found, or showing a
+        friendly-name picker if more than one is found.
+        """
+        from gearledger.api_client import disconnect_from_server, get_client
         from gearledger.data_layer import set_runtime_mode
-        from PyQt6.QtWidgets import QMessageBox
 
         client = get_client()
         if client and client.is_connected():
@@ -1329,44 +1424,106 @@ class MainWindow(QWidget):
             self.append_logs(["🔌 Disconnected from server"])
             self._update_network_status()
             self.settings_widget.update_catalog_ui_for_mode()
+            return
+
+        self._start_one_touch_connect()
+
+    def _start_one_touch_connect(self):
+        """Kick off the background worker that tries the saved address
+        first, then falls back to discovery — never blocks the UI thread."""
+        from gearledger.desktop.settings_manager import load_settings
+
+        if getattr(self, "_connect_worker", None) is not None:
+            return  # already in progress
+
+        settings = load_settings()
+        saved_address = (settings.server_address or "").strip()
+
+        self.client_connect_btn.setEnabled(False)
+        self.client_connect_btn.setText(tr("connecting"))
+        self.append_logs([tr("log_looking_for_server")])
+
+        self._connect_worker = _ClientConnectWorker(saved_address, self)
+        self._connect_worker.connected.connect(self._on_one_touch_connected)
+        self._connect_worker.discovery_finished.connect(
+            self._on_one_touch_discovery_finished
+        )
+        self._connect_worker.finished.connect(self._on_connect_worker_finished)
+        self._connect_worker.start()
+
+    def _on_connect_worker_finished(self):
+        worker = self._connect_worker
+        self._connect_worker = None
+        if worker:
+            worker.deleteLater()
+
+    def _on_one_touch_connected(self, address: str):
+        """Fast-path success: reconnected straight to the last-known server."""
+        from gearledger.data_layer import set_runtime_mode
+        from gearledger.desktop.settings_manager import (
+            load_settings,
+            save_settings,
+        )
+
+        set_runtime_mode("client")
+        settings = load_settings()
+        settings.server_address = address
+        settings.network_mode = "client"
+        save_settings(settings)
+
+        self.append_logs([f"✓ Connected to {address}"])
+        self.client_connect_btn.setEnabled(True)
+        self._update_network_status()
+        self.settings_widget.update_catalog_ui_for_mode()
+        # Delay slightly so any previous SSE thread can fully release resources
+        QTimer.singleShot(300, self._initialize_client_connection)
+
+    def _on_one_touch_discovery_finished(self, servers: list):
+        """Handle the result of a LAN discovery sweep: none found, exactly
+        one (auto-connect), or several (let the worker pick by name)."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.client_connect_btn.setEnabled(True)
+        self.client_connect_btn.setText(tr("connect"))
+
+        if not servers:
+            self.append_logs(["⚠️ No server found on the network"])
+            QMessageBox.warning(self, tr("connection"), tr("no_server_found_simple"))
+            return
+
+        if len(servers) == 1:
+            self._connect_to_discovered_server(servers[0])
+            return
+
+        from .server_picker_dialog import ServerPickerDialog
+
+        dlg = ServerPickerDialog(servers, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_server:
+            self._connect_to_discovered_server(dlg.selected_server)
+
+    def _connect_to_discovered_server(self, server):
+        """Connect to a server object found via discovery (either the sole
+        match, or the one the worker picked from the popup)."""
+        from PyQt6.QtWidgets import QMessageBox
+        from gearledger.api_client import connect_to_server, get_last_connect_error
+
+        address = server.get_url()
+        self.client_connect_btn.setEnabled(False)
+        self.client_connect_btn.setText(tr("connecting"))
+        try:
+            client = connect_to_server(address)
+        finally:
+            self.client_connect_btn.setEnabled(True)
+
+        if client:
+            self._on_one_touch_connected(address)
         else:
-            from gearledger.desktop.settings_manager import load_settings
-
-            settings = load_settings()
-            address = (settings.server_address or "").strip()
-            if not address:
-                QMessageBox.warning(
-                    self,
-                    tr("connection"),
-                    tr("enter_server_address"),
-                )
-                return
-            if not address.startswith("http://") and not address.startswith("https://"):
-                address = f"http://{address}"
-            try:
-                client = connect_to_server(address)
-                if client:
-                    set_runtime_mode("client")
-                    self.append_logs([f"✓ Connected to {address}"])
-                    self._update_network_status()
-                    self.settings_widget.update_catalog_ui_for_mode()
-                    # Delay slightly so any previous SSE thread can fully release resources
-                    QTimer.singleShot(300, self._initialize_client_connection)
-                else:
-                    from gearledger.api_client import get_last_connect_error
-
-                    detail = get_last_connect_error()
-                    msg = tr("connection_failed", address=address)
-                    if detail:
-                        msg = f"{msg}\n\n{tr('connection_error', error=detail)}"
-                    self.append_logs([f"✗ Connection failed: {detail or 'unknown error'}"])
-                    QMessageBox.critical(self, tr("connection"), msg)
-            except Exception as e:
-                QMessageBox.critical(
-                    self,
-                    tr("connection"),
-                    tr("connection_error", error=str(e)),
-                )
+            detail = get_last_connect_error()
+            self.append_logs([f"✗ Connection failed: {detail or 'unknown error'}"])
+            msg = tr("connection_failed", address=address)
+            if detail:
+                msg = f"{msg}\n\n{tr('connection_error', error=detail)}"
+            QMessageBox.critical(self, tr("connection"), msg)
 
     def _open_network_settings(self):
         """Open the network settings dialog."""
@@ -1531,10 +1688,19 @@ class MainWindow(QWidget):
             self.append_logs([f"❌ Server auto-start failed: {e}"])
 
     def _auto_connect_client_if_needed(self):
-        """Auto-connect to server on app launch if settings say client mode."""
+        """Auto-connect to server on app launch if settings say client mode.
+
+        Retries a few times in the background instead of one blocking
+        attempt with no retry (Windows in particular can still be settling
+        its network stack, or showing a first-run firewall prompt, in the
+        first second after launch), and reports the specific failure
+        reason instead of a generic one. Never falls back to discovery or
+        shows a picker on its own — that would be a surprising thing to
+        pop up unprompted at launch; if it can't reconnect, the visible
+        Connect button (full one-touch flow) is there for the user to tap.
+        """
         from gearledger.desktop.settings_manager import load_settings
-        from gearledger.api_client import connect_to_server, get_client
-        from gearledger.data_layer import set_runtime_mode
+        from gearledger.api_client import get_client
 
         settings = load_settings()
         if settings.network_mode != "client":
@@ -1546,18 +1712,35 @@ class MainWindow(QWidget):
             return
         if not address.startswith("http://") and not address.startswith("https://"):
             address = f"http://{address}"
-        try:
-            client = connect_to_server(address)
-            if client:
-                set_runtime_mode("client")
-                self.append_logs([f"✓ Auto-connected to {address}"])
-                self._update_network_status()
-                self.settings_widget.update_catalog_ui_for_mode()
-                self._initialize_client_connection()
-            else:
-                self.append_logs([f"⚠️ Auto-connect to {address} failed (server unreachable)"])
-        except Exception as e:
-            self.append_logs([f"⚠️ Auto-connect failed: {e}"])
+
+        self._auto_connect_worker = _AutoConnectWorker(address, parent=self)
+        self._auto_connect_worker.connected.connect(self._on_auto_connect_succeeded)
+        self._auto_connect_worker.failed.connect(self._on_auto_connect_failed)
+        self._auto_connect_worker.finished.connect(
+            self._on_auto_connect_worker_finished
+        )
+        self._auto_connect_worker.start()
+
+    def _on_auto_connect_worker_finished(self):
+        worker = getattr(self, "_auto_connect_worker", None)
+        self._auto_connect_worker = None
+        if worker:
+            worker.deleteLater()
+
+    def _on_auto_connect_succeeded(self, address: str):
+        from gearledger.data_layer import set_runtime_mode
+
+        set_runtime_mode("client")
+        self.append_logs([f"✓ Auto-connected to {address}"])
+        self._update_network_status()
+        self.settings_widget.update_catalog_ui_for_mode()
+        self._initialize_client_connection()
+
+    def _on_auto_connect_failed(self, detail: str):
+        self.append_logs(
+            [f"⚠️ Auto-connect failed after retrying: {detail or 'server unreachable'}"]
+        )
+        self._update_network_status()
 
     def _sync_catalog_from_server(self, force: bool = False):
         """Download catalog from server if in client mode.

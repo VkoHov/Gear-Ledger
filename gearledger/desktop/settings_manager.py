@@ -56,6 +56,10 @@ class Settings:
     server_address: str = (
         ""  # Address to connect to in client mode (e.g., "192.168.1.100:8081")
     )
+    # Friendly name shown to clients in the server picker instead of raw
+    # IP:port (e.g. "Warehouse Server") — empty means fall back to this
+    # machine's hostname, set at server-start time.
+    server_name: str = ""
     # Last Reset/Restore breadcrumb — informational only, not true version
     # tracking (the app has no notion of "is the live data still exactly
     # version X" once anything changes after a restore).

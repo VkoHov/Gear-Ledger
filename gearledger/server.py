@@ -29,10 +29,15 @@ class GearLedgerServer:
         db_path: str = None,
         on_data_changed: Callable = None,
         on_client_changed: Callable = None,
+        server_name: str = None,
     ):
         self.host = host
         self.port = port
         self.db_path = db_path
+        # Friendly name broadcast to clients for the server picker, instead
+        # of raw IP:port — falls back to this machine's hostname so two
+        # unnamed servers on the same LAN are still distinguishable.
+        self.server_name = server_name or socket.gethostname()
         self.on_data_changed = on_data_changed
         # Support multiple client change callbacks
         self._client_changed_callbacks = []
@@ -630,7 +635,7 @@ class GearLedgerServer:
             )
 
             # Start broadcasting server presence
-            self._broadcaster = ServerBroadcaster(self.port)
+            self._broadcaster = ServerBroadcaster(self.port, server_name=self.server_name)
             self._broadcaster.start()
 
             # Start periodic stale client check
@@ -756,6 +761,7 @@ def start_server(
     db_path: str = None,
     on_data_changed: Callable = None,
     on_client_changed: Callable = None,
+    server_name: str = None,
 ) -> GearLedgerServer:
     """Start the server."""
     global _server_instance
@@ -764,7 +770,7 @@ def start_server(
         _server_instance.stop()
 
     _server_instance = GearLedgerServer(
-        host, port, db_path, on_data_changed, on_client_changed
+        host, port, db_path, on_data_changed, on_client_changed, server_name
     )
     _server_instance.start()
     return _server_instance

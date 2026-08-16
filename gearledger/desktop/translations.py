@@ -1883,6 +1883,34 @@ TRANSLATIONS = {
         "en": "Connection error: {error}",
         "ru": "Ошибка подключения: {error}",
     },
+    "log_looking_for_server": {
+        "en": "🔍 Looking for server...",
+        "ru": "🔍 Поиск сервера...",
+    },
+    "no_server_found_simple": {
+        "en": "Can't find the server.\n\nMake sure the office computer is turned on and try again.",
+        "ru": "Не удалось найти сервер.\n\nУбедитесь, что рабочий компьютер включён, и попробуйте снова.",
+    },
+    "select_server_title": {
+        "en": "Select Server",
+        "ru": "Выберите сервер",
+    },
+    "select_server_prompt": {
+        "en": "Found multiple servers. Please select one:",
+        "ru": "Найдено несколько серверов. Пожалуйста, выберите один:",
+    },
+    "select": {
+        "en": "Select",
+        "ru": "Выбрать",
+    },
+    "server_display_name_label": {
+        "en": "Server display name:",
+        "ru": "Отображаемое имя сервера:",
+    },
+    "server_display_name_placeholder": {
+        "en": "e.g. Warehouse Server (optional)",
+        "ru": "напр. Складской сервер (необязательно)",
+    },
 }
 
 

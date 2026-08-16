@@ -45,6 +45,13 @@ class NetworkSettingsDialog(QDialog):
         self._server = None
         self._client = None
         self._discovery = None
+        # Tracks whatever address we auto-filled into the combo box
+        # ourselves, so a later discovery pass can tell "the field still
+        # has what we put there" apart from "the user typed/selected
+        # something" — otherwise a newly found server never visibly
+        # replaces an earlier auto-filled one, since the field never looks
+        # empty again after the first discovery pass fills it in.
+        self._last_auto_filled_address = ""
 
         # Initialize timers before setup (needed by _stop_discovery)
         # Timer for one-time discovery timeout (no continuous polling)
@@ -94,6 +101,18 @@ class NetworkSettingsDialog(QDialog):
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setFrameShadow(QFrame.Shadow.Sunken)
         network_layout.addWidget(separator)
+
+        # Server display name (shown to clients in the server picker instead
+        # of raw IP:port)
+        server_name_row = QHBoxLayout()
+        self.server_name_label = QLabel(tr("server_display_name_label"))
+        server_name_row.addWidget(self.server_name_label)
+        self.server_name_edit = QLineEdit()
+        self.server_name_edit.setPlaceholderText(
+            tr("server_display_name_placeholder")
+        )
+        server_name_row.addWidget(self.server_name_edit, 1)
+        network_layout.addLayout(server_name_row)
 
         # Server settings
         server_row = QHBoxLayout()
@@ -186,6 +205,7 @@ class NetworkSettingsDialog(QDialog):
         s = self.settings
 
         # Network settings
+        self.server_name_edit.setText(s.server_name)
         self.server_port_spin.setValue(s.server_port)
         if s.server_address:
             self.server_address_combo.lineEdit().setText(s.server_address)
@@ -207,6 +227,8 @@ class NetworkSettingsDialog(QDialog):
         is_standalone = self.standalone_radio.isChecked()
 
         # Show/hide server controls based on mode
+        self.server_name_label.setVisible(is_server)
+        self.server_name_edit.setVisible(is_server)
         self.server_port_label.setVisible(is_server)
         self.server_port_spin.setVisible(is_server)
         self.start_server_btn.setVisible(is_server)
@@ -299,6 +321,11 @@ class NetworkSettingsDialog(QDialog):
         else:
             # Start server
             port = self.server_port_spin.value()
+            server_name = self.server_name_edit.text().strip()
+            # Persist the display name immediately so it survives even if
+            # the dialog is closed without pressing the outer "Close"/accept.
+            self.settings.server_name = server_name
+            save_settings(self.settings)
             try:
                 # Pass callback to refresh UI when data changes
                 # Use QTimer.singleShot for thread-safe signal emission
@@ -318,6 +345,7 @@ class NetworkSettingsDialog(QDialog):
                         0, self.server_data_changed.emit
                     ),
                     on_client_changed=on_client_changed,
+                    server_name=server_name or None,
                 )
                 if self._server and self._server.is_running():
                     set_runtime_mode("server")  # Set runtime mode to server
@@ -558,6 +586,13 @@ class NetworkSettingsDialog(QDialog):
         current_text = self.server_address_combo.lineEdit().text().strip()
         print(f"[DISCOVERY] Current field text: '{current_text}'")
 
+        # Only treat the field as "the user's own input" if its text isn't
+        # exactly what *we* auto-filled on a previous discovery pass —
+        # otherwise, once the field is first auto-filled, it never looks
+        # "empty" again, so a second/later discovered server would never
+        # visibly replace the first one (the bug this fixes).
+        is_user_owned = bool(current_text) and current_text != self._last_auto_filled_address
+
         # Update combo box items
         self.server_address_combo.clear()
         print(
@@ -571,12 +606,13 @@ class NetworkSettingsDialog(QDialog):
                 self.server_address_combo.addItem(server_url, server_url)
                 print(f"[DISCOVERY] Adding server to combo: {server_url}")
 
-            # Auto-select first server if field is empty, otherwise restore selection
-            if not current_text:
-                # Field is empty - auto-select first discovered server
+            if not is_user_owned:
+                # Field is empty or still holds our own previous auto-fill —
+                # safe to overwrite with the latest discovery result.
                 first_server_url = discovered[0].get_url()
                 self.server_address_combo.setCurrentIndex(0)
                 self.server_address_combo.lineEdit().setText(first_server_url)
+                self._last_auto_filled_address = first_server_url
                 if len(discovered) == 1:
                     print(f"[DISCOVERY] Auto-selected server: {first_server_url}")
                 else:
@@ -585,7 +621,8 @@ class NetworkSettingsDialog(QDialog):
                     )
                     print(f"[DISCOVERY] Other servers available in dropdown")
             else:
-                # Try to restore selection if it matches a discovered server
+                # User typed/selected this themselves — preserve it, just
+                # try to keep the combo's selection in sync if it matches.
                 found_match = False
                 normalized_current = self._normalize_server_address(current_text)
                 for i in range(self.server_address_combo.count()):
@@ -620,6 +657,7 @@ class NetworkSettingsDialog(QDialog):
     def accept(self):
         """Save settings and close dialog."""
         # Save network settings - normalize server address to URL only
+        self.settings.server_name = self.server_name_edit.text().strip()
         self.settings.server_port = self.server_port_spin.value()
         raw = self.server_address_combo.lineEdit().text().strip()
         self.settings.server_address = (

@@ -165,6 +165,7 @@ class GearLedgerServer:
                 {
                     "status": "ok",
                     "server": "Gear Ledger Server",
+                    "name": self.server_name,
                     "version": "1.0.0",
                 }
             )

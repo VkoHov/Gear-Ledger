@@ -25,6 +25,12 @@ class APIClient:
         # a plain bool), so this is the only way to surface *why* a
         # connection attempt failed instead of just "it didn't work".
         self.last_error: Optional[str] = None
+        # Friendly display name the server reports about itself (e.g.
+        # "Warehouse Server") — set on successful check_connection() so the
+        # UI can show who we're connected to instead of a raw IP:port,
+        # regardless of whether the connection came from a saved address,
+        # single-server discovery, or the picker.
+        self.server_name: Optional[str] = None
 
     def check_connection(self) -> bool:
         """Check if server is reachable and register as connected client."""
@@ -42,6 +48,11 @@ class APIClient:
                 )
                 print(f"[API_CLIENT] check_connection failed: {self.last_error}")
                 return False
+
+            try:
+                self.server_name = (response.json() or {}).get("name") or None
+            except Exception:
+                self.server_name = None
 
             # Register as connected client by calling sync/version endpoint
             # This allows server to track connected clients

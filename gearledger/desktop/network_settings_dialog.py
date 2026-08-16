@@ -45,6 +45,7 @@ class NetworkSettingsDialog(QDialog):
         self._server = None
         self._client = None
         self._discovery = None
+        self._connect_worker = None
         # Tracks whatever address we auto-filled into the combo box
         # ourselves, so a later discovery pass can tell "the field still
         # has what we put there" apart from "the user typed/selected
@@ -138,7 +139,42 @@ class NetworkSettingsDialog(QDialog):
         self.server_status_label.setStyleSheet("color: #7f8c8d; font-style: italic;")
         network_layout.addWidget(self.server_status_label)
 
-        # Client settings
+        # Client settings — by default this is just a single Connect button
+        # (the one-touch flow: try the last-known server, then discover on
+        # the LAN, auto-connecting or offering a name-only picker). A
+        # warehouse worker should never need to see or type a network
+        # address; the manual address field is still available for admin
+        # use, but tucked behind "Advanced" and hidden by default.
+        connect_row = QHBoxLayout()
+        self.connect_btn = QPushButton(tr("connect"))
+        self.connect_btn.setStyleSheet(
+            "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.connect_btn.clicked.connect(self._toggle_connection)
+        connect_row.addWidget(self.connect_btn)
+        connect_row.addStretch(1)
+
+        self.advanced_toggle_btn = QPushButton(tr("advanced_connection_options"))
+        self.advanced_toggle_btn.setCheckable(True)
+        self.advanced_toggle_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: transparent;
+                color: #3498db;
+                border: none;
+                padding: 4px 8px;
+                font-size: 11px;
+                text-decoration: underline;
+            }
+        """
+        )
+        self.advanced_toggle_btn.toggled.connect(self._on_advanced_toggled)
+        connect_row.addWidget(self.advanced_toggle_btn)
+        network_layout.addLayout(connect_row)
+
+        # Advanced (hidden by default): manual server address entry + LAN
+        # discovery, for the rare case an admin needs to point at a
+        # specific address instead of the guided one-touch flow.
         client_row = QHBoxLayout()
         self.server_address_label = QLabel(tr("server_address_label"))
         client_row.addWidget(self.server_address_label)
@@ -159,13 +195,6 @@ class NetworkSettingsDialog(QDialog):
         )
         self.refresh_discovery_btn.clicked.connect(self._refresh_discovery)
         client_row.addWidget(self.refresh_discovery_btn)
-
-        self.connect_btn = QPushButton(tr("connect"))
-        self.connect_btn.setStyleSheet(
-            "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
-        )
-        self.connect_btn.clicked.connect(self._toggle_connection)
-        client_row.addWidget(self.connect_btn)
         network_layout.addLayout(client_row)
 
         # Discovery status
@@ -234,13 +263,17 @@ class NetworkSettingsDialog(QDialog):
         self.start_server_btn.setVisible(is_server)
         self.server_status_label.setVisible(is_server)
 
-        # Show/hide client controls based on mode
-        self.server_address_label.setVisible(is_client)
-        self.server_address_combo.setVisible(is_client)
-        self.refresh_discovery_btn.setVisible(is_client)
+        # Show/hide client controls based on mode. The manual address
+        # field + discovery button stay hidden unless "Advanced" is also
+        # toggled on — the default is just the one-touch Connect button.
+        is_advanced = self.advanced_toggle_btn.isChecked()
+        self.advanced_toggle_btn.setVisible(is_client)
+        self.server_address_label.setVisible(is_client and is_advanced)
+        self.server_address_combo.setVisible(is_client and is_advanced)
+        self.refresh_discovery_btn.setVisible(is_client and is_advanced)
+        self.discovery_status_label.setVisible(is_client and is_advanced)
         self.connect_btn.setVisible(is_client)
         self.connection_status_label.setVisible(is_client)
-        self.discovery_status_label.setVisible(is_client)
 
         # Enable/disable based on mode
         self.server_port_spin.setEnabled(is_server)
@@ -284,8 +317,13 @@ class NetworkSettingsDialog(QDialog):
             self.connect_btn.setStyleSheet(
                 "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
             )
+            display = (
+                f"{client.server_name} ({client.server_url})"
+                if getattr(client, "server_name", None)
+                else client.server_url
+            )
             self.connection_status_label.setText(
-                tr("connection_status_connected", address=client.server_url)
+                tr("connection_status_connected", address=display)
             )
             self.connection_status_label.setStyleSheet(
                 "color: #27ae60; font-weight: bold;"
@@ -301,6 +339,17 @@ class NetworkSettingsDialog(QDialog):
                 self.connection_status_label.setStyleSheet(
                     "color: #7f8c8d; font-style: italic;"
                 )
+
+    def _on_advanced_toggled(self, checked: bool):
+        """Show/hide the manual address field + discovery button."""
+        self.advanced_toggle_btn.setText(
+            tr("advanced_connection_options_hide")
+            if checked
+            else tr("advanced_connection_options")
+        )
+        if not checked:
+            self._stop_discovery()
+        self._update_network_ui()
 
     def _toggle_server(self):
         """Start or stop the server."""
@@ -368,12 +417,14 @@ class NetworkSettingsDialog(QDialog):
                 )
 
     def _toggle_connection(self):
-        """Connect or disconnect from server."""
-        from gearledger.api_client import (
-            connect_to_server,
-            disconnect_from_server,
-            get_client,
-        )
+        """Connect or disconnect from server.
+
+        Connect defaults to the same one-touch flow as the main window
+        (try the last-known server, then LAN discovery — auto-connect or
+        a name-only picker). If "Advanced" is open with an address typed
+        in, that takes priority as an explicit admin override.
+        """
+        from gearledger.api_client import disconnect_from_server, get_client
         from gearledger.data_layer import set_runtime_mode
 
         self._client = get_client()
@@ -393,56 +444,144 @@ class NetworkSettingsDialog(QDialog):
             )
             self.network_mode_changed.emit("standalone", "")
             QMessageBox.information(self, tr("connection"), tr("disconnected_msg"))
-        else:
-            # Connect - use URL only (currentData or normalized line edit text)
+            return
+
+        manual_address = ""
+        if self.advanced_toggle_btn.isChecked():
             current_data = self.server_address_combo.currentData()
             if current_data:
-                address = current_data
+                manual_address = current_data
             else:
                 raw = self.server_address_combo.lineEdit().text().strip()
-                address = self._normalize_server_address(raw) or raw
+                manual_address = self._normalize_server_address(raw) or raw
 
-            if not address:
-                QMessageBox.warning(self, tr("connection"), tr("enter_server_address"))
-                return
+        if manual_address:
+            self._connect_to_address(manual_address)
+        else:
+            self._start_one_touch_connect()
 
-            # Add http:// if not present
-            if not address.startswith("http://") and not address.startswith("https://"):
-                address = f"http://{address}"
+    def _connect_to_address(self, address: str):
+        """Connect directly to a specific address (the manual/advanced
+        override path, or a server picked via discovery)."""
+        from gearledger.api_client import connect_to_server, get_last_connect_error
+        from gearledger.data_layer import set_runtime_mode
 
-            try:
-                self._client = connect_to_server(address)
-                if self._client:
-                    set_runtime_mode("client")  # Set runtime mode to client
-                    self.connection_status_label.setText(
-                        tr("connection_status_connected", address=address)
-                    )
-                    self.connection_status_label.setStyleSheet(
-                        "color: #27ae60; font-weight: bold;"
-                    )
-                    self.connect_btn.setText(tr("disconnect"))
-                    self.connect_btn.setStyleSheet(
-                        "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
-                    )
-                    self.network_mode_changed.emit("client", address)
-                    QMessageBox.information(
-                        self,
-                        tr("connection"),
-                        tr("connected_msg", address=address),
-                    )
-                else:
-                    from gearledger.api_client import get_last_connect_error
+        if not address.startswith("http://") and not address.startswith("https://"):
+            address = f"http://{address}"
 
-                    detail = get_last_connect_error()
-                    print(f"[NETWORK_SETTINGS] Connection to {address} failed: {detail}")
-                    msg = tr("connection_failed", address=address)
-                    if detail:
-                        msg = f"{msg}\n\n{tr('connection_error', error=detail)}"
-                    QMessageBox.critical(self, tr("connection"), msg)
-            except Exception as e:
-                QMessageBox.critical(
-                    self, tr("connection"), tr("connection_error", error=str(e))
-                )
+        self.connect_btn.setEnabled(False)
+        self.connect_btn.setText(tr("connecting"))
+        try:
+            self._client = connect_to_server(address)
+        except Exception as e:
+            self.connect_btn.setEnabled(True)
+            self.connect_btn.setText(tr("connect"))
+            QMessageBox.critical(
+                self, tr("connection"), tr("connection_error", error=str(e))
+            )
+            return
+
+        if self._client:
+            set_runtime_mode("client")
+            self._finish_successful_connect(address)
+        else:
+            self.connect_btn.setEnabled(True)
+            self.connect_btn.setText(tr("connect"))
+            detail = get_last_connect_error()
+            print(f"[NETWORK_SETTINGS] Connection to {address} failed: {detail}")
+            msg = tr("connection_failed", address=address)
+            if detail:
+                msg = f"{msg}\n\n{tr('connection_error', error=detail)}"
+            QMessageBox.critical(self, tr("connection"), msg)
+
+    def _finish_successful_connect(self, address: str):
+        """Shared success-path UI update + settings persistence, used by
+        both the manual/advanced connect and the one-touch flow."""
+        from gearledger.desktop.settings_manager import load_settings, save_settings
+
+        settings = load_settings()
+        settings.server_address = address
+        settings.network_mode = "client"
+        save_settings(settings)
+        self.settings = settings
+
+        display = (
+            f"{self._client.server_name} ({address})"
+            if getattr(self._client, "server_name", None)
+            else address
+        )
+        self.connection_status_label.setText(
+            tr("connection_status_connected", address=display)
+        )
+        self.connection_status_label.setStyleSheet(
+            "color: #27ae60; font-weight: bold;"
+        )
+        self.connect_btn.setEnabled(True)
+        self.connect_btn.setText(tr("disconnect"))
+        self.connect_btn.setStyleSheet(
+            "background-color: #e74c3c; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.network_mode_changed.emit("client", address)
+        QMessageBox.information(
+            self, tr("connection"), tr("connected_msg", address=display)
+        )
+
+    def _start_one_touch_connect(self):
+        """Kick off the shared background worker: try the saved address
+        first, then fall back to LAN discovery — never blocks the UI."""
+        from gearledger.desktop.settings_manager import load_settings
+        from gearledger.desktop.client_connect_worker import ClientConnectWorker
+
+        if getattr(self, "_connect_worker", None) is not None:
+            return  # already in progress
+
+        settings = load_settings()
+        saved_address = (settings.server_address or "").strip()
+
+        self.connect_btn.setEnabled(False)
+        self.connect_btn.setText(tr("connecting"))
+
+        self._connect_worker = ClientConnectWorker(saved_address, self)
+        self._connect_worker.connected.connect(self._on_one_touch_connected)
+        self._connect_worker.discovery_finished.connect(
+            self._on_one_touch_discovery_finished
+        )
+        self._connect_worker.finished.connect(self._on_connect_worker_finished)
+        self._connect_worker.start()
+
+    def _on_connect_worker_finished(self):
+        worker = self._connect_worker
+        self._connect_worker = None
+        if worker:
+            worker.deleteLater()
+
+    def _on_one_touch_connected(self, address: str):
+        from gearledger.api_client import get_client
+
+        self._client = get_client()
+        self.connect_btn.setEnabled(True)
+        self._finish_successful_connect(address)
+
+    def _on_one_touch_discovery_finished(self, servers: list):
+        self.connect_btn.setEnabled(True)
+        self.connect_btn.setText(tr("connect"))
+
+        if not servers:
+            QMessageBox.warning(self, tr("connection"), tr("no_server_found_simple"))
+            return
+
+        if len(servers) == 1:
+            self._connect_to_discovered_server(servers[0])
+            return
+
+        from .server_picker_dialog import ServerPickerDialog
+
+        dlg = ServerPickerDialog(servers, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_server:
+            self._connect_to_discovered_server(dlg.selected_server)
+
+    def _connect_to_discovered_server(self, server):
+        self._connect_to_address(server.get_url())
 
     def _update_server_status(self):
         """Update server status label with current connection count and SSE status."""
@@ -450,7 +589,11 @@ class NetworkSettingsDialog(QDialog):
 
         server = get_server()
         if server and server.is_running():
-            url = server.get_server_url()
+            raw_url = server.get_server_url()
+            # Show the friendly name alongside the raw URL here — this is
+            # the "Advanced" dialog, so admin-level detail is fine, unlike
+            # the worker-facing picker which shows names only.
+            url = f"{server.server_name} ({raw_url})" if server.server_name else raw_url
             count = server.get_connected_clients_count()
             sse_count = server.get_sse_clients_count()
             if count > 0:

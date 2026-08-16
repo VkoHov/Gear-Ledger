@@ -1911,6 +1911,14 @@ TRANSLATIONS = {
         "en": "e.g. Warehouse Server (optional)",
         "ru": "напр. Складской сервер (необязательно)",
     },
+    "advanced_connection_options": {
+        "en": "Advanced ▸",
+        "ru": "Дополнительно ▸",
+    },
+    "advanced_connection_options_hide": {
+        "en": "Advanced ▾",
+        "ru": "Дополнительно ▾",
+    },
 }
 
 

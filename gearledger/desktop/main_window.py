@@ -170,48 +170,6 @@ class _ManualSearchWorker(QThread):
 # ---------------------------------------------------------------------------
 
 
-class _ClientConnectWorker(QThread):
-    """Tries the last-known server address first (fast path for the common
-    "reopen the app on the same network" case); if that's unset or fails,
-    falls back to LAN discovery and reports whatever it found so the caller
-    can auto-connect (exactly one) or show a picker (more than one)."""
-
-    connected = _pyqtSignal(str)  # address
-    discovery_finished = _pyqtSignal(list)  # List[DiscoveredServer]
-
-    def __init__(self, saved_address: str, parent=None):
-        super().__init__(parent)
-        self._saved_address = (saved_address or "").strip()
-
-    def run(self):
-        from gearledger.api_client import connect_to_server
-
-        if self._saved_address:
-            address = self._saved_address
-            if not address.startswith("http://") and not address.startswith("https://"):
-                address = f"http://{address}"
-            # Short timeout: this is a best-effort fast path, not worth
-            # blocking the worker (and thus the "Connecting..." state) for
-            # the full default timeout if the saved server is gone.
-            try:
-                client = connect_to_server(address, timeout=4)
-            except Exception:
-                client = None
-            if client:
-                self.connected.emit(address)
-                return
-
-        # Fall back to LAN discovery.
-        import time
-        from gearledger.network_discovery import ServerDiscovery
-
-        discovery = ServerDiscovery()
-        discovery.start()
-        time.sleep(4)
-        discovery.stop()
-        self.discovery_finished.emit(discovery.get_discovered_servers())
-
-
 class _AutoConnectWorker(QThread):
     """Background retry for the startup auto-connect. Runs off the UI
     thread and retries a few times with a short delay — Windows in
@@ -1432,6 +1390,7 @@ class MainWindow(QWidget):
         """Kick off the background worker that tries the saved address
         first, then falls back to discovery — never blocks the UI thread."""
         from gearledger.desktop.settings_manager import load_settings
+        from gearledger.desktop.client_connect_worker import ClientConnectWorker
 
         if getattr(self, "_connect_worker", None) is not None:
             return  # already in progress
@@ -1443,7 +1402,7 @@ class MainWindow(QWidget):
         self.client_connect_btn.setText(tr("connecting"))
         self.append_logs([tr("log_looking_for_server")])
 
-        self._connect_worker = _ClientConnectWorker(saved_address, self)
+        self._connect_worker = ClientConnectWorker(saved_address, self)
         self._connect_worker.connected.connect(self._on_one_touch_connected)
         self._connect_worker.discovery_finished.connect(
             self._on_one_touch_discovery_finished
@@ -2233,23 +2192,25 @@ class MainWindow(QWidget):
 
         if mode == "server":
             if server and server.is_running():
+                server_label = f" — {server.server_name}" if server.server_name else ""
                 count = server.get_connected_clients_count()
                 sse_count = server.get_sse_clients_count()
                 if count > 0:
                     if sse_count > 0:
-                        status_text = f"🖥️ Server: Running ({count} client{'s' if count != 1 else ''}, {sse_count} real-time)"
+                        status_text = f"🖥️ Server{server_label}: Running ({count} client{'s' if count != 1 else ''}, {sse_count} real-time)"
                         bg_color = "#27ae60"  # Green
                     else:
-                        status_text = f"🖥️ Server: Running ({count} client{'s' if count != 1 else ''}, ⚠️ no real-time sync)"
+                        status_text = f"🖥️ Server{server_label}: Running ({count} client{'s' if count != 1 else ''}, ⚠️ no real-time sync)"
                         bg_color = "#e67e22"  # Orange-red
                 else:
-                    status_text = "🖥️ Server: Running (0 clients)"
+                    status_text = f"🖥️ Server{server_label}: Running (0 clients)"
                     bg_color = "#f39c12"  # Orange
             else:
                 status_text = "🖥️ Server: Stopped"
                 bg_color = "#95a5a6"  # Gray
         elif mode == "client":
             if client and client.is_connected():
+                server_label = f" to {client.server_name}" if client.server_name else ""
                 # Check SSE connection status (use force_sse_disconnected when we received disconnect signal)
                 sse_connected = (
                     not force_sse_disconnected
@@ -2258,16 +2219,16 @@ class MainWindow(QWidget):
                 )
                 if sse_connected:
                     if self._client_initialized:
-                        status_text = "💻 Client: Connected (Real-time sync active)"
+                        status_text = f"💻 Client: Connected{server_label} (Real-time sync active)"
                         bg_color = "#27ae60"  # Green
                         # Hide reconnecting label when we're actually connected
                         if hasattr(self, "client_init_progress_label"):
                             self.client_init_progress_label.setVisible(False)
                     else:
-                        status_text = "💻 Client: Initializing..."
+                        status_text = f"💻 Client: Initializing{server_label}..."
                         bg_color = "#f39c12"  # Orange
                 else:
-                    status_text = "💻 Client: Connected (reconnecting…)"
+                    status_text = f"💻 Client: Connected{server_label} (reconnecting…)"
                     bg_color = "#e67e22"  # Orange-red
             else:
                 status_text = "💻 Client: Disconnected"

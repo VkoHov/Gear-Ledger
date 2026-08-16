@@ -45,12 +45,14 @@ class ScaleWidget(QGroupBox):
             self.scale_baudrate = settings.scale_baudrate
             self.weight_threshold = settings.weight_threshold
             self.stable_time = settings.stable_time
+            saved_manual_mode = settings.scale_manual_mode
         except Exception:
             # Fallback to environment variables
             self.scale_port = os.getenv("SCALE_PORT", "")
             self.scale_baudrate = int(os.getenv("SCALE_BAUDRATE", "9600"))
             self.weight_threshold = float(os.getenv("WEIGHT_THRESHOLD", "0.1"))  # kg
             self.stable_time = float(os.getenv("STABLE_TIME", "2.0"))  # seconds
+            saved_manual_mode = False
 
         # State
         self.current_weight = 0.0
@@ -71,6 +73,11 @@ class ScaleWidget(QGroupBox):
         self._setup_ui()
         self._setup_connections()
         self._setup_timers()
+
+        # Restore the user's last-chosen mode (scale vs. manual) instead of
+        # always defaulting to scale mode on every launch.
+        if saved_manual_mode:
+            self._set_mode(True, persist=False)
 
     def _setup_ui(self):
         """Set up the user interface."""
@@ -286,9 +293,27 @@ class ScaleWidget(QGroupBox):
         self.weight_ready.connect(self._on_weight_ready)
         self.weight_changed.connect(self._on_weight_changed)
 
-    def _set_mode(self, manual: bool):
-        """Switch between scale and manual mode."""
+    def _set_mode(self, manual: bool, persist: bool = True):
+        """Switch between scale and manual mode.
+
+        persist=False is used only when restoring the saved mode at
+        startup, so that doesn't immediately re-write the exact same
+        value straight back to settings.json.
+        """
         self.is_manual_mode = manual
+
+        if persist:
+            try:
+                from gearledger.desktop.settings_manager import (
+                    load_settings,
+                    save_settings,
+                )
+
+                settings = load_settings()
+                settings.scale_manual_mode = manual
+                save_settings(settings)
+            except Exception:
+                pass
 
         # Update toggle button styles
         active_style = """

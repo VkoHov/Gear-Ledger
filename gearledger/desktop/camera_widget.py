@@ -71,6 +71,16 @@ class CameraWidget(QGroupBox):
         self._setup_ui()
         self._setup_connections()
 
+        # Restore the user's last-chosen mode (camera vs. manual) instead
+        # of always defaulting to camera mode on every launch.
+        try:
+            from gearledger.desktop.settings_manager import load_settings
+
+            if load_settings().camera_manual_mode:
+                self._set_mode(True, persist=False)
+        except Exception:
+            pass
+
     def _setup_ui(self):
         """Set up the user interface."""
         layout = QVBoxLayout(self)
@@ -325,9 +335,27 @@ class CameraWidget(QGroupBox):
         self.btn_search_code.clicked.connect(self._submit_manual_code)
         self.manual_code_input.returnPressed.connect(self._submit_manual_code)
 
-    def _set_mode(self, manual: bool):
-        """Switch between camera and manual mode."""
+    def _set_mode(self, manual: bool, persist: bool = True):
+        """Switch between camera and manual mode.
+
+        persist=False is used only when restoring the saved mode at
+        startup, so that doesn't immediately re-write the exact same
+        value straight back to settings.json.
+        """
         self.is_manual_mode = manual
+
+        if persist:
+            try:
+                from gearledger.desktop.settings_manager import (
+                    load_settings,
+                    save_settings,
+                )
+
+                settings = load_settings()
+                settings.camera_manual_mode = manual
+                save_settings(settings)
+            except Exception:
+                pass
 
         # Update toggle button styles
         active_style = """

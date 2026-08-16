@@ -38,6 +38,10 @@ class Settings:
     default_result_file: str = ""  # Default result file path (empty = auto-generate)
     show_logs: bool = True  # Show/hide logs widget in both tabs
     language: str = "en"  # UI language: "en" or "ru"
+    # Remember the user's last-chosen input mode for each widget, instead
+    # of always resetting to scale/camera mode on every launch.
+    scale_manual_mode: bool = False
+    camera_manual_mode: bool = False
     # Deprecated: OpenAI TTS is no longer used (kept for backwards compatibility only)
     use_openai_tts: bool = False
     # Speech / voice settings (only OS and Piper are supported)

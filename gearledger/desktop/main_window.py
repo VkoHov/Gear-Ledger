@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSpinBox,
-    QProgressBar,
 )
 from PyQt6.QtGui import QFont
 
@@ -35,6 +34,7 @@ from .process_helpers import ProcessManager
 from .scale_widget import ScaleWidget
 from .translations import tr
 from .sse_client import SSEClientThread
+from .button_spinner import ButtonSpinner
 
 # Optional speech helpers (guarded)
 try:
@@ -806,17 +806,10 @@ class MainWindow(QWidget):
         self.client_connect_btn.setVisible(False)
         settings_btn_layout.addWidget(self.client_connect_btn)
 
-        # Indeterminate loading indicator shown while connecting/searching
-        # for a server (one-touch flow or startup auto-connect) — makes it
-        # visually obvious something is happening instead of the button
-        # text change being the only feedback.
-        self.client_connect_progress = QProgressBar()
-        self.client_connect_progress.setRange(0, 0)
-        self.client_connect_progress.setFixedWidth(70)
-        self.client_connect_progress.setFixedHeight(16)
-        self.client_connect_progress.setTextVisible(False)
-        self.client_connect_progress.setVisible(False)
-        settings_btn_layout.addWidget(self.client_connect_progress)
+        # Rotating spinner icon shown directly on the button while
+        # connecting/searching for a server (one-touch flow or startup
+        # auto-connect), instead of a separate progress-bar widget.
+        self._client_connect_spinner = ButtonSpinner(self.client_connect_btn)
 
         self._update_network_status()
 
@@ -1404,11 +1397,15 @@ class MainWindow(QWidget):
         self._start_one_touch_connect()
 
     def _set_connecting_ui(self, active: bool):
-        """Show/hide the loading indicator and disable the Connect button
-        while a connect/search worker is running, so there's always clear
-        visual feedback instead of the UI looking unresponsive."""
+        """Spin a small rotating icon directly on the Connect button and
+        disable it while a connect/search worker is running, so there's
+        always clear visual feedback instead of the UI looking
+        unresponsive."""
         self._connecting_in_progress = active
-        self.client_connect_progress.setVisible(active)
+        if active:
+            self._client_connect_spinner.start()
+        else:
+            self._client_connect_spinner.stop()
         self.client_connect_btn.setEnabled(not active)
 
     def _start_one_touch_connect(self):

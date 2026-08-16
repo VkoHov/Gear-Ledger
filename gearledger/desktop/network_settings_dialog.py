@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QFrame,
-    QProgressBar,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
@@ -28,6 +27,7 @@ from .settings_manager import (
     load_settings,
 )
 from .translations import tr
+from .button_spinner import ButtonSpinner
 
 
 class NetworkSettingsDialog(QDialog):
@@ -150,17 +150,11 @@ class NetworkSettingsDialog(QDialog):
         self.change_server_btn.clicked.connect(self._refresh_discovery)
         connect_row.addWidget(self.change_server_btn)
 
-        # Indeterminate progress bar (busy/loading indicator) shown while a
-        # connect or search worker is running — Qt shows this as a
-        # continuously animated bar when min==max==0, no extra assets
-        # needed.
-        self.connect_progress = QProgressBar()
-        self.connect_progress.setRange(0, 0)
-        self.connect_progress.setFixedWidth(80)
-        self.connect_progress.setFixedHeight(18)
-        self.connect_progress.setTextVisible(False)
-        self.connect_progress.setVisible(False)
-        connect_row.addWidget(self.connect_progress)
+        # Rotating spinner icon shown directly on whichever button
+        # triggered a connect/search, instead of a separate progress-bar
+        # widget — reads as part of the button rather than bolted on.
+        self._connect_btn_spinner = ButtonSpinner(self.connect_btn)
+        self._change_server_btn_spinner = ButtonSpinner(self.change_server_btn)
 
         connect_row.addStretch(1)
 
@@ -454,14 +448,24 @@ class NetworkSettingsDialog(QDialog):
         else:
             self._start_one_touch_connect()
 
-    def _set_connecting_ui(self, active: bool):
-        """Show/hide the loading indicator and disable Connect/Change
-        Server while a connect or search worker is running, so the two
-        can't overlap and there's always clear feedback something is
-        happening instead of the UI looking idle/unresponsive."""
-        self.connect_progress.setVisible(active)
+    def _set_connecting_ui(self, active: bool, on_button: QPushButton = None):
+        """Disable Connect/Change Server while a connect or search worker
+        is running (so the two can't overlap), and spin a small rotating
+        icon directly on whichever button triggered the action — defaults
+        to Connect, since most call sites are part of the connect flow."""
         self.connect_btn.setEnabled(not active)
         self.change_server_btn.setEnabled(not active)
+        target = on_button or self.connect_btn
+        if active:
+            self._active_spinner = (
+                self._connect_btn_spinner
+                if target is self.connect_btn
+                else self._change_server_btn_spinner
+            )
+            self._active_spinner.start()
+        else:
+            self._connect_btn_spinner.stop()
+            self._change_server_btn_spinner.stop()
 
     def _connect_to_address(self, address: str):
         """Connect directly to a specific address (the manual/advanced
@@ -633,7 +637,7 @@ class NetworkSettingsDialog(QDialog):
         if getattr(self, "_search_worker", None) is not None:
             return  # already searching
 
-        self._set_connecting_ui(True)
+        self._set_connecting_ui(True, on_button=self.change_server_btn)
         self.discovery_status_label.setText(tr("discovering_servers"))
         self.discovery_status_label.setStyleSheet("color: #7f8c8d; font-size: 11px;")
 

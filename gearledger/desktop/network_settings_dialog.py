@@ -44,21 +44,8 @@ class NetworkSettingsDialog(QDialog):
         self.settings = load_settings()
         self._server = None
         self._client = None
-        self._discovery = None
         self._connect_worker = None
-        # Tracks whatever address we auto-filled into the combo box
-        # ourselves, so a later discovery pass can tell "the field still
-        # has what we put there" apart from "the user typed/selected
-        # something" — otherwise a newly found server never visibly
-        # replaces an earlier auto-filled one, since the field never looks
-        # empty again after the first discovery pass fills it in.
-        self._last_auto_filled_address = ""
-
-        # Initialize timers before setup (needed by _stop_discovery)
-        # Timer for one-time discovery timeout (no continuous polling)
-        self._discovery_timer = QTimer(self)
-        self._discovery_timer.setSingleShot(True)  # One-time timer
-        self._discovery_timer.timeout.connect(self._on_discovery_timeout)
+        self._search_worker = None
 
         self._setup_ui()
         self._load_settings_to_ui()
@@ -283,11 +270,6 @@ class NetworkSettingsDialog(QDialog):
         self.refresh_discovery_btn.setEnabled(is_client)
         self.connect_btn.setEnabled(is_client)
 
-        # Stop discovery when switching away from client mode
-        # In client mode, discovery is manual (user clicks refresh button)
-        if not is_client:
-            self._stop_discovery()
-
         # Update button states based on current connection status
         from gearledger.server import get_server
         from gearledger.api_client import get_client
@@ -347,8 +329,6 @@ class NetworkSettingsDialog(QDialog):
             if checked
             else tr("advanced_connection_options")
         )
-        if not checked:
-            self._stop_discovery()
         self._update_network_ui()
 
     def _toggle_server(self):
@@ -616,81 +596,65 @@ class NetworkSettingsDialog(QDialog):
                 "color: #7f8c8d; font-style: italic;"
             )
 
-    def _start_discovery(self):
-        """Start one-time server discovery."""
-        print("[DISCOVERY] _start_discovery() called - starting one-time server search")
-        # Stop any existing discovery first
-        if self._discovery:
-            self._stop_discovery()
-
-        from gearledger.network_discovery import ServerDiscovery
-
-        def on_server_found(server):
-            """Called when a server is discovered - update list immediately."""
-            print(
-                f"[DISCOVERY] Server found: {server.ip}:{server.port} - updating list"
-            )
-            # Update UI on main thread (callback is called from background thread)
-            # Use a small delay to allow multiple servers to be discovered before updating
-            QTimer.singleShot(100, self._update_discovered_servers)
-
-        self._discovery = ServerDiscovery(on_server_found=on_server_found)
-        self._discovery.start()
-        print("[DISCOVERY] Discovery started, will run for 5 seconds")
-
-        # Update button appearance to show discovery is active
-        self.refresh_discovery_btn.setText("🔍 ...")
-        self.refresh_discovery_btn.setStyleSheet(
-            "background-color: #f39c12; color: white; font-weight: bold; padding: 6px 10px;"
-        )
-        self.refresh_discovery_btn.setEnabled(False)  # Disable while searching
-
-        # Start one-time timer to stop discovery after 5 seconds
-        self._discovery_timer.start(5000)  # Search for 5 seconds then stop
-        print("[DISCOVERY] Timer started - will stop discovery in 5 seconds")
-
-    def _stop_discovery(self):
-        """Stop server discovery."""
-        # Stop the timeout timer (if it exists)
-        if hasattr(self, "_discovery_timer") and self._discovery_timer.isActive():
-            self._discovery_timer.stop()
-
-        if self._discovery:
-            print("[DISCOVERY] Stopping active server discovery")
-            self._discovery.stop()
-            self._discovery = None
-
-        # Final update of discovered servers list
-        if hasattr(self, "refresh_discovery_btn"):
-            self._update_discovered_servers()
-
-            # Update button appearance to show discovery is stopped
-            self.refresh_discovery_btn.setText("🔍")
-            self.refresh_discovery_btn.setStyleSheet(
-                "background-color: #95a5a6; color: white; font-weight: bold; padding: 6px 10px;"
-            )
-            self.refresh_discovery_btn.setEnabled(True)  # Re-enable button
-
     def _refresh_discovery(self):
-        """Manually trigger one-time server discovery."""
+        """Explicit "change server" action: forces a fresh LAN discovery
+        search (bypassing the Connect button's fast-path reuse of the
+        last-known server) and shows every result in a popup — including
+        when the field/current connection already points somewhere, so
+        this is how an admin switches to a different server, not just how
+        they find one the first time. Works whether currently connected
+        or not; picking a server in the popup connects to it directly."""
+        from gearledger.desktop.client_connect_worker import ClientConnectWorker
+
         if not self.client_radio.isChecked():
             return
+        if getattr(self, "_search_worker", None) is not None:
+            return  # already searching
 
-        # If discovery is already running, stop it first
-        if self._discovery:
-            self._stop_discovery()
-            # Small delay to ensure cleanup before starting new search
-            QTimer.singleShot(200, self._start_discovery)
-        else:
-            # Start one-time discovery
-            self._start_discovery()
+        self.refresh_discovery_btn.setEnabled(False)
+        self.refresh_discovery_btn.setText("🔍 ...")
+        self.discovery_status_label.setText(tr("discovering_servers"))
+        self.discovery_status_label.setStyleSheet("color: #7f8c8d; font-size: 11px;")
 
-    def _on_discovery_timeout(self):
-        """Called when discovery timeout expires - stop discovery and update list."""
-        print(
-            "[TIMER] _on_discovery_timeout() called - discovery timeout reached, stopping discovery"
+        # Empty saved_address forces the worker straight to the discovery
+        # branch — it never tries a fast-path reconnect to a remembered
+        # server, since the whole point here is finding *other* servers.
+        self._search_worker = ClientConnectWorker("", self)
+        self._search_worker.discovery_finished.connect(
+            self._on_advanced_search_finished
         )
-        self._stop_discovery()
+        self._search_worker.finished.connect(self._on_search_worker_finished)
+        self._search_worker.start()
+
+    def _on_search_worker_finished(self):
+        worker = self._search_worker
+        self._search_worker = None
+        if worker:
+            worker.deleteLater()
+
+    def _on_advanced_search_finished(self, servers: list):
+        self.refresh_discovery_btn.setEnabled(True)
+        self.refresh_discovery_btn.setText("🔍")
+
+        if not self.client_radio.isChecked():
+            return  # user switched modes while the search was running
+
+        if not servers:
+            self.discovery_status_label.setText(tr("no_servers_found"))
+            self.discovery_status_label.setStyleSheet(
+                "color: #7f8c8d; font-size: 11px;"
+            )
+            QMessageBox.warning(self, tr("connection"), tr("no_server_found_simple"))
+            return
+
+        self.discovery_status_label.setText(tr("servers_found", count=len(servers)))
+        self.discovery_status_label.setStyleSheet("color: #27ae60; font-size: 11px;")
+
+        from .server_picker_dialog import ServerPickerDialog
+
+        dlg = ServerPickerDialog(servers, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_server:
+            self._connect_to_discovered_server(dlg.selected_server)
 
     def _normalize_server_address(self, text: str) -> str:
         """Extract URL from text. Handles 'Name (ip:port)' or 'http://ip:port' format."""
@@ -712,91 +676,6 @@ class NetworkSettingsDialog(QDialog):
             return f"http://{text}"
         return text
 
-    def _update_discovered_servers(self):
-        """Update the combo box with discovered servers."""
-        if not self.client_radio.isChecked():
-            return
-
-        if not self._discovery:
-            return
-
-        discovered = self._discovery.get_discovered_servers()
-        print(
-            f"[DISCOVERY] _update_discovered_servers() - checking for servers, found: {len(discovered) if discovered else 0}"
-        )
-
-        # Get current selection
-        current_text = self.server_address_combo.lineEdit().text().strip()
-        print(f"[DISCOVERY] Current field text: '{current_text}'")
-
-        # Only treat the field as "the user's own input" if its text isn't
-        # exactly what *we* auto-filled on a previous discovery pass —
-        # otherwise, once the field is first auto-filled, it never looks
-        # "empty" again, so a second/later discovered server would never
-        # visibly replace the first one (the bug this fixes).
-        is_user_owned = bool(current_text) and current_text != self._last_auto_filled_address
-
-        # Update combo box items
-        self.server_address_combo.clear()
-        print(
-            f"[DISCOVERY] Cleared combo box, now adding {len(discovered) if discovered else 0} server(s)"
-        )
-
-        if discovered:
-            for server in discovered:
-                server_url = server.get_url()
-                # Use URL only for both display and data - ensures Connect uses valid address
-                self.server_address_combo.addItem(server_url, server_url)
-                print(f"[DISCOVERY] Adding server to combo: {server_url}")
-
-            if not is_user_owned:
-                # Field is empty or still holds our own previous auto-fill —
-                # safe to overwrite with the latest discovery result.
-                first_server_url = discovered[0].get_url()
-                self.server_address_combo.setCurrentIndex(0)
-                self.server_address_combo.lineEdit().setText(first_server_url)
-                self._last_auto_filled_address = first_server_url
-                if len(discovered) == 1:
-                    print(f"[DISCOVERY] Auto-selected server: {first_server_url}")
-                else:
-                    print(
-                        f"[DISCOVERY] Auto-selected first server ({len(discovered)} found): {first_server_url}"
-                    )
-                    print(f"[DISCOVERY] Other servers available in dropdown")
-            else:
-                # User typed/selected this themselves — preserve it, just
-                # try to keep the combo's selection in sync if it matches.
-                found_match = False
-                normalized_current = self._normalize_server_address(current_text)
-                for i in range(self.server_address_combo.count()):
-                    url = self.server_address_combo.itemData(i)
-                    if url == current_text or url == normalized_current:
-                        self.server_address_combo.setCurrentIndex(i)
-                        self.server_address_combo.lineEdit().setText(url)
-                        found_match = True
-                        break
-
-                if not found_match:
-                    # Use normalized URL if it looks like "Name (ip:port)", else keep as-is
-                    self.server_address_combo.lineEdit().setText(
-                        normalized_current or current_text
-                    )
-
-            self.discovery_status_label.setText(
-                tr("servers_found", count=len(discovered))
-            )
-            self.discovery_status_label.setStyleSheet(
-                "color: #27ae60; font-size: 11px;"
-            )
-        else:
-            # No servers found
-            if current_text:
-                self.server_address_combo.lineEdit().setText(current_text)
-            self.discovery_status_label.setText(tr("no_servers_found"))
-            self.discovery_status_label.setStyleSheet(
-                "color: #7f8c8d; font-size: 11px;"
-            )
-
     def accept(self):
         """Save settings and close dialog."""
         # Save network settings - normalize server address to URL only
@@ -817,9 +696,17 @@ class NetworkSettingsDialog(QDialog):
         super().accept()
 
     def closeEvent(self, event):
-        """Handle dialog close event."""
-        # Stop discovery when closing
-        self._stop_discovery()
-        if hasattr(self, "_discovery_timer"):
-            self._discovery_timer.stop()
+        """Handle dialog close event.
+
+        If a background connect/search worker is still running, detach our
+        signal handlers so it doesn't try to touch this dialog's widgets
+        after it's gone — the thread itself is still allowed to finish and
+        clean up via its Qt parent.
+        """
+        for worker in (self._connect_worker, self._search_worker):
+            if worker:
+                try:
+                    worker.disconnect()
+                except Exception:
+                    pass
         super().closeEvent(event)

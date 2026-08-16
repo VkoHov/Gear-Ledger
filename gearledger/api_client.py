@@ -2,8 +2,32 @@
 """
 API client for connecting to Gear Ledger server.
 """
+import socket
 import requests
 from typing import List, Dict, Any, Optional
+
+
+def has_network_connection() -> bool:
+    """Cheap, independent check for "is this machine on any network at
+    all" — separate from whether a specific server is reachable.
+
+    Opens a UDP socket and calls connect() toward an arbitrary external
+    address. UDP is connectionless, so this sends no actual packets over
+    the wire and works even without internet access (or if that address
+    is unreachable) — it only fails if the OS has no network route at
+    all, e.g. WiFi/Ethernet is disconnected. This is the same technique
+    already used by GearLedgerServer.get_local_ip().
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return True
+        finally:
+            s.close()
+    except OSError:
+        return False
 
 
 class APIClient:
@@ -68,16 +92,27 @@ class APIClient:
             self.last_error = None
             return True
         except requests.exceptions.ConnectTimeout:
-            self.last_error = (
-                f"Timed out connecting to {self.server_url} "
-                f"(server unreachable or wrong IP/port — check the address "
-                f"and that the server machine is on the same network)"
-            )
+            if not has_network_connection():
+                self.last_error = "NO_NETWORK"
+            else:
+                self.last_error = (
+                    f"Timed out connecting to {self.server_url} "
+                    f"(server unreachable or wrong IP/port — check the address "
+                    f"and that the server machine is on the same network)"
+                )
         except requests.exceptions.ConnectionError as e:
-            self.last_error = (
-                f"Could not reach {self.server_url}: {e} "
-                f"(server not running, wrong IP/port, or blocked by a firewall)"
-            )
+            # A dead network (WiFi/Ethernet disconnected) surfaces here as
+            # the exact same requests.exceptions.ConnectionError as "server
+            # not running" or "wrong address" — check independently so the
+            # user gets told the actual cause instead of a generic message
+            # that points them at the wrong things to check.
+            if not has_network_connection():
+                self.last_error = "NO_NETWORK"
+            else:
+                self.last_error = (
+                    f"Could not reach {self.server_url}: {e} "
+                    f"(server not running, wrong IP/port, or blocked by a firewall)"
+                )
         except requests.exceptions.Timeout as e:
             self.last_error = f"Request to {self.server_url} timed out: {e}"
         except Exception as e:

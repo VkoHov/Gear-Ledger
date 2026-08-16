@@ -1468,8 +1468,18 @@ class MainWindow(QWidget):
         self.client_connect_btn.setText(tr("connect"))
 
         if not servers:
-            self.append_logs(["⚠️ No server found on the network"])
-            QMessageBox.warning(self, tr("connection"), tr("no_server_found_simple"))
+            from gearledger.api_client import has_network_connection
+
+            if has_network_connection():
+                self.append_logs(["⚠️ No server found on the network"])
+                QMessageBox.warning(
+                    self, tr("connection"), tr("no_server_found_simple")
+                )
+            else:
+                self.append_logs(["⚠️ No network connection"])
+                QMessageBox.warning(
+                    self, tr("connection"), tr("no_network_connection")
+                )
             return
 
         if len(servers) == 1:
@@ -1501,9 +1511,14 @@ class MainWindow(QWidget):
         else:
             detail = get_last_connect_error()
             self.append_logs([f"✗ Connection failed: {detail or 'unknown error'}"])
-            msg = tr("connection_failed", address=address)
-            if detail:
-                msg = f"{msg}\n\n{tr('connection_error', error=detail)}"
+            from .translations import connection_error_detail
+
+            if detail == "NO_NETWORK":
+                msg = connection_error_detail(detail)
+            else:
+                msg = tr("connection_failed", address=address)
+                if detail:
+                    msg = f"{msg}\n\n{connection_error_detail(detail)}"
             QMessageBox.critical(self, tr("connection"), msg)
 
     def _open_network_settings(self):
@@ -1720,9 +1735,10 @@ class MainWindow(QWidget):
         self._initialize_client_connection()
 
     def _on_auto_connect_failed(self, detail: str):
-        self.append_logs(
-            [f"⚠️ Auto-connect failed after retrying: {detail or 'server unreachable'}"]
+        readable = tr("no_network_connection") if detail == "NO_NETWORK" else (
+            detail or "server unreachable"
         )
+        self.append_logs([f"⚠️ Auto-connect failed after retrying: {readable}"])
         self._set_connecting_ui(False)
         self._update_network_status()
 

@@ -496,9 +496,14 @@ class NetworkSettingsDialog(QDialog):
             self.connect_btn.setText(tr("connect"))
             detail = get_last_connect_error()
             print(f"[NETWORK_SETTINGS] Connection to {address} failed: {detail}")
-            msg = tr("connection_failed", address=address)
-            if detail:
-                msg = f"{msg}\n\n{tr('connection_error', error=detail)}"
+            from .translations import connection_error_detail
+
+            if detail == "NO_NETWORK":
+                msg = connection_error_detail(detail)
+            else:
+                msg = tr("connection_failed", address=address)
+                if detail:
+                    msg = f"{msg}\n\n{connection_error_detail(detail)}"
             QMessageBox.critical(self, tr("connection"), msg)
 
     def _finish_successful_connect(self, address: str):
@@ -573,7 +578,10 @@ class NetworkSettingsDialog(QDialog):
         self.connect_btn.setText(tr("connect"))
 
         if not servers:
-            QMessageBox.warning(self, tr("connection"), tr("no_server_found_simple"))
+            from gearledger.api_client import has_network_connection
+
+            key = "no_server_found_simple" if has_network_connection() else "no_network_connection"
+            QMessageBox.warning(self, tr("connection"), tr(key))
             return
 
         if len(servers) == 1:
@@ -664,11 +672,17 @@ class NetworkSettingsDialog(QDialog):
             return  # user switched modes while the search was running
 
         if not servers:
-            self.discovery_status_label.setText(tr("no_servers_found"))
+            from gearledger.api_client import has_network_connection
+
+            network_ok = has_network_connection()
+            self.discovery_status_label.setText(
+                tr("no_servers_found") if network_ok else tr("no_network_connection")
+            )
             self.discovery_status_label.setStyleSheet(
                 "color: #7f8c8d; font-size: 11px;"
             )
-            QMessageBox.warning(self, tr("connection"), tr("no_server_found_simple"))
+            key = "no_server_found_simple" if network_ok else "no_network_connection"
+            QMessageBox.warning(self, tr("connection"), tr(key))
             return
 
         self.discovery_status_label.setText(tr("servers_found", count=len(servers)))

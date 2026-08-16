@@ -1923,6 +1923,10 @@ TRANSLATIONS = {
         "en": "🔄 Change Server",
         "ru": "🔄 Сменить сервер",
     },
+    "no_network_connection": {
+        "en": "No network connection.\n\nThis computer isn't connected to any network (WiFi/Ethernet) — please check your network connection and try again.",
+        "ru": "Нет подключения к сети.\n\nЭтот компьютер не подключён ни к одной сети (WiFi/Ethernet) — проверьте подключение к сети и попробуйте снова.",
+    },
 }
 
 
@@ -1985,6 +1989,19 @@ def tr(key: str, **kwargs) -> str:
         Translated string
     """
     return get_text(key, _current_language, **kwargs)
+
+
+def connection_error_detail(detail: str) -> str:
+    """Turn a raw APIClient.last_error string into a user-facing detail
+    line. api_client.py sets the sentinel "NO_NETWORK" (rather than
+    importing translations itself, since it's a non-desktop-specific
+    module) when it detects the machine has no network connection at
+    all — distinct from "server unreachable but network is fine"."""
+    if not detail:
+        return ""
+    if detail == "NO_NETWORK":
+        return tr("no_network_connection")
+    return tr("connection_error", error=detail)
 
 
 def load_language_from_settings():

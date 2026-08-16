@@ -2140,7 +2140,10 @@ class MainWindow(QWidget):
             # Step 4: Sync catalog
             QTimer.singleShot(200, lambda: self._sync_catalog_step())
         else:
-            # Reconnection after being disconnected - just show reconnected message
+            # Reconnection after being disconnected - refresh results in
+            # case anything changed on the server during the gap, then
+            # show reconnected message
+            self.results_pane.refresh()
             self.append_logs(
                 [
                     "✅ Real-time sync reconnected",
@@ -2174,6 +2177,13 @@ class MainWindow(QWidget):
         # Update catalog UI
         if hasattr(self, "settings_widget"):
             self.settings_widget.update_catalog_ui_for_mode()
+
+        # Pull current results from the server — the init sequence above
+        # syncs the catalog but never refreshed the Results pane, so
+        # without this it would keep showing stale/empty data until either
+        # someone else's action triggered an SSE update or the user
+        # manually clicked the pane's own Refresh button.
+        self.results_pane.refresh()
 
         # Mark client as initialized
         self._client_initialized = True

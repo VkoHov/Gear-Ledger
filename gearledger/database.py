@@ -43,7 +43,12 @@ class Database:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Create results table
+        # Create results table. sale_price is part of the UNIQUE
+        # constraint (not just artikul+client) so that when the same
+        # client has multiple catalog lines for the same article at
+        # different prices, each price tier can have its own row instead
+        # of being forced into one — see allocate_tiered_quantity in
+        # result_ledger.py for why.
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS results (
@@ -58,7 +63,7 @@ class Database:
                 sale_price REAL DEFAULT 0,
                 total_price REAL DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(artikul, client)
+                UNIQUE(artikul, client, sale_price)
             )
         """
         )
@@ -66,12 +71,83 @@ class Database:
         # Create index for faster lookups
         cursor.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_artikul_client 
+            CREATE INDEX IF NOT EXISTS idx_artikul_client
             ON results(artikul, client)
         """
         )
 
         conn.commit()
+
+        self._migrate_unique_constraint_if_needed(cursor, conn)
+
+    def _migrate_unique_constraint_if_needed(self, cursor, conn):
+        """A database created before tiered pricing existed has
+        UNIQUE(artikul, client) with no sale_price — inserting a second
+        price tier for the same artikul+client would violate that old
+        constraint with a raw sqlite3.IntegrityError. Detect it and
+        migrate the table in place (rename, recreate with the new
+        constraint, copy rows, drop the old one). Copying is always safe
+        here: widening a UNIQUE constraint with an extra column can only
+        ever reduce collisions, never introduce new ones.
+        """
+        cursor.execute("PRAGMA index_list('results')")
+        needs_migration = False
+        found_any_unique_index = False
+        for idx in cursor.fetchall():
+            # idx columns: (seq, name, unique, origin, partial)
+            if not idx[2]:
+                continue
+            cursor.execute(f"PRAGMA index_info('{idx[1]}')")
+            cols = {row[2] for row in cursor.fetchall()}
+            if cols == {"artikul", "client"}:
+                found_any_unique_index = True
+                needs_migration = True
+            elif cols == {"artikul", "client", "sale_price"}:
+                found_any_unique_index = True
+                needs_migration = False
+
+        if not found_any_unique_index or not needs_migration:
+            return
+
+        print(
+            "[DATABASE] Migrating results table: "
+            "UNIQUE(artikul, client) -> UNIQUE(artikul, client, sale_price)"
+        )
+        cursor.execute("ALTER TABLE results RENAME TO results_pre_tier_migration")
+        cursor.execute(
+            """
+            CREATE TABLE results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artikul TEXT NOT NULL,
+                client TEXT NOT NULL,
+                quantity INTEGER DEFAULT 1,
+                weight REAL DEFAULT 0,
+                last_updated TEXT,
+                brand TEXT DEFAULT '',
+                description TEXT DEFAULT '',
+                sale_price REAL DEFAULT 0,
+                total_price REAL DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(artikul, client, sale_price)
+            )
+        """
+        )
+        cursor.execute(
+            """
+            INSERT INTO results
+                (id, artikul, client, quantity, weight, last_updated,
+                 brand, description, sale_price, total_price, created_at)
+            SELECT id, artikul, client, quantity, weight, last_updated,
+                   brand, description, sale_price, total_price, created_at
+            FROM results_pre_tier_migration
+        """
+        )
+        cursor.execute("DROP TABLE results_pre_tier_migration")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_artikul_client ON results(artikul, client)"
+        )
+        conn.commit()
+        print("[DATABASE] Migration complete")
 
     def add_or_update_result(
         self,
@@ -161,6 +237,115 @@ class Database:
             print(f"[DATABASE]   INSERT committed, id={cursor.lastrowid}")
             return {"ok": True, "action": "inserted", "id": cursor.lastrowid}
 
+    def add_or_update_result_tiered(
+        self,
+        artikul: str,
+        client: str,
+        quantity: int = 1,
+        weight: float = 0,
+        tiers: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Record a scan using catalog price tiers instead of a single
+        pre-resolved price — mirrors result_ledger.record_match's
+        allocation logic (see allocate_tiered_quantity) so server mode
+        gets the same correct-per-tier pricing as standalone/Excel mode:
+        when the same client has multiple catalog lines for this artikul
+        at different prices, quantity fills the first tier's ordered
+        amount before spilling into the next tier's price, each landing
+        in its own row. With zero or one distinct-priced tier (the
+        common case), this behaves exactly like add_or_update_result.
+        """
+        from .result_ledger import allocate_tiered_quantity, price_key
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        now = datetime.datetime.now().isoformat()
+
+        def _existing_qty_at_price(price) -> int:
+            artikul_norm = self._normalize(artikul)
+            cursor.execute(
+                "SELECT quantity, artikul, sale_price FROM results WHERE UPPER(client) = UPPER(?)",
+                (client,),
+            )
+            total = 0
+            for row in cursor.fetchall():
+                if (
+                    self._normalize(row["artikul"]) == artikul_norm
+                    and price_key(row["sale_price"]) == price_key(price)
+                ):
+                    total += row["quantity"] or 0
+            return total
+
+        allocations = allocate_tiered_quantity(
+            quantity, tiers or [], _existing_qty_at_price
+        )
+        print(f"[DATABASE] add_or_update_result_tiered: {artikul}/{client} qty={quantity} -> {allocations}")
+
+        any_inserted = False
+        last_id = None
+        for alloc in allocations:
+            alloc_qty = alloc["qty"]
+            if alloc_qty <= 0:
+                continue
+            alloc_price = alloc["цена"]
+            existing = self._find_by_key(cursor, artikul, client, price=alloc_price)
+
+            if existing:
+                new_quantity = existing["quantity"] + alloc_qty
+                total = alloc_price * new_quantity
+                cursor.execute(
+                    """
+                    UPDATE results
+                    SET quantity = ?,
+                        last_updated = ?,
+                        sale_price = ?,
+                        total_price = ?,
+                        brand = COALESCE(NULLIF(?, ''), brand),
+                        description = COALESCE(NULLIF(?, ''), description)
+                    WHERE id = ?
+                    """,
+                    (
+                        new_quantity,
+                        now,
+                        alloc_price,
+                        total,
+                        alloc["бренд"],
+                        alloc["описание"],
+                        existing["id"],
+                    ),
+                )
+                last_id = existing["id"]
+            else:
+                total = alloc_price * alloc_qty
+                cursor.execute(
+                    """
+                    INSERT INTO results
+                    (artikul, client, quantity, weight, last_updated, brand, description, sale_price, total_price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        artikul,
+                        client,
+                        alloc_qty,
+                        weight,
+                        now,
+                        alloc["бренд"],
+                        alloc["описание"],
+                        alloc_price,
+                        total,
+                    ),
+                )
+                last_id = cursor.lastrowid
+                any_inserted = True
+
+        conn.commit()
+        return {
+            "ok": True,
+            "action": "inserted" if any_inserted else "updated",
+            "id": last_id,
+        }
+
     def get_all_results(self, client: str = None) -> List[Dict[str, Any]]:
         """Get all results, optionally filtered by client."""
         conn = self._get_connection()
@@ -234,8 +419,13 @@ class Database:
         conn.commit()
         return cursor.rowcount > 0
 
-    def _find_by_key(self, cursor, artikul: str, client: str):
-        """Find the single results row matching (artikul, client).
+    def _find_by_key(self, cursor, artikul: str, client: str, price: float = None):
+        """Find a results row matching (artikul, client) — and, when
+        `price` is given, that exact price tier too, since the same
+        artikul+client can now have multiple rows at different prices
+        (see the UNIQUE(artikul, client, sale_price) migration above).
+        `price=None` returns the first match regardless of price,
+        preserving old behavior for callers that aren't tier-aware yet.
 
         Does the normalization comparison in Python (via self._normalize)
         instead of duplicating it as a hand-written SQL REPLACE() chain —
@@ -243,34 +433,47 @@ class Database:
         Python-side normalizer was exactly how this class of bug happened
         before, so there's now exactly one place to update.
         """
+        from .result_ledger import price_key
+
         artikul_norm = self._normalize(artikul)
         cursor.execute(
             "SELECT * FROM results WHERE UPPER(client) = UPPER(?)",
             (client,),
         )
         for row in cursor.fetchall():
-            if self._normalize(row["artikul"]) == artikul_norm:
-                return row
+            if self._normalize(row["artikul"]) != artikul_norm:
+                continue
+            if price is not None and price_key(row["sale_price"]) != price_key(price):
+                continue
+            return row
         return None
 
-    def delete_result_by_key(self, artikul: str, client: str) -> int:
-        """Delete the result row matching (artikul, client). Returns rows deleted."""
+    def delete_result_by_key(self, artikul: str, client: str, price: float = None) -> int:
+        """Delete the result row matching (artikul, client) — and, when
+        `price` is given, that exact price tier's row (the same
+        artikul+client can have several rows at different prices; see
+        the UNIQUE(artikul, client, sale_price) migration). Without
+        price, matches the first row found regardless of price (existing
+        behavior, unchanged). Returns rows deleted."""
         conn = self._get_connection()
         cursor = conn.cursor()
-        row = self._find_by_key(cursor, artikul, client)
+        row = self._find_by_key(cursor, artikul, client, price=price)
         if not row:
             return 0
         cursor.execute("DELETE FROM results WHERE id = ?", (row["id"],))
         conn.commit()
         return cursor.rowcount
 
-    def update_result_quantity_by_key(self, artikul: str, client: str, new_quantity: int) -> bool:
-        """Set the recorded quantity for (artikul, client), recomputing
+    def update_result_quantity_by_key(
+        self, artikul: str, client: str, new_quantity: int, price: float = None
+    ) -> bool:
+        """Set the recorded quantity for (artikul, client) — and, when
+        `price` is given, that exact price tier's row — recomputing
         total_price from the existing per-unit sale_price. Returns True if a
         row was updated."""
         conn = self._get_connection()
         cursor = conn.cursor()
-        row = self._find_by_key(cursor, artikul, client)
+        row = self._find_by_key(cursor, artikul, client, price=price)
         if not row:
             return False
         total = (row["sale_price"] or 0) * new_quantity

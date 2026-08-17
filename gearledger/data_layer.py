@@ -5,7 +5,7 @@ Unified data layer that handles standalone, server, and client modes.
 from __future__ import annotations
 
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from .desktop.settings_manager import load_settings
 
@@ -174,6 +174,49 @@ def _lookup_catalog_for_network(
         return {}
 
 
+def _lookup_catalog_tiers_for_network(
+    artikul: str, catalog_path: str = None, client: str = None
+) -> List[Dict[str, Any]]:
+    """Tiered counterpart of _lookup_catalog_for_network — returns every
+    catalog line (not just the first match) so server-mode recording can
+    price a scan correctly across multiple price tiers for the same
+    artikul+client. Same in-memory-catalog-first, file-path-fallback
+    behavior as _lookup_catalog_for_network."""
+    try:
+        from .result_ledger import _lookup_catalog_tiers
+
+        mode = get_network_mode()
+        catalog_bytes = None
+
+        if mode == "server":
+            from .server import get_server
+
+            server = get_server()
+            if server and server.is_running():
+                catalog_bytes = server.get_uploaded_catalog_data()
+
+        if catalog_bytes is not None:
+            tiers = _lookup_catalog_tiers(
+                artikul, catalog_bytes=catalog_bytes, client=client
+            )
+        elif catalog_path and os.path.exists(catalog_path):
+            tiers = _lookup_catalog_tiers(
+                artikul, catalog_path=catalog_path, client=client
+            )
+        else:
+            return []
+
+        return [
+            {k: _to_python_type(v) for k, v in tier.items()} for tier in tiers
+        ]
+    except Exception as e:
+        print(f"[ERROR] Tiered catalog lookup failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return []
+
+
 def _record_via_api(
     artikul: str,
     client: str,
@@ -283,17 +326,13 @@ def _record_to_database(
         else:
             print("[DATA_LAYER] Server mode: Server instance not found or not running")
 
-    brand = ""
-    description = ""
-    sale_price = 0.0
-
-    # Try to look up catalog data (will use in-memory catalog in server mode if available)
-    catalog_data = _lookup_catalog_for_network(artikul, catalog_path, client=client)
-    if catalog_data:
-        brand = catalog_data.get("бренд", "")
-        description = catalog_data.get("описание", "")
-        sale_price = catalog_data.get("цена", 0)
-        print(f"[DATA_LAYER] Catalog data found: brand={brand}, price={sale_price}")
+    # Look up every catalog price tier for this artikul+client (usually
+    # just one) — lets the DB split quantity correctly across tiers
+    # instead of flattening to a single price. Uses in-memory catalog in
+    # server mode if available.
+    tiers = _lookup_catalog_tiers_for_network(artikul, catalog_path, client=client)
+    if tiers:
+        print(f"[DATA_LAYER] Catalog tiers found: {tiers}")
     else:
         print(
             "[DATA_LAYER] WARNING: No catalog data found (no uploaded catalog or file path)"
@@ -306,14 +345,12 @@ def _record_to_database(
         print(
             f"[DATA_LAYER] Writing to DB: artikul={artikul}, client={client}, qty={qty_inc}, weight={weight_inc}"
         )
-        result = db.add_or_update_result(
+        result = db.add_or_update_result_tiered(
             artikul=str(artikul),
             client=str(client),
             quantity=int(qty_inc),
             weight=float(weight_inc) if weight_inc else 0.0,
-            brand=str(brand) if brand else "",
-            description=str(description) if description else "",
-            sale_price=float(sale_price) if sale_price else 0.0,
+            tiers=tiers,
         )
         print(f"[DATA_LAYER] Database result: {result}")
 
@@ -411,8 +448,14 @@ def is_network_mode() -> bool:
     return mode in ("server", "client")
 
 
-def delete_result_unified(artikul: str, client: str, results_path: str = None) -> bool:
-    """Delete a recorded (artikul, client) result from the appropriate backend.
+def delete_result_unified(
+    artikul: str, client: str, results_path: str = None, price: float = None
+) -> bool:
+    """Delete a recorded (artikul, client) result from the appropriate
+    backend. Pass `price` to target one specific price tier's row when
+    the same artikul+client has more than one (see
+    allocate_tiered_quantity); price=None affects every row for that
+    artikul+client regardless of price.
 
     Only standalone and server mode are supported (matches where the
     Check Order / Generate Invoice actions are available in the UI).
@@ -423,23 +466,30 @@ def delete_result_unified(artikul: str, client: str, results_path: str = None) -
         from .database import get_database
 
         db = get_database()
-        return db.delete_result_by_key(artikul, client) > 0
+        return db.delete_result_by_key(artikul, client, price=price) > 0
     elif mode == "standalone":
         if not results_path:
             return False
         from .result_ledger import delete_result_excel
 
-        result = delete_result_excel(results_path, artikul, client)
+        result = delete_result_excel(results_path, artikul, client, price=price)
         return bool(result.get("ok")) and result.get("deleted", 0) > 0
     else:
         return False
 
 
 def set_result_quantity_unified(
-    artikul: str, client: str, new_quantity: int, results_path: str = None
+    artikul: str,
+    client: str,
+    new_quantity: int,
+    results_path: str = None,
+    price: float = None,
 ) -> bool:
     """Correct a recorded (artikul, client) result's quantity in the
-    appropriate backend (e.g. fixing an over-recorded item).
+    appropriate backend (e.g. fixing an over-recorded item). Pass
+    `price` to target one specific price tier's row; price=None affects
+    every row for that artikul+client regardless of price (what the
+    Check Order "over-recorded" fix wants, since it corrects a total).
 
     Only standalone and server mode are supported (matches where the
     Check Order / Generate Invoice actions are available in the UI).
@@ -450,13 +500,17 @@ def set_result_quantity_unified(
         from .database import get_database
 
         db = get_database()
-        return db.update_result_quantity_by_key(artikul, client, new_quantity)
+        return db.update_result_quantity_by_key(
+            artikul, client, new_quantity, price=price
+        )
     elif mode == "standalone":
         if not results_path:
             return False
         from .result_ledger import set_result_quantity_excel
 
-        result = set_result_quantity_excel(results_path, artikul, client, new_quantity)
+        result = set_result_quantity_excel(
+            results_path, artikul, client, new_quantity, target_price=price
+        )
         return bool(result.get("ok")) and result.get("updated", 0) > 0
     else:
         return False

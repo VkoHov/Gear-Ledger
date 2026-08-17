@@ -349,28 +349,30 @@ class GearLedgerServer:
                 db = self._get_db()
                 print(f"[SERVER] Database: {db.db_path}")
 
-                # Look up catalog data to enrich the result
-                # Use in-memory uploaded catalog if available, otherwise try file from settings
-                from gearledger.result_ledger import _lookup_catalog_data
+                # Look up every catalog price tier to enrich and
+                # correctly price the result — the server is the source
+                # of truth for tier-fill decisions since only it knows
+                # how much is already recorded (see
+                # allocate_tiered_quantity in result_ledger.py).
+                from gearledger.result_ledger import _lookup_catalog_tiers
                 from gearledger.data_layer import _to_python_type
 
-                catalog_data = {}
+                tiers = []
                 catalog_bytes = self.get_uploaded_catalog_data()
 
                 if catalog_bytes:
                     print(
                         f"[SERVER] Using in-memory catalog (size: {len(catalog_bytes)} bytes)"
                     )
-                    catalog_lookup_result = _lookup_catalog_data(
+                    raw_tiers = _lookup_catalog_tiers(
                         artikul, catalog_bytes=catalog_bytes, client=client
                     )
-                    if catalog_lookup_result:
-                        # Convert numpy types to native Python types
-                        catalog_data = {
-                            k: _to_python_type(v)
-                            for k, v in catalog_lookup_result.items()
-                        }
-                        print(f"[SERVER] Found catalog data: {catalog_data}")
+                    tiers = [
+                        {k: _to_python_type(v) for k, v in t.items()}
+                        for t in raw_tiers
+                    ]
+                    if tiers:
+                        print(f"[SERVER] Found catalog tiers: {tiers}")
                     else:
                         print(f"[SERVER] No catalog entry found for artikul: {artikul}")
                 else:
@@ -384,41 +386,26 @@ class GearLedgerServer:
                         "[SERVER] Server should have catalog uploaded via /api/catalog endpoint"
                     )
 
-                print(f"[SERVER] Catalog lookup result: {catalog_data}")
+                if not tiers:
+                    # No in-memory catalog (or no match in it) — fall back
+                    # to whatever the client resolved locally and sent
+                    # along, as a single tier (old single-price behavior).
+                    tiers = [
+                        {
+                            "цена": request_data.get("sale_price", 0) or 0,
+                            "количество": None,
+                            "бренд": request_data.get("brand", ""),
+                            "описание": request_data.get("description", ""),
+                        }
+                    ]
+                    print(f"[SERVER] No catalog data found, using client-provided fallback: {tiers}")
 
-                # Use catalog data to populate fields (prefer catalog data over client-provided data)
-                brand = (
-                    catalog_data.get("бренд", "")
-                    if catalog_data
-                    else request_data.get("brand", "")
-                )
-                description = (
-                    catalog_data.get("описание", "")
-                    if catalog_data
-                    else request_data.get("description", "")
-                )
-                sale_price = (
-                    catalog_data.get("цена", 0)
-                    if catalog_data
-                    else request_data.get("sale_price", 0)
-                )
-
-                # If catalog provided data, log it
-                if catalog_data:
-                    print(
-                        f"[SERVER] Using catalog data: brand={brand}, price={sale_price}"
-                    )
-                else:
-                    print("[SERVER] No catalog data found, using client-provided data")
-
-                result = db.add_or_update_result(
+                result = db.add_or_update_result_tiered(
                     artikul=artikul,
                     client=client,
                     quantity=request_data.get("quantity", 1),
                     weight=request_data.get("weight", 0),
-                    brand=brand,
-                    description=description,
-                    sale_price=sale_price,
+                    tiers=tiers,
                 )
                 print(f"[SERVER] Database result: {result}")
 

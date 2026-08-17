@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 import os, re, datetime
-from typing import Dict
+from typing import Dict, List, Callable, Optional
 import pandas as pd
 
 COLUMNS = [
@@ -77,9 +77,18 @@ def record_match(
     weight_price: float = 0.0,
 ) -> Dict[str, str]:
     """
-    Ensure results sheet exists and either insert a row for (Артикул, Клиент)
-    or increment Количество and Вес by +1 each when already present.
-    Matching is done on normalized Артикул + case-insensitive Клиент.
+    Ensure results sheet exists and either insert row(s) for (Артикул,
+    Клиент) or increment existing row(s)' Количество. Matching is done
+    on normalized Артикул + case-insensitive Клиент + Цена продажи —
+    price is part of the row identity so that when the same client has
+    multiple catalog lines for this artikul at different prices (e.g. 3
+    units @ 1000, 2 units @ 3000), each price tier gets its own
+    correctly-priced row instead of the whole recorded quantity being
+    flattened to whichever price was looked up first. Tiers fill in
+    catalog order — the first tier's ordered quantity is used up before
+    any of this scan spills into the next tier's price. When there's
+    only one price for this artikul+client (the common case), this
+    behaves exactly as before: one row, incremented in place.
 
     If catalog_path is provided, will look up additional fields (Брэнд, Описание, Цена продажи).
     If weight_price is provided, will calculate Цена продажи as weight * weight_price.
@@ -103,12 +112,8 @@ def record_match(
         if col not in df.columns:
             df[col] = pd.Series(dtype="object")
 
-    # Look up additional fields from catalog if provided
-    brand = ""
-    description = ""
-    catalog_price = 0  # Store catalog price separately from calculated price
-
-    # Check for in-memory catalog in server mode
+    # Look up catalog price tiers for this artikul+client (may be more
+    # than one distinct-priced line — see allocate_tiered_quantity)
     catalog_bytes = None
     if not catalog_path or not os.path.exists(catalog_path):
         from gearledger.data_layer import get_network_mode
@@ -120,119 +125,118 @@ def record_match(
                 catalog_bytes = server.get_uploaded_catalog_data()
 
     if catalog_bytes is not None:
-        # Use in-memory catalog
-        catalog_data = _lookup_catalog_data(
-            artikul, catalog_bytes=catalog_bytes, client=client
-        )
-        if catalog_data:
-            brand = catalog_data.get("бренд", "")
-            description = catalog_data.get("описание", "")
-            catalog_price = catalog_data.get("цена", 0)
-            print(
-                f"[INFO] Found catalog data for {artikul}: brand={brand}, catalog_price={catalog_price}"
-            )
-        else:
-            print(f"[INFO] No catalog data found for {artikul}")
+        tiers = _lookup_catalog_tiers(artikul, catalog_bytes=catalog_bytes, client=client)
     elif catalog_path and os.path.exists(catalog_path):
-        # Use file-based catalog
-        catalog_data = _lookup_catalog_data(
-            artikul, catalog_path=catalog_path, client=client
-        )
-        if catalog_data:
-            brand = catalog_data.get("бренд", "")
-            description = catalog_data.get("описание", "")
-            catalog_price = catalog_data.get("цена", 0)
-            print(
-                f"[INFO] Found catalog data for {artikul}: brand={brand}, catalog_price={catalog_price}"
-            )
-        else:
-            print(f"[INFO] No catalog data found for {artikul}")
+        tiers = _lookup_catalog_tiers(artikul, catalog_path=catalog_path, client=client)
     else:
         print(f"[INFO] No catalog file selected")
+        tiers = []
 
-    # Store only catalog price in results file (weight-based pricing applied only in invoice generation)
-    final_price = catalog_price
-    if final_price == 0:
-        print(f"[INFO] No catalog price found for {artikul}, storing 0")
-    else:
+    if tiers:
         print(
-            f"[INFO] Storing catalog price for {artikul}: {final_price} (weight-based pricing will be applied in invoice)"
+            f"[INFO] Found {len(tiers)} catalog line(s) for {artikul}/{client}: "
+            f"{[(t['цена'], t['количество']) for t in tiers]}"
         )
+    else:
+        print(f"[INFO] No catalog data found for {artikul}")
 
-    # Build match key
+    # Build match key components. Артикул + Клиент stay fixed for this
+    # whole call; Цена продажи varies per allocation below.
     key_norm = _norm(artikul)
     client_upper = (client or "").upper()
 
-    # Add temp normalized column for matching
     norm_col = "_NORM"
     df[norm_col] = df["Артикул"].astype(str).map(_norm)
-
-    # Case-insensitive client match
     if "Клиент" in df.columns:
         client_match = df["Клиент"].astype(str).str.upper() == client_upper
     else:
-        client_match = False
+        client_match = pd.Series([False] * len(df))
 
-    mask = (df[norm_col] == key_norm) & client_match
+    def _existing_qty_at_price(price) -> int:
+        """How much is already recorded for this artikul+client at this
+        exact price — snapshot of df as of before this call's writes, so
+        allocate_tiered_quantity sees a consistent picture across all
+        tiers even though we haven't written anything yet."""
+        if "Цена продажи" not in df.columns or len(df) == 0:
+            return 0
+        price_match = df["Цена продажи"].apply(price_key) == price_key(price)
+        mask_price = (df[norm_col] == key_norm) & client_match & price_match
+        return int(
+            pd.to_numeric(df.loc[mask_price, "Количество"], errors="coerce")
+            .fillna(0)
+            .sum()
+        )
+
+    allocations = allocate_tiered_quantity(qty_inc, tiers, _existing_qty_at_price)
+
+    def _to_int(v):
+        try:
+            return int(pd.to_numeric(v, errors="coerce") or 0)
+        except Exception:
+            return 0
 
     now = datetime.datetime.now()
-    action = "inserted"
+    any_inserted = False
+    any_updated = False
 
-    if mask.any():
-        idx = df.index[mask][0]
+    for alloc in allocations:
+        alloc_qty = alloc["qty"]
+        if alloc_qty <= 0:
+            continue
+        alloc_price = alloc["цена"]
+        alloc_brand = alloc["бренд"]
+        alloc_desc = alloc["описание"]
 
-        # safe numeric increments
-        def _to_int(v):
-            try:
-                return int(pd.to_numeric(v, errors="coerce") or 0)
-            except Exception:
-                return 0
+        # Recompute against the current df each iteration — an earlier
+        # allocation in this same call may have appended a new row.
+        df[norm_col] = df["Артикул"].astype(str).map(_norm)
+        cur_client_match = (
+            df["Клиент"].astype(str).str.upper() == client_upper
+            if "Клиент" in df.columns
+            else pd.Series([False] * len(df))
+        )
+        price_match = (
+            df["Цена продажи"].apply(price_key) == price_key(alloc_price)
+            if "Цена продажи" in df.columns
+            else pd.Series([False] * len(df))
+        )
+        mask = (df[norm_col] == key_norm) & cur_client_match & price_match
 
-        # Only increment quantity, NOT weight (weight stays the same for existing items)
-        df.loc[idx, "Количество"] = _to_int(df.loc[idx, "Количество"]) + qty_inc
-        # Keep existing weight - don't add new weight for duplicate items
-        new_weight = _to_int(df.loc[idx, "Вес"])
-        df.loc[idx, "Последнее обновление"] = now
+        if mask.any():
+            idx = df.index[mask][0]
+            # Only increment quantity, NOT weight (weight stays the same
+            # for existing items — matches every other duplicate-scan row)
+            df.loc[idx, "Количество"] = _to_int(df.loc[idx, "Количество"]) + alloc_qty
+            df.loc[idx, "Последнее обновление"] = now
 
-        # Update catalog fields if they're empty and we have new data
-        if brand and (not df.loc[idx, "Брэнд"] or pd.isna(df.loc[idx, "Брэнд"])):
-            df.loc[idx, "Брэнд"] = brand
-        if description and (
-            not df.loc[idx, "Описание"] or pd.isna(df.loc[idx, "Описание"])
-        ):
-            df.loc[idx, "Описание"] = description
+            if alloc_brand and (not df.loc[idx, "Брэнд"] or pd.isna(df.loc[idx, "Брэнд"])):
+                df.loc[idx, "Брэнд"] = alloc_brand
+            if alloc_desc and (
+                not df.loc[idx, "Описание"] or pd.isna(df.loc[idx, "Описание"])
+            ):
+                df.loc[idx, "Описание"] = alloc_desc
 
-        # Store only catalog price in results file (weight-based pricing applied only in invoice generation)
-        # Use catalog_price from lookup, or keep existing if no new lookup
-        new_quantity = _to_int(df.loc[idx, "Количество"])
+            new_quantity = _to_int(df.loc[idx, "Количество"])
+            if alloc_price > 0:
+                df.loc[idx, "Цена продажи"] = alloc_price
+                df.loc[idx, "Сумма продажи"] = alloc_price * new_quantity
+            any_updated = True
+        else:
+            new_row = {
+                "Артикул": artikul,
+                "Клиент": client,
+                "Количество": alloc_qty,
+                "Вес": weight_inc,
+                "Последнее обновление": now,
+                "Брэнд": alloc_brand,
+                "Описание": alloc_desc,
+                "Цена продажи": alloc_price,
+                "Сумма продажи": alloc_price * alloc_qty,
+            }
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True, sort=False)
+            any_inserted = True
 
-        if catalog_price > 0:
-            # Update with new catalog price if found
-            df.loc[idx, "Цена продажи"] = catalog_price
-            df.loc[idx, "Сумма продажи"] = catalog_price * new_quantity
-            print(
-                f"[INFO] Updated catalog price for {artikul}: {catalog_price}, total={catalog_price * new_quantity}"
-            )
-        elif final_price > 0:
-            # Use final_price (catalog price) if we have it
-            df.loc[idx, "Цена продажи"] = final_price
-            df.loc[idx, "Сумма продажи"] = final_price * new_quantity
-        # Otherwise keep existing price if no new catalog price found
-
-        action = "updated"
-    else:
-        new_row = {
-            "Артикул": artikul,
-            "Клиент": client,
-            "Количество": qty_inc,
-            "Вес": weight_inc,
-            "Последнее обновление": now,
-            "Брэнд": brand,
-            "Описание": description,
-            "Цена продажи": final_price,
-            "Сумма продажи": final_price * qty_inc,
-        }
-        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True, sort=False)
+    action = "inserted" if any_inserted else "updated"
 
     # Drop temp column and save
     if norm_col in df.columns:
@@ -330,8 +334,16 @@ def rows_equal(rows_a, rows_b) -> bool:
     return sorted(map(_key, rows_a)) == sorted(map(_key, rows_b))
 
 
-def delete_result_excel(path: str, artikul: str, client: str) -> Dict[str, any]:
-    """Remove the row(s) matching (artikul, client) from the results ledger.
+def delete_result_excel(
+    path: str, artikul: str, client: str, price: float = None
+) -> Dict[str, any]:
+    """Remove the row(s) matching (artikul, client) from the results
+    ledger. When `price` is given, only the row at that exact price tier
+    is removed (the same artikul+client can now have several rows at
+    different prices — see allocate_tiered_quantity); price=None deletes
+    every row for that artikul+client regardless of price, which is what
+    the Check Order "not in catalog" cleanup wants (it operates on
+    totals, not a specific tier).
     Returns {"ok", "deleted", "error"} — deleted is the number of rows removed.
     """
     if not os.path.exists(path):
@@ -349,6 +361,8 @@ def delete_result_excel(path: str, artikul: str, client: str) -> Dict[str, any]:
     mask = (df["Артикул"].astype(str).map(_norm) == key_norm) & (
         df["Клиент"].astype(str).str.strip().str.upper() == client_upper
     )
+    if price is not None and "Цена продажи" in df.columns:
+        mask = mask & (df["Цена продажи"].apply(price_key) == price_key(price))
     deleted = int(mask.sum())
     if deleted == 0:
         return {"ok": True, "deleted": 0, "error": ""}
@@ -371,10 +385,14 @@ def delete_result_excel(path: str, artikul: str, client: str) -> Dict[str, any]:
 
 
 def set_result_quantity_excel(
-    path: str, artikul: str, client: str, new_quantity: int
+    path: str, artikul: str, client: str, new_quantity: int, target_price: float = None
 ) -> Dict[str, any]:
     """Set the recorded quantity for the row matching (artikul, client),
     recomputing Сумма продажи from the existing per-unit Цена продажи.
+    `target_price=None` (the default) affects every row for that
+    artikul+client regardless of price — used by the Check Order
+    "over-recorded" fix, which corrects a total, not one specific price
+    tier. Pass target_price to affect only that one tier's row instead.
     Returns {"ok", "updated", "error"} — updated is the number of rows changed.
     """
     if not os.path.exists(path):
@@ -392,6 +410,8 @@ def set_result_quantity_excel(
     mask = (df["Артикул"].astype(str).map(_norm) == key_norm) & (
         df["Клиент"].astype(str).str.strip().str.upper() == client_upper
     )
+    if target_price is not None and "Цена продажи" in df.columns:
+        mask = mask & (df["Цена продажи"].apply(price_key) == price_key(target_price))
     updated = int(mask.sum())
     if updated == 0:
         return {"ok": True, "updated": 0, "error": ""}
@@ -448,27 +468,27 @@ def get_results_quantity(path: str, artikul: str, client: str) -> int:
         return 0
 
 
-def _lookup_catalog_data(
+def _read_catalog_matches(
     artikul: str,
     catalog_path: str = None,
     catalog_bytes: bytes = None,
     client: str = None,
-) -> Dict[str, any]:
+):
     """
-    Look up additional data from catalog by artikul (and, when given, client).
+    Shared catalog-reading core for _lookup_catalog_data and
+    _lookup_catalog_tiers: reads the catalog, detects columns (including
+    quantity, needed for tier-fill pricing), finds every row matching
+    artikul, and narrows to `client`'s rows when a client column is
+    detectable and that client has at least one row — otherwise falls
+    back to every match regardless of client (preserves old behavior for
+    catalogs without a client column, or a client not present for this
+    artikul).
 
-    The same artikul can appear on multiple catalog rows for different
-    clients (e.g. different negotiated prices per customer). Without a
-    client filter, this always returned whichever row happened to be
-    first in the file — silently giving every client the same
-    price/brand/description as that first row. When `client` is given
-    and the catalog has a detectable client column, rows for that
-    client are preferred; otherwise falls back to the first match
-    (preserves old behavior for catalogs without a client column, or a
-    client not present for this artikul).
-
-    Accepts either a file path (catalog_path) or in-memory bytes (catalog_bytes).
-    If both are provided, catalog_bytes takes precedence.
+    Returns (used_df, col_mapping) — used_df is the DataFrame of matching
+    rows to consider (client-narrowed, or all matches as a fallback), and
+    col_mapping maps logical field names ("номер", "бренд", "описание",
+    "цена", "клиент", "количество") to the actual column labels found.
+    Returns (None, {}) if nothing could be read or nothing matched.
     """
     try:
         # Read from bytes if provided, otherwise from file path
@@ -495,7 +515,7 @@ def _lookup_catalog_data(
                 except:
                     catalog_df = pd.read_excel(catalog_path)
         else:
-            return {}
+            return None, {}
 
         # Detect column names
         col_mapping = {}
@@ -521,6 +541,19 @@ def _lookup_catalog_data(
                 for k in ["клиент", "client", "customer", "buyer", "vendor"]
             ):
                 col_mapping["клиент"] = col
+            # Quantity/stock column — needed to know each catalog line's
+            # capacity for tier-fill pricing (see _allocate_tiered_quantity).
+            # Same keyword set as excel_utils._detect_stock_column, kept in
+            # sync manually since this module intentionally has its own
+            # independent catalog-reading path.
+            if any(
+                k in col_lower
+                for k in [
+                    "количество", "кол-во", "кол.", "остаток", "наличие",
+                    "в наличии", "qty", "quantity", "stock", "count", "available",
+                ]
+            ):
+                col_mapping["количество"] = col
 
         # Fallback to exact names (prioritize Номер over Артикул for new format)
         if "Клиент" in catalog_df.columns:
@@ -535,6 +568,10 @@ def _lookup_catalog_data(
             col_mapping["описание"] = "Описание"
         if "Цена продажи" in catalog_df.columns:
             col_mapping["цена"] = "Цена продажи"
+        for exact in ("Количество", "Остаток", "Наличие"):
+            if exact in catalog_df.columns:
+                col_mapping["количество"] = exact
+                break
 
         # Check if we have the required columns
         missing_cols = []
@@ -553,7 +590,7 @@ def _lookup_catalog_data(
 
         номер_col = col_mapping.get("номер")
         if not номер_col:
-            return {}
+            return None, {}
 
         # Normalize for matching
         artikul_norm = _norm(artikul)
@@ -577,9 +614,9 @@ def _lookup_catalog_data(
             ]
             if not similar.empty:
                 print(f"[DEBUG] Found similar parts: {similar[номер_col].tolist()}")
-            return {}
+            return None, {}
 
-        row = matches.iloc[0]
+        used = matches
         client_col = col_mapping.get("клиент")
         if client and client_col:
             client_upper = str(client).strip().upper()
@@ -587,23 +624,195 @@ def _lookup_catalog_data(
                 matches[client_col].astype(str).str.strip().str.upper() == client_upper
             ]
             if not client_matches.empty:
-                row = client_matches.iloc[0]
+                used = client_matches
             else:
                 print(
                     f"[DEBUG] No catalog row for client '{client}' with this artikul — "
-                    f"falling back to first match (client={row.get(client_col, '')})"
+                    f"falling back to all matches"
                 )
 
-        result = {}
-        if col_mapping.get("бренд"):
-            result["бренд"] = row.get(col_mapping["бренд"], "")
-        if col_mapping.get("описание"):
-            result["описание"] = row.get(col_mapping["описание"], "")
-        if col_mapping.get("цена"):
-            result["цена"] = row.get(col_mapping["цена"], 0)
-
-        return result
+        return used, col_mapping
 
     except Exception as e:
         print(f"[ERROR] Exception in catalog lookup: {e}")
+        return None, {}
+
+
+def _lookup_catalog_data(
+    artikul: str,
+    catalog_path: str = None,
+    catalog_bytes: bytes = None,
+    client: str = None,
+) -> Dict[str, any]:
+    """
+    Look up additional data from catalog by artikul (and, when given, client).
+
+    The same artikul can appear on multiple catalog rows for different
+    clients (e.g. different negotiated prices per customer). Without a
+    client filter, this always returned whichever row happened to be
+    first in the file — silently giving every client the same
+    price/brand/description as that first row. When `client` is given
+    and the catalog has a detectable client column, rows for that
+    client are preferred; otherwise falls back to the first match
+    (preserves old behavior for catalogs without a client column, or a
+    client not present for this artikul).
+
+    Only ever returns the *first* matching row's price — when the same
+    client has multiple catalog lines for this artikul at different
+    prices, use _lookup_catalog_tiers instead so callers can price a
+    recorded quantity correctly across tiers instead of flattening
+    everything to one line's price.
+
+    Accepts either a file path (catalog_path) or in-memory bytes (catalog_bytes).
+    If both are provided, catalog_bytes takes precedence.
+    """
+    used, col_mapping = _read_catalog_matches(artikul, catalog_path, catalog_bytes, client)
+    if used is None or used.empty:
         return {}
+
+    row = used.iloc[0]
+    result = {}
+    if col_mapping.get("бренд"):
+        result["бренд"] = row.get(col_mapping["бренд"], "")
+    if col_mapping.get("описание"):
+        result["описание"] = row.get(col_mapping["описание"], "")
+    if col_mapping.get("цена"):
+        result["цена"] = row.get(col_mapping["цена"], 0)
+
+    return result
+
+
+def price_key(value) -> float:
+    """Round a price to a stable comparison key, avoiding float-drift
+    false-mismatches (e.g. 1000.0000001 != 1000) when matching a results
+    row's price back to the catalog tier it came from."""
+    try:
+        num = pd.to_numeric(value, errors="coerce")
+        return round(float(num), 2) if not pd.isna(num) else 0.0
+    except Exception:
+        return 0.0
+
+
+def _lookup_catalog_tiers(
+    artikul: str,
+    catalog_path: str = None,
+    catalog_bytes: bytes = None,
+    client: str = None,
+) -> List[Dict[str, any]]:
+    """
+    Return every catalog LINE matching (artikul, client) — not merged or
+    reduced to a single row — each as {"цена", "количество", "бренд",
+    "описание"}, in catalog row order. "количество" is the line's own
+    ordered quantity (None if no quantity/stock column is detectable).
+
+    This is what lets record_match price a scan correctly when the same
+    client ordered the same article across multiple catalog lines at
+    different prices (e.g. 3 units @ 1000, 2 units @ 3000) instead of
+    always using the first line's price for the whole recorded quantity.
+    """
+    used, col_mapping = _read_catalog_matches(artikul, catalog_path, catalog_bytes, client)
+    if used is None or used.empty:
+        return []
+
+    qty_col = col_mapping.get("количество")
+    tiers = []
+    for _, row in used.iterrows():
+        price = row.get(col_mapping["цена"], 0) if col_mapping.get("цена") else 0
+        price = price_key(price)
+
+        qty = None
+        if qty_col:
+            qv = pd.to_numeric(row.get(qty_col), errors="coerce")
+            qty = None if pd.isna(qv) else int(qv)
+
+        tiers.append(
+            {
+                "цена": price,
+                "количество": qty,
+                "бренд": row.get(col_mapping.get("бренд"), "") if col_mapping.get("бренд") else "",
+                "описание": row.get(col_mapping.get("описание"), "") if col_mapping.get("описание") else "",
+            }
+        )
+    return tiers
+
+
+def allocate_tiered_quantity(
+    qty_inc: int,
+    tiers: List[Dict[str, any]],
+    existing_qty_by_price: Callable[[float], int],
+) -> List[Dict[str, any]]:
+    """
+    Split qty_inc units across catalog price tiers, filling each tier's
+    ordered quantity — based on how much is already recorded at that
+    tier's price — before spilling into the next tier. Backend-agnostic
+    pure logic: existing_qty_by_price is a callback so the caller can
+    source "how much is already recorded at this price" from a
+    DataFrame (Excel/standalone) or a database query (server mode)
+    without this function needing to know about either.
+
+    Degrades to the old single-price behavior (first tier's price for
+    the whole quantity) whenever there's nothing meaningful to split:
+    no catalog match, only one distinct price among the tiers, or any
+    tier's capacity is unknown (no quantity/stock column) — in that
+    last case fill-order can't be determined safely, so guessing would
+    be worse than the old flat behavior.
+
+    Returns a list of {"qty", "цена", "бренд", "описание"} allocations,
+    already merged so each distinct price appears at most once.
+    """
+    if not tiers:
+        return [{"qty": qty_inc, "цена": 0.0, "бренд": "", "описание": ""}]
+
+    distinct_prices = {t["цена"] for t in tiers}
+    if len(distinct_prices) <= 1 or any(t["количество"] is None for t in tiers):
+        first = tiers[0]
+        return [
+            {
+                "qty": qty_inc,
+                "цена": first["цена"],
+                "бренд": first["бренд"],
+                "описание": first["описание"],
+            }
+        ]
+
+    allocations: List[Dict[str, any]] = []
+    remaining = qty_inc
+    for tier in tiers:
+        if remaining <= 0:
+            break
+        already = int(existing_qty_by_price(tier["цена"]) or 0)
+        capacity_left = max(0, (tier["количество"] or 0) - already)
+        take = min(remaining, capacity_left)
+        if take > 0:
+            allocations.append(
+                {
+                    "qty": take,
+                    "цена": tier["цена"],
+                    "бренд": tier["бренд"],
+                    "описание": tier["описание"],
+                }
+            )
+            remaining -= take
+
+    if remaining > 0:
+        # Over-recorded beyond every tier's combined capacity — attach the
+        # overflow to the last tier's price. The Check Order completeness
+        # check still catches this at the total-recorded-vs-demanded level.
+        last = tiers[-1]
+        allocations.append(
+            {
+                "qty": remaining,
+                "цена": last["цена"],
+                "бренд": last["бренд"],
+                "описание": last["описание"],
+            }
+        )
+
+    merged: Dict[float, Dict[str, any]] = {}
+    for a in allocations:
+        key = a["цена"]
+        if key in merged:
+            merged[key]["qty"] += a["qty"]
+        else:
+            merged[key] = dict(a)
+    return list(merged.values())

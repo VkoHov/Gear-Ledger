@@ -519,8 +519,16 @@ class ResultsPane(QWidget):
             return
         rows = sorted(idx.row() for idx in sel.selectedRows())
         df = self.model._df
+        # Include price so a specific row is targeted even when the same
+        # artikul+client has multiple rows at different price tiers (see
+        # allocate_tiered_quantity) — otherwise deleting "the 3000 row"
+        # could silently take the 1000 row (or both) instead.
         targets = [
-            (str(df.iloc[r].get("Артикул", "")), str(df.iloc[r].get("Клиент", "")))
+            (
+                str(df.iloc[r].get("Артикул", "")),
+                str(df.iloc[r].get("Клиент", "")),
+                df.iloc[r].get("Цена продажи", None),
+            )
             for r in rows
             if 0 <= r < len(df)
         ]
@@ -528,7 +536,7 @@ class ResultsPane(QWidget):
             return
 
         if len(targets) == 1:
-            artikul, client = targets[0]
+            artikul, client, _price = targets[0]
             confirm_msg = tr("delete_item_confirm_msg", artikul=artikul, client=client)
         else:
             confirm_msg = tr("delete_items_confirm_msg", count=len(targets))
@@ -546,8 +554,8 @@ class ResultsPane(QWidget):
         from gearledger.data_layer import delete_result_unified
 
         deleted = 0
-        for artikul, client in targets:
-            if delete_result_unified(artikul, client, self.ledger_path):
+        for artikul, client, price in targets:
+            if delete_result_unified(artikul, client, self.ledger_path, price=price):
                 deleted += 1
         self.refresh()
 

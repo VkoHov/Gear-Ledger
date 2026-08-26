@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Gear Ledger — Web Serial scale spike</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.3rem; }
+  button { font-size: 1rem; padding: 0.5rem 1rem; margin-right: 0.5rem; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  #status { font-weight: bold; margin: 1rem 0; }
+  #weight { font-size: 3rem; font-weight: bold; margin: 0.5rem 0; }
+  #stability { font-size: 1rem; color: #666; }
+  #log { background: #111; color: #0f0; font-family: monospace; font-size: 0.8rem;
+         height: 220px; overflow-y: auto; padding: 0.5rem; margin-top: 1rem; white-space: pre-wrap; }
+  .ok { color: #2a2; }
+  .bad { color: #c22; }
+  label { display: inline-block; margin-right: 1rem; }
+</style>
+</head>
+<body>
+<h1>Web Serial scale spike</h1>
+<p>Throwaway test page — not part of the app. Confirms whether the scale can
+be read directly from a browser before any of Gear Ledger's web-app plan is
+built. Mirrors <code>gearledger/desktop/scale.py</code> and
+<code>scale_widget.py</code>'s parsing/stability logic exactly, so a
+"stable" reading here should match what the desktop app would show for the
+same physical weight.</p>
+
+<p>
+  <label>Baud rate:
+    <select id="baud">
+      <option value="9600" selected>9600</option>
+      <option value="4800">4800</option>
+      <option value="19200">19200</option>
+      <option value="115200">115200</option>
+    </select>
+  </label>
+</p>
+
+<button id="connectBtn">Connect to scale</button>
+<button id="disconnectBtn" disabled>Disconnect</button>
+
+<div id="status">Not connected</div>
+<div id="weight">-- kg</div>
+<div id="stability"></div>
+
+<div id="log"></div>
+
+<script>
+'use strict';
+
+// --- Constants mirrored from the desktop app (do not "improve" these here —
+// the point of this spike is to test the SAME algorithm, not a better one) ---
+const SCALE_WEIGHT_CORRECTION = 1.04;   // scale_widget.py:25
+const WEIGHT_THRESHOLD = 0.1;           // kg, scale_widget.py:53 default
+const STABLE_TIME = 2.0;                // seconds, scale_widget.py:54 default
+// scale.py:6-9
+const WEIGHT_PATTERN = /([-+]?\d+(?:[.,]\d+)?)\s*(kg|g|lb|oz)?/i;
+
+let port = null;
+let reader = null;
+let keepReading = false;
+let lineBuffer = '';
+
+let currentWeight = 0.0;
+let lastStableWeight = null;
+let stableStartTime = null;
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status');
+const weightEl = $('weight');
+const stabilityEl = $('stability');
+const logEl = $('log');
+const connectBtn = $('connectBtn');
+const disconnectBtn = $('disconnectBtn');
+
+function log(line) {
+  const ts = new Date().toISOString().split('T')[1].replace('Z', '');
+  logEl.textContent += `[${ts}] ${line}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(text, ok) {
+  statusEl.textContent = text;
+  statusEl.className = ok ? 'ok' : 'bad';
+}
+
+// scale.py's parse_weight()
+function parseWeight(line) {
+  const m = WEIGHT_PATTERN.exec(line);
+  if (!m) return null;
+  let val = m[1].replace(',', '.');
+  const unit = (m[2] || '').toLowerCase();
+  return `${val} ${unit}`.trim();
+}
+
+// scale_widget.py's ScaleMonitorThread.run() raw-line filtering
+function isValidRawLine(raw) {
+  if (!raw) return false;
+  if (raw.includes('/')) return false; // scale_widget.py:623
+  return true;
+}
+
+// scale_widget.py's _on_weight_received() zero-suppression + stability logic
+function onWeightReceived(weightStr) {
+  const parts = weightStr.split(' ');
+  const rawVal = parseFloat(parts[0]);
+  if (Number.isNaN(rawVal)) return;
+
+  const newWeight = rawVal * SCALE_WEIGHT_CORRECTION;
+
+  if (newWeight < 0.01) {
+    if (currentWeight > 0.01) {
+      log(`(ignoring zero-value read while current weight is ${currentWeight.toFixed(3)} kg)`);
+      return;
+    }
+    currentWeight = newWeight;
+    weightEl.textContent = `${newWeight.toFixed(3)} kg`;
+    stabilityEl.textContent = '';
+    return;
+  }
+
+  const diff = Math.abs(newWeight - currentWeight);
+  if (diff >= 0.001) {
+    currentWeight = newWeight;
+    weightEl.textContent = `${newWeight.toFixed(3)} kg`;
+  }
+
+  if (lastStableWeight === null) {
+    lastStableWeight = newWeight;
+    stableStartTime = performance.now();
+    stabilityEl.textContent = 'stabilizing…';
+    return;
+  }
+
+  if (Math.abs(newWeight - lastStableWeight) <= WEIGHT_THRESHOLD) {
+    if (stableStartTime === null) {
+      stableStartTime = performance.now();
+      stabilityEl.textContent = 'stabilizing…';
+    } else if ((performance.now() - stableStartTime) / 1000 >= STABLE_TIME) {
+      lastStableWeight = newWeight;
+      stableStartTime = null;
+      stabilityEl.textContent = `✓ STABLE at ${newWeight.toFixed(3)} kg`;
+      log(`STABLE: ${newWeight.toFixed(3)} kg`);
+    }
+  } else {
+    lastStableWeight = newWeight;
+    stableStartTime = null;
+    stabilityEl.textContent = 'stabilizing…';
+  }
+}
+
+async function connect() {
+  if (!('serial' in navigator)) {
+    setStatus('Web Serial API not available — use Chrome or Edge, over http://localhost or https://', false);
+    return;
+  }
+
+  try {
+    port = await navigator.serial.requestPort();
+    const baudRate = parseInt($('baud').value, 10);
+    await port.open({ baudRate });
+  } catch (e) {
+    log(`Failed to open port: ${e.message}`);
+    setStatus('Failed to connect', false);
+    return;
+  }
+
+  setStatus(`Connected at ${$('baud').value} baud`, true);
+  connectBtn.disabled = true;
+  disconnectBtn.disabled = false;
+  currentWeight = 0.0;
+  lastStableWeight = null;
+  stableStartTime = null;
+  lineBuffer = '';
+  keepReading = true;
+
+  readLoop();
+}
+
+async function readLoop() {
+  const textDecoder = new TextDecoderStream();
+  const readableClosed = port.readable.pipeTo(textDecoder.writable);
+  reader = textDecoder.readable.getReader();
+
+  try {
+    while (keepReading) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      // Web Serial has no readline() — buffer chunks and split on newlines,
+      // same idea as pyserial's readline() but manual (see FULL_WEB_APP_PLAN.md
+      // Phase 4 note on this).
+      lineBuffer += value;
+      const lines = lineBuffer.split(/\r?\n/);
+      lineBuffer = lines.pop(); // last (possibly incomplete) line stays buffered
+
+      for (const raw of lines) {
+        const trimmed = raw.trim();
+        if (!trimmed) continue;
+        log(`raw: ${trimmed}`);
+        if (!isValidRawLine(trimmed)) continue;
+        const parsed = parseWeight(trimmed);
+        if (parsed) onWeightReceived(parsed);
+      }
+    }
+  } catch (e) {
+    log(`Read error (connection likely lost): ${e.message}`);
+    setStatus('Connection lost', false);
+  } finally {
+    reader.releaseLock();
+    await readableClosed.catch(() => {});
+    if (keepReading) {
+      // loop exited on its own (device unplugged, etc.), not via disconnect()
+      await disconnect();
+    }
+  }
+}
+
+async function disconnect() {
+  keepReading = false;
+  try {
+    if (reader) await reader.cancel().catch(() => {});
+  } finally {
+    if (port) {
+      try { await port.close(); } catch (e) { /* already closed */ }
+    }
+    port = null;
+    reader = null;
+    setStatus('Not connected', false);
+    connectBtn.disabled = false;
+    disconnectBtn.disabled = true;
+  }
+}
+
+connectBtn.addEventListener('click', connect);
+disconnectBtn.addEventListener('click', disconnect);
+
+// Device physically unplugged
+navigator.serial?.addEventListener('disconnect', (e) => {
+  if (port && e.target === port) {
+    log('Device disconnected.');
+    disconnect();
+  }
+});
+</script>
+</body>
+</html>

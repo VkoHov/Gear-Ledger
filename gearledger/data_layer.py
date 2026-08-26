@@ -7,7 +7,22 @@ from __future__ import annotations
 import os
 from typing import Dict, Any, Optional, List
 
-from .desktop.settings_manager import load_settings, Settings
+try:
+    from .desktop.settings_manager import load_settings, Settings
+except ImportError:
+    # gearledger installed without the desktop package (e.g. a standalone
+    # cloud backend deployment — desktop* is excluded from the built
+    # package per pyproject.toml). Only get_network_mode()'s settings-file
+    # fallback and the (desktop-only, never called server-side)
+    # migrate_legacy_standalone_storage() need these names to exist.
+    from dataclasses import dataclass
+
+    @dataclass
+    class Settings:
+        network_mode: str = "server"
+
+    def load_settings() -> Settings:
+        return Settings(network_mode=os.getenv("GEARLEDGER_NETWORK_MODE", "server"))
 
 
 # Runtime state - tracks actual running mode (not just settings)

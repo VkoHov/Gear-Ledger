@@ -16,7 +16,25 @@ import json
 
 from .database import get_database, Database
 from .network_discovery import ServerBroadcaster
-from .desktop.settings_manager import APP_DIR
+
+
+def _get_versions_dir() -> str:
+    """Versions-archive directory. Prefers the desktop app's settings_manager
+    (keeps LAN-server behavior unchanged); falls back to an env var so this
+    module still works when `gearledger` is installed without the `desktop`
+    package (e.g. a standalone cloud backend deployment — desktop* is
+    excluded from the built package per pyproject.toml)."""
+    try:
+        from .desktop.settings_manager import get_versions_dir
+
+        return get_versions_dir()
+    except ImportError:
+        base = os.getenv(
+            "GEARLEDGER_DATA_DIR", os.path.join(os.path.expanduser("~"), ".gearledger")
+        )
+        versions_dir = os.path.join(base, "data", "versions")
+        os.makedirs(versions_dir, exist_ok=True)
+        return versions_dir
 
 
 class GearLedgerServer:
@@ -484,9 +502,7 @@ class GearLedgerServer:
             client = data.get("client")
 
             db = self._get_db()
-            from .desktop.settings_manager import get_versions_dir
-
-            count = db.archive_results_before_clear(get_versions_dir(), client)
+            count = db.archive_results_before_clear(_get_versions_dir(), client)
 
             # Increment data version for sync
             self._data_version += 1

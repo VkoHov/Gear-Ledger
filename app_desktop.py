@@ -6,7 +6,7 @@ import os, sys, multiprocessing as mp
 # Make local package importable when running from repo root
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 from PyQt6.QtGui import QIcon
 from pathlib import Path
 
@@ -119,6 +119,23 @@ def main():
 
     # Set application icon if available
     _set_application_icon(app)
+
+    # Require a cloud account before the app can be used at all. Gated on
+    # local token *presence* only, not a live validity check against the
+    # server — a login from a previous session still works offline, since
+    # requiring network connectivity just to launch would break the
+    # explicit offline-fallback goal in SAAS_ROADMAP.md. An actually-dead
+    # token gets caught the moment any real network call 401s (see
+    # api_client.APIClient.needs_reauth / NetworkSettingsDialog's handling
+    # of it) — this is only about blocking someone who never signed up.
+    from gearledger.desktop import settings_manager as _sm
+    from gearledger.desktop.login_dialog import LoginDialog
+
+    if not _sm.get_auth_token():
+        login_dlg = LoginDialog(required=True)
+        if login_dlg.exec() != QDialog.DialogCode.Accepted or not login_dlg.result:
+            sys.exit(0)
+        settings = load_settings()
 
     # Validate API key if OpenAI backend is selected (after QApplication is created)
     if settings.vision_backend == "openai" and settings.openai_api_key:

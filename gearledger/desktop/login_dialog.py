@@ -82,7 +82,11 @@ class _AuthWorker(QThread):
 
 
 class LoginDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, required: bool = False):
+        """required=True is the app-launch gate (app_desktop.py): closing
+        without a successful login exits the app instead of just closing a
+        dialog, so this shows an explanatory banner making that clear up
+        front rather than surprising the user."""
         super().__init__(parent)
         self.setWindowTitle(tr("cloud_login_title"))
         self.setMinimumWidth(380)
@@ -95,6 +99,12 @@ class LoginDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
+
+        if required:
+            required_label = QLabel(tr("account_required_message"))
+            required_label.setWordWrap(True)
+            required_label.setStyleSheet("color: #2c3e50; font-weight: bold;")
+            layout.addWidget(required_label)
 
         form = QFormLayout()
         self.server_edit = QLineEdit(settings.cloud_server_url)

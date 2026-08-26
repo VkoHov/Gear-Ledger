@@ -105,6 +105,18 @@ Sources checked 2026-07-20: [Cheapest VPS Hosting 2026 (Liquid Web)](https://www
 [Render vs Railway (Render's own comparison)](https://render.com/articles/render-vs-railway).
 Verify current pricing before committing — these change.
 
+## Access gating
+
+As of 2026-08-27, `app_desktop.py` requires a logged-in account to launch
+at all — no account, no app (see `desktop/cloud-auth`). This is
+**login-gated, not payment-gated**: there is no billing/subscription
+system yet (see the "Billing" row above — still not started), so today
+this only stops someone who never signed up, not someone who signed up
+but doesn't pay. Wiring in Stripe and checking subscription status at the
+same gate point is the natural next step once billing exists — it slots
+into the same check (`app_desktop.py`'s startup token check), it just
+needs something real to check besides "does a token exist."
+
 ## Auth hardening backlog
 
 The backend brought over from `web-app/installable-core` (now living in

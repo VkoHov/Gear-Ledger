@@ -598,6 +598,14 @@ class Database:
         cursor.execute("SELECT DISTINCT client FROM results ORDER BY client")
         return [row[0] for row in cursor.fetchall()]
 
+    def has_any_results(self) -> bool:
+        """Cheap existence check for the one-time standalone-storage
+        migration gate — avoids pulling every row just to test emptiness."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM results LIMIT 1")
+        return cursor.fetchone() is not None
+
     def export_to_dict(self) -> Dict[str, List[Dict[str, Any]]]:
         """Export all data grouped by client for Excel export."""
         results = self.get_all_results()

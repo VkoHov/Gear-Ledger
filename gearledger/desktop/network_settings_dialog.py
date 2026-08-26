@@ -68,18 +68,14 @@ class NetworkSettingsDialog(QDialog):
         self.mode_button_group = QButtonGroup(self)
         mode_row = QHBoxLayout()
 
-        self.standalone_radio = QRadioButton(tr("standalone_mode"))
-        self.standalone_radio.setToolTip(tr("standalone_tooltip"))
         self.server_radio = QRadioButton(tr("server_mode"))
         self.server_radio.setToolTip(tr("server_tooltip"))
         self.client_radio = QRadioButton(tr("client_mode"))
         self.client_radio.setToolTip(tr("client_tooltip"))
 
-        self.mode_button_group.addButton(self.standalone_radio, 0)
-        self.mode_button_group.addButton(self.server_radio, 1)
-        self.mode_button_group.addButton(self.client_radio, 2)
+        self.mode_button_group.addButton(self.server_radio, 0)
+        self.mode_button_group.addButton(self.client_radio, 1)
 
-        mode_row.addWidget(self.standalone_radio)
         mode_row.addWidget(self.server_radio)
         mode_row.addWidget(self.client_radio)
         mode_row.addStretch(1)
@@ -205,7 +201,6 @@ class NetworkSettingsDialog(QDialog):
         network_layout.addWidget(self.connection_status_label)
 
         # Connect mode radio buttons to update UI
-        self.standalone_radio.toggled.connect(self._update_network_ui)
         self.server_radio.toggled.connect(self._update_network_ui)
         self.client_radio.toggled.connect(self._update_network_ui)
 
@@ -235,12 +230,10 @@ class NetworkSettingsDialog(QDialog):
             self.server_address_combo.lineEdit().setText(s.server_address)
 
         # Set network mode radio
-        if s.network_mode == "server":
-            self.server_radio.setChecked(True)
-        elif s.network_mode == "client":
+        if s.network_mode == "client":
             self.client_radio.setChecked(True)
         else:
-            self.standalone_radio.setChecked(True)
+            self.server_radio.setChecked(True)
 
         self._update_network_ui()
 
@@ -248,7 +241,6 @@ class NetworkSettingsDialog(QDialog):
         """Update network UI based on selected mode."""
         is_server = self.server_radio.isChecked()
         is_client = self.client_radio.isChecked()
-        is_standalone = self.standalone_radio.isChecked()
 
         # Show/hide server controls based on mode
         self.server_name_label.setVisible(is_server)
@@ -296,7 +288,7 @@ class NetworkSettingsDialog(QDialog):
             self.start_server_btn.setStyleSheet(
                 "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 12px;"
             )
-            if is_standalone or not is_server:
+            if not is_server:
                 self.server_status_label.setText(tr("server_status_stopped"))
                 self.server_status_label.setStyleSheet(
                     "color: #7f8c8d; font-style: italic;"
@@ -340,20 +332,22 @@ class NetworkSettingsDialog(QDialog):
         self._update_network_ui()
 
     def _toggle_server(self):
-        """Start or stop the server."""
+        """Turn LAN sharing on/off. The local DB backend is always active
+        regardless — this only controls whether the HTTP listener binds a
+        port for other devices to connect to."""
         from gearledger.server import start_server, stop_server, get_server
-        from gearledger.data_layer import set_runtime_mode
 
         self._server = get_server()
 
         if self._server and self._server.is_running():
-            # Stop server
+            # Stop sharing
             stop_server()
             self._server = None
-            set_runtime_mode("standalone")  # Reset runtime mode
+            self.settings.server_sharing_enabled = False
+            save_settings(self.settings)
             # Update UI to hide server controls
             self._update_network_ui()
-            self.network_mode_changed.emit("standalone", "")
+            self.network_mode_changed.emit("server", "")
             QMessageBox.information(self, tr("server"), tr("server_stopped_msg"))
         else:
             # Start server
@@ -385,7 +379,8 @@ class NetworkSettingsDialog(QDialog):
                     server_name=server_name or None,
                 )
                 if self._server and self._server.is_running():
-                    set_runtime_mode("server")  # Set runtime mode to server
+                    self.settings.server_sharing_enabled = True
+                    save_settings(self.settings)
                     url = self._server.get_server_url()
                     # Update UI to show server controls
                     self._update_network_ui()
@@ -418,10 +413,13 @@ class NetworkSettingsDialog(QDialog):
         self._client = get_client()
 
         if self._client and self._client.is_connected():
-            # Disconnect
+            # Disconnect - falls back to local (server) mode, not a
+            # nonexistent standalone mode
             disconnect_from_server()
             self._client = None
-            set_runtime_mode("standalone")  # Reset runtime mode
+            set_runtime_mode("server")
+            self.settings.network_mode = "server"
+            save_settings(self.settings)
             self.connection_status_label.setText(tr("connection_status_disconnected"))
             self.connection_status_label.setStyleSheet(
                 "color: #7f8c8d; font-style: italic;"
@@ -430,7 +428,7 @@ class NetworkSettingsDialog(QDialog):
             self.connect_btn.setStyleSheet(
                 "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
             )
-            self.network_mode_changed.emit("standalone", "")
+            self.network_mode_changed.emit("server", "")
             QMessageBox.information(self, tr("connection"), tr("disconnected_msg"))
             return
 
@@ -723,12 +721,9 @@ class NetworkSettingsDialog(QDialog):
         self.settings.server_address = (
             self._normalize_server_address(raw) or raw
         )
-        if self.server_radio.isChecked():
-            self.settings.network_mode = "server"
-        elif self.client_radio.isChecked():
-            self.settings.network_mode = "client"
-        else:
-            self.settings.network_mode = "standalone"
+        self.settings.network_mode = (
+            "client" if self.client_radio.isChecked() else "server"
+        )
 
         save_settings(self.settings)
         super().accept()

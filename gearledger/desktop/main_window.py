@@ -1325,21 +1325,23 @@ class MainWindow(QWidget):
         dlg.exec()
 
     def _on_toggle_server(self):
-        """Start or stop the server from main window."""
+        """Turn LAN sharing on/off from main window. The local DB backend
+        is always active regardless — this only controls whether the HTTP
+        listener binds a port for other devices to connect to."""
         from gearledger.server import start_server, stop_server, get_server
-        from gearledger.data_layer import set_runtime_mode
+        from gearledger.desktop.settings_manager import load_settings, save_settings
         from PyQt6.QtWidgets import QMessageBox
 
         server = get_server()
         if server and server.is_running():
             stop_server()
-            set_runtime_mode("standalone")
-            self.append_logs(["🖥️ Server stopped"])
+            settings = load_settings()
+            settings.server_sharing_enabled = False
+            save_settings(settings)
+            self.append_logs(["🔌 Network sharing turned off"])
             self._update_network_status()
             self.settings_widget.update_catalog_ui_for_mode()
         else:
-            from gearledger.desktop.settings_manager import load_settings
-
             settings = load_settings()
             port = settings.server_port
             try:
@@ -1355,9 +1357,10 @@ class MainWindow(QWidget):
                     on_client_changed=on_client_changed,
                 )
                 if server and server.is_running():
-                    set_runtime_mode("server")
+                    settings.server_sharing_enabled = True
+                    save_settings(settings)
                     url = server.get_server_url()
-                    self.append_logs([f"🖥️ Server started at {url}"])
+                    self.append_logs([f"📡 Sharing on network at {url}"])
                     self._update_network_status()
                     self.settings_widget.update_catalog_ui_for_mode()
                     QTimer.singleShot(500, self._auto_set_uploaded_catalog)
@@ -1380,11 +1383,15 @@ class MainWindow(QWidget):
         """
         from gearledger.api_client import disconnect_from_server, get_client
         from gearledger.data_layer import set_runtime_mode
+        from gearledger.desktop.settings_manager import load_settings, save_settings
 
         client = get_client()
         if client and client.is_connected():
             disconnect_from_server()
-            set_runtime_mode("standalone")
+            set_runtime_mode("server")
+            settings = load_settings()
+            settings.network_mode = "server"
+            save_settings(settings)
             if self._sse_client:
                 self._sse_client.stop()
                 self._sse_client = None
@@ -1651,13 +1658,18 @@ class MainWindow(QWidget):
                 print("[MAIN_WINDOW] No catalog file selected in settings")
 
     def _auto_start_server_if_needed(self):
-        """Auto-start server on app launch if settings say server mode."""
+        """Auto-start the LAN listener on app launch if sharing was left
+        on last time. The local DB backend itself needs no auto-start —
+        it's always available — this only re-binds the network port so
+        previously-connected clients can reconnect without the user
+        having to manually re-enable sharing every launch."""
         from gearledger.desktop.settings_manager import load_settings
         from gearledger.server import get_server, start_server
-        from gearledger.data_layer import set_runtime_mode
 
         settings = load_settings()
-        if settings.network_mode != "server":
+        if settings.network_mode == "client":
+            return  # defensive - sharing is meaningless in client mode
+        if not settings.server_sharing_enabled:
             return
         server = get_server()
         if server and server.is_running():
@@ -1674,8 +1686,7 @@ class MainWindow(QWidget):
                 on_data_changed=on_data_changed,
                 on_client_changed=on_client_changed,
             )
-            set_runtime_mode("server")
-            self.append_logs([f"🖥️ Server auto-started on port {settings.server_port}"])
+            self.append_logs([f"📡 Sharing auto-started on port {settings.server_port}"])
             self._update_network_status()
             self.settings_widget.update_catalog_ui_for_mode()
             self._register_server_callbacks()
@@ -1865,7 +1876,7 @@ class MainWindow(QWidget):
             # Use the new sequential initialization
             self._initialize_client_connection()
         else:
-            # In server/standalone mode, stop SSE connection
+            # In server (local) mode, stop SSE connection
             if self._sse_client:
                 print("[MAIN_WINDOW] Stopping SSE connection (not in client mode)")
                 self.append_logs(["🔌 Disconnecting from server..."])
@@ -2020,7 +2031,7 @@ class MainWindow(QWidget):
             # Initialize client connection sequentially
             self._initialize_client_connection()
         else:
-            # In server/standalone mode, stop SSE connection
+            # In server (local) mode, stop SSE connection
             if self._sse_client:
                 self.append_logs(["🔌 Disconnecting from server..."])
                 self._sse_client.stop()
@@ -2257,7 +2268,7 @@ class MainWindow(QWidget):
                     status_text = f"🖥️ Server{server_label}: Running (0 clients)"
                     bg_color = "#f39c12"  # Orange
             else:
-                status_text = "🖥️ Server: Stopped"
+                status_text = "📴 Not sharing (local only)"
                 bg_color = "#95a5a6"  # Gray
         elif mode == "client":
             if client and client.is_connected():
@@ -2284,9 +2295,6 @@ class MainWindow(QWidget):
             else:
                 status_text = "💻 Client: Disconnected"
                 bg_color = "#e74c3c"  # Red
-        else:
-            status_text = "📱 Standalone"
-            bg_color = "#95a5a6"  # Gray
 
         print(f"[MAIN_WINDOW] Updating status label to: {status_text}")
         self.network_status_label.setText(status_text)

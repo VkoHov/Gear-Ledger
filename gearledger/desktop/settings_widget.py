@@ -98,7 +98,7 @@ class SettingsWidget(QGroupBox):
         results_info_layout.addWidget(self.results_info_label, 1)
         layout.addLayout(results_info_layout)
 
-        # Last Reset/Restore breadcrumb (standalone/server only, not client —
+        # Last Reset/Restore breadcrumb (local/server mode only, not client —
         # informational provenance, not true version tracking)
         last_action_layout = QHBoxLayout()
         self.last_action_label = QLabel("")
@@ -293,8 +293,10 @@ class SettingsWidget(QGroupBox):
                 self.on_results_changed(fn)
 
     def import_results_excel(self):
-        """Import an external Excel file's rows into the database (server
-        mode only — standalone just uses Browse directly).
+        """Import an external Excel file's rows into the database. This is
+        the only local-storage import path now — there's no more
+        standalone "just Browse" alternative — so it's available whenever
+        we're not in client mode.
 
         Validates the file has our expected column structure first, then
         archives whatever's currently in the database (same safety net
@@ -302,7 +304,7 @@ class SettingsWidget(QGroupBox):
         before loading the imported rows in.
         """
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
-        import pandas as pd
+        from gearledger.result_ledger import validate_ledger_columns
 
         fn, _ = QFileDialog.getOpenFileName(
             self,
@@ -312,17 +314,13 @@ class SettingsWidget(QGroupBox):
         if not fn:
             return
 
-        try:
-            header_df = pd.read_excel(fn, nrows=0)
-        except Exception as e:
+        ok, missing, read_error = validate_ledger_columns(fn)
+        if read_error:
             QMessageBox.critical(
-                self, tr("import_failed"), tr("import_failed_msg", error=str(e))
+                self, tr("import_failed"), tr("import_failed_msg", error=read_error)
             )
             return
-
-        required_cols = ["Артикул", "Клиент", "Количество"]
-        missing = [c for c in required_cols if c not in header_df.columns]
-        if missing:
+        if not ok:
             QMessageBox.critical(
                 self,
                 tr("import_invalid_title"),
@@ -370,80 +368,6 @@ class SettingsWidget(QGroupBox):
             tr("import_complete_title"),
             tr("import_complete_msg", count=result.get("restored", 0)),
         )
-
-    def _archive_active_file_if_needed(self, path: str):
-        """Move *path* into the versions folder if it exists and has data.
-
-        Uses a collision-safe timestamp suffix so two archives created within
-        the same second don't silently overwrite one another. Skips
-        archiving if the data is unchanged since the last Restore —
-        otherwise restoring back and forth with nothing recorded in
-        between piles up duplicate versions.
-        """
-        import shutil
-        import pandas as pd
-        from gearledger.desktop.settings_manager import get_versions_dir
-        from gearledger.result_ledger import unique_version_path
-
-        if not os.path.exists(path):
-            return
-        try:
-            had_rows = len(pd.read_excel(path)) > 0
-        except Exception:
-            had_rows = True  # unreadable — archive rather than silently drop
-        if not had_rows:
-            return
-
-        if self._is_redundant_of_last_restore(path):
-            return
-
-        shutil.move(path, unique_version_path(get_versions_dir()))
-
-    def _is_redundant_of_last_restore(self, current_path: str) -> bool:
-        """True if current_path's data is unchanged since the last Restore —
-        i.e. archiving it now would just duplicate the version already
-        restored from.
-
-        Deliberately restore-only, not import: an imported file can live
-        anywhere on disk (outside our control), so import always creates
-        its own internal version copy rather than relying on the external
-        source file staying put.
-        """
-        try:
-            from gearledger.desktop.settings_manager import (
-                load_settings,
-                get_versions_dir,
-            )
-            from gearledger.result_ledger import get_all_results_excel, rows_equal
-
-            settings = load_settings()
-            if settings.last_results_action != "restore":
-                return False
-            source_path = os.path.join(
-                get_versions_dir(), settings.last_results_action_detail
-            )
-            if not os.path.exists(source_path):
-                return False
-            return rows_equal(
-                get_all_results_excel(current_path),
-                get_all_results_excel(source_path),
-            )
-        except Exception:
-            return False
-
-    def _set_active_results_path(self, path: str):
-        """Point the app at *path* as the active results file and remember it."""
-        from gearledger.desktop.settings_manager import load_settings, save_settings
-
-        self.results_edit.setText(path)
-        if self.on_results_changed:
-            self.on_results_changed(path)
-
-        # Persist so relaunching the app keeps using this file instead of
-        # reverting to whatever default_result_file was last saved
-        settings = load_settings()
-        settings.default_result_file = path
-        save_settings(settings)
 
     def _notify_server_clients_data_changed(self):
         """Broadcast a results_changed SSE event to any connected clients.
@@ -502,10 +426,9 @@ class SettingsWidget(QGroupBox):
             self.last_action_label.setText("")
 
     def reset_results_excel(self):
-        """Reset results file to a new empty file (or clear database in network mode)."""
+        """Clear all recorded results (database in local/server mode, or
+        the remote server's data when in client mode)."""
         from PyQt6.QtWidgets import QMessageBox
-        import pandas as pd
-        from gearledger.result_ledger import COLUMNS
 
         # Ask for confirmation
         reply = QMessageBox.question(
@@ -520,37 +443,11 @@ class SettingsWidget(QGroupBox):
             return
 
         try:
-            # Check if in network mode - clear database instead
             from gearledger.data_layer import get_network_mode
 
             mode = get_network_mode()
 
-            if mode == "server":
-                # Archive current results to a version file, then clear the database
-                from gearledger.database import get_database
-                from gearledger.desktop.settings_manager import (
-                    get_versions_dir,
-                    record_last_results_action,
-                )
-
-                db = get_database()
-                count = db.archive_results_before_clear(get_versions_dir())
-                print(f"[RESET] Archived and cleared {count} results from database")
-                self._notify_server_clients_data_changed()
-                record_last_results_action("reset", f"{count} items cleared")
-                self._update_last_action_label()
-
-                # Force refresh results pane
-                if hasattr(self, "on_results_refresh") and self.on_results_refresh:
-                    self.on_results_refresh()
-
-                QMessageBox.information(
-                    self,
-                    tr("reset_complete"),
-                    tr("reset_complete_msg", path=f"Database ({count} items cleared)"),
-                )
-                return
-            elif mode == "client":
+            if mode == "client":
                 # Clear results on server via API
                 from gearledger.api_client import get_client
 
@@ -579,30 +476,29 @@ class SettingsWidget(QGroupBox):
                     )
                     return
 
-            # Standalone mode - archive the current file (if it has data) as a
-            # version, then recreate a fresh empty file at the same path.
+            # Local (server) mode - archive current results to a version
+            # file, then clear the database
+            from gearledger.database import get_database
             from gearledger.desktop.settings_manager import (
-                get_default_result_file,
+                get_versions_dir,
                 record_last_results_action,
             )
 
-            target_path = self.get_results_path() or get_default_result_file()
-            self._archive_active_file_if_needed(target_path)
-
-            # Create empty DataFrame with column headers, saved at the same
-            # path so it keeps being the one relaunch picks up
-            df = pd.DataFrame(columns=COLUMNS)
-            os.makedirs(os.path.dirname(target_path), exist_ok=True)
-            df.to_excel(target_path, index=False)
-
-            self._set_active_results_path(target_path)
-            record_last_results_action("reset", os.path.basename(target_path))
+            db = get_database()
+            count = db.archive_results_before_clear(get_versions_dir())
+            print(f"[RESET] Archived and cleared {count} results from database")
+            self._notify_server_clients_data_changed()
+            record_last_results_action("reset", f"{count} items cleared")
             self._update_last_action_label()
+
+            # Force refresh results pane
+            if hasattr(self, "on_results_refresh") and self.on_results_refresh:
+                self.on_results_refresh()
 
             QMessageBox.information(
                 self,
                 tr("reset_complete"),
-                tr("reset_complete_msg", path=target_path),
+                tr("reset_complete_msg", path=f"Database ({count} items cleared)"),
             )
         except Exception as e:
             QMessageBox.critical(
@@ -626,7 +522,7 @@ class SettingsWidget(QGroupBox):
         import datetime
         import pandas as pd
 
-        can_restore = get_network_mode() in ("standalone", "server")
+        can_restore = get_network_mode() != "client"
         versions_dir = get_versions_dir()
         try:
             filenames = sorted(
@@ -757,29 +653,17 @@ class SettingsWidget(QGroupBox):
     def _make_restore_version_handler(self, path: str, dlg):
         def _restore():
             from PyQt6.QtWidgets import QMessageBox
-            from gearledger.data_layer import get_network_mode
 
-            is_server = get_network_mode() == "server"
-            confirm_msg = (
-                tr("restore_version_confirm_server")
-                if is_server
-                else tr("restore_version_confirm")
-            )
             reply = QMessageBox.question(
                 self,
                 tr("restore_version_title"),
-                confirm_msg,
+                tr("restore_version_confirm_server"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-            ok = (
-                self._restore_version_server(path)
-                if is_server
-                else self._restore_version(path)
-            )
-            if ok:
+            if self._restore_version_server(path):
                 dlg.accept()
 
         return _restore
@@ -819,79 +703,17 @@ class SettingsWidget(QGroupBox):
         )
         return True
 
-    def _restore_version(self, version_path: str) -> bool:
-        """Make an archived version the active results file again
-        (standalone mode).
-
-        Whatever is currently active gets archived first (same rule as
-        Reset: only if it has data), so switching back never loses work.
-        Returns True on success.
-        """
-        import shutil
-        from PyQt6.QtWidgets import QMessageBox
-        from gearledger.desktop.settings_manager import (
-            get_default_result_file,
-            record_last_results_action,
-        )
-
-        try:
-            target_path = self.get_results_path() or get_default_result_file()
-            self._archive_active_file_if_needed(target_path)
-
-            os.makedirs(os.path.dirname(target_path), exist_ok=True)
-            shutil.copy2(version_path, target_path)  # keep the archived copy intact
-
-            self._set_active_results_path(target_path)
-            record_last_results_action("restore", os.path.basename(version_path))
-            self._update_last_action_label()
-
-            if hasattr(self, "on_results_refresh") and self.on_results_refresh:
-                self.on_results_refresh()
-
-            QMessageBox.information(
-                self,
-                tr("restore_complete"),
-                tr("restore_complete_msg", path=target_path),
-            )
-            return True
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                tr("restore_failed"),
-                tr("restore_failed_msg", error=str(e)),
-            )
-            return False
-
     def download_results_excel(self):
-        """Save results Excel file to a chosen location.
-
-        In server mode, results live in the database, not the local Excel
-        file (which nothing writes to anymore) — so this exports the live
-        database contents instead of copying that unused local file.
-        """
+        """Export current results (from the database) to a chosen Excel
+        file location."""
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
-        import shutil
-        from gearledger.data_layer import get_network_mode
+        from gearledger.database import get_database
+        from gearledger.result_ledger import rows_to_dataframe
 
-        is_server = get_network_mode() == "server"
-
-        if is_server:
-            from gearledger.database import get_database
-            from gearledger.result_ledger import rows_to_dataframe
-
-            rows = get_database().get_all_results()
-            if not rows:
-                QMessageBox.warning(self, tr("download_results"), tr("no_results_file"))
-                return
-        else:
-            current_path = self.get_results_path()
-            if not current_path or not os.path.exists(current_path):
-                QMessageBox.warning(
-                    self,
-                    tr("download_results"),
-                    tr("no_results_file"),
-                )
-                return
+        rows = get_database().get_all_results()
+        if not rows:
+            QMessageBox.warning(self, tr("download_results"), tr("no_results_file"))
+            return
 
         # Get save location
         fn, _ = QFileDialog.getSaveFileName(
@@ -907,10 +729,7 @@ class SettingsWidget(QGroupBox):
                 if not fn.endswith(".xlsx"):
                     fn += ".xlsx"
 
-                if is_server:
-                    rows_to_dataframe(rows).to_excel(fn, index=False)
-                else:
-                    shutil.copy2(current_path, fn)
+                rows_to_dataframe(rows).to_excel(fn, index=False)
 
                 QMessageBox.information(
                     self,
@@ -1008,58 +827,58 @@ class SettingsWidget(QGroupBox):
             # Fallback to local catalog if server catalog not available
             return self.catalog_edit.text().strip()
 
-        # In server mode, prioritize in-memory uploaded catalog, but fall back to file from settings
-        if mode == "server":
-            server = get_server()
-            if server and server.is_running():
-                catalog_bytes = server.get_uploaded_catalog_data()
-                if catalog_bytes is not None:
-                    # Catalog is in memory, save it to a temporary cache file for search functions
-                    # Search functions (run_fuzzy_match, process_image) need a file path, not bytes
-                    from gearledger.desktop.settings_manager import APP_DIR
+        # Local (server) mode: prioritize in-memory uploaded catalog, but
+        # fall back to the file from settings
+        server = get_server()
+        if server and server.is_running():
+            catalog_bytes = server.get_uploaded_catalog_data()
+            if catalog_bytes is not None:
+                # Catalog is in memory, save it to a temporary cache file for search functions
+                # Search functions (run_fuzzy_match, process_image) need a file path, not bytes
+                from gearledger.desktop.settings_manager import APP_DIR
 
-                    catalog_cache_dir = os.path.join(APP_DIR, "catalog_cache")
-                    os.makedirs(catalog_cache_dir, exist_ok=True)
-                    cached_catalog = os.path.join(
-                        catalog_cache_dir, "server_catalog.xlsx"
-                    )
+                catalog_cache_dir = os.path.join(APP_DIR, "catalog_cache")
+                os.makedirs(catalog_cache_dir, exist_ok=True)
+                cached_catalog = os.path.join(
+                    catalog_cache_dir, "server_catalog.xlsx"
+                )
 
-                    # Save in-memory catalog to cache file if it doesn't exist or is outdated
-                    # Check modification time to avoid unnecessary writes
-                    needs_write = True
-                    if os.path.exists(cached_catalog):
-                        # Compare with server's upload time
-                        upload_time = server._catalog_upload_time or 0
-                        local_modified = os.path.getmtime(cached_catalog)
-                        if upload_time <= local_modified:
-                            needs_write = False
+                # Save in-memory catalog to cache file if it doesn't exist or is outdated
+                # Check modification time to avoid unnecessary writes
+                needs_write = True
+                if os.path.exists(cached_catalog):
+                    # Compare with server's upload time
+                    upload_time = server._catalog_upload_time or 0
+                    local_modified = os.path.getmtime(cached_catalog)
+                    if upload_time <= local_modified:
+                        needs_write = False
 
-                    if needs_write:
-                        try:
-                            with open(cached_catalog, "wb") as f:
-                                f.write(catalog_bytes)
-                            print(
-                                f"[SETTINGS] Saved in-memory catalog to cache: {cached_catalog}"
-                            )
-                        except Exception as e:
-                            print(f"[SETTINGS] Failed to save catalog cache: {e}")
-                            # Fall back to file from settings if cache write fails
-                            local_catalog = self.catalog_edit.text().strip()
-                            if local_catalog and os.path.exists(local_catalog):
-                                return local_catalog
-                            return ""
+                if needs_write:
+                    try:
+                        with open(cached_catalog, "wb") as f:
+                            f.write(catalog_bytes)
+                        print(
+                            f"[SETTINGS] Saved in-memory catalog to cache: {cached_catalog}"
+                        )
+                    except Exception as e:
+                        print(f"[SETTINGS] Failed to save catalog cache: {e}")
+                        # Fall back to file from settings if cache write fails
+                        local_catalog = self.catalog_edit.text().strip()
+                        if local_catalog and os.path.exists(local_catalog):
+                            return local_catalog
+                        return ""
 
-                    # Return cached file path for search functions
-                    return cached_catalog
-                else:
-                    # No uploaded catalog, use the catalog file from settings
-                    local_catalog = self.catalog_edit.text().strip()
-                    if local_catalog and os.path.exists(local_catalog):
-                        return local_catalog
-                    # No catalog file selected either
-                    return ""
+                # Return cached file path for search functions
+                return cached_catalog
+            else:
+                # No uploaded catalog, use the catalog file from settings
+                local_catalog = self.catalog_edit.text().strip()
+                if local_catalog and os.path.exists(local_catalog):
+                    return local_catalog
+                # No catalog file selected either
+                return ""
 
-        # In standalone mode, use local catalog
+        # No server instance running (sharing off) - use local catalog
         return self.catalog_edit.text().strip()
 
     def _upload_catalog_to_server_auto(self, catalog_path: str):
@@ -1208,32 +1027,29 @@ class SettingsWidget(QGroupBox):
                     "color: #e74c3c; font-size: 11px; padding: 4px;"
                 )
         else:
-            # In server/standalone mode: show catalog selection, hide status
-            is_server = mode == "server"
+            # In local (server) mode: show catalog selection, hide status
             self.catalog_label.setVisible(True)
             self.catalog_edit.setVisible(True)
             self.btn_catalog.setVisible(True)
             self.catalog_info_label.setVisible(False)
 
-            # Results Excel path/Browse only apply in standalone mode — in
-            # server mode nothing reads or writes that local file anymore,
-            # everything goes through the database instead.
-            self.results_label.setVisible(not is_server)
-            self.results_edit.setVisible(not is_server)
-            self.btn_results.setVisible(not is_server)
-            self.btn_import_results.setVisible(is_server)
+            # Results are always DB-backed now — the local Excel-file
+            # picker has no live storage path to point at anymore.
+            self.results_label.setVisible(False)
+            self.results_edit.setVisible(False)
+            self.btn_results.setVisible(False)
+            self.btn_import_results.setVisible(True)
             self.btn_reset_results.setVisible(True)
             self.btn_versions.setVisible(True)
             self.btn_download.setVisible(True)
             self.btn_generate_invoice.setVisible(True)
             self.btn_check_completeness.setVisible(True)
             self.last_action_label.setVisible(True)
-            self.results_info_label.setVisible(is_server)
-            if is_server:
-                self.results_info_label.setText(f"📄 {tr('results_status_database')}")
-                self.results_info_label.setStyleSheet(
-                    "color: #7f8c8d; font-size: 11px; padding: 4px;"
-                )
+            self.results_info_label.setVisible(True)
+            self.results_info_label.setText(f"📄 {tr('results_status_database')}")
+            self.results_info_label.setStyleSheet(
+                "color: #7f8c8d; font-size: 11px; padding: 4px;"
+            )
             self._update_last_action_label()
 
     def get_results_path(self) -> str:

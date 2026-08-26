@@ -46,6 +46,25 @@ def unique_version_path(versions_dir: str) -> str:
     return path
 
 
+def validate_ledger_columns(path: str) -> tuple[bool, list, "str | None"]:
+    """Read just the header row of an Excel file and check it has the
+    results-ledger's required columns. Shared by the manual "Import
+    Results" action and the one-time legacy-storage migration, so both
+    reject the same malformed files the same way.
+
+    Returns (ok, missing_columns, read_error) — read_error is set (and
+    missing_columns is empty) when the file couldn't even be opened as
+    Excel, distinct from a readable file that's just missing columns.
+    """
+    required = ["Артикул", "Клиент", "Количество"]
+    try:
+        header_df = pd.read_excel(path, nrows=0)
+    except Exception as e:
+        return False, [], str(e)
+    missing = [c for c in required if c not in header_df.columns]
+    return not missing, missing, None
+
+
 def rows_to_dataframe(rows) -> pd.DataFrame:
     """Map database result rows (dicts with artikul/client/quantity/... keys)
     to the standard results-ledger DataFrame shape, for archiving DB-backed
@@ -65,202 +84,6 @@ def rows_to_dataframe(rows) -> pd.DataFrame:
         for r in rows
     ]
     return pd.DataFrame(data, columns=COLUMNS)
-
-
-def record_match(
-    path: str,
-    artikul: str,
-    client: str,
-    qty_inc: int = 1,
-    weight_inc: int = 1,
-    catalog_path: str = None,
-    weight_price: float = 0.0,
-) -> Dict[str, str]:
-    """
-    Ensure results sheet exists and either insert row(s) for (Артикул,
-    Клиент) or increment existing row(s)' Количество. Matching is done
-    on normalized Артикул + case-insensitive Клиент + Цена продажи —
-    price is part of the row identity so that when the same client has
-    multiple catalog lines for this artikul at different prices (e.g. 3
-    units @ 1000, 2 units @ 3000), each price tier gets its own
-    correctly-priced row instead of the whole recorded quantity being
-    flattened to whichever price was looked up first. Tiers fill in
-    catalog order — the first tier's ordered quantity is used up before
-    any of this scan spills into the next tier's price. When there's
-    only one price for this artikul+client (the common case), this
-    behaves exactly as before: one row, incremented in place.
-
-    If catalog_path is provided, will look up additional fields (Брэнд, Описание, Цена продажи).
-    If weight_price is provided, will calculate Цена продажи as weight * weight_price.
-    """
-    # Make parent dir if needed
-    d = os.path.dirname(path)
-    if d and not os.path.exists(d):
-        os.makedirs(d, exist_ok=True)
-
-    # Load (or create) dataframe
-    if os.path.exists(path):
-        try:
-            df = pd.read_excel(path)
-        except Exception:
-            df = pd.DataFrame(columns=COLUMNS)
-    else:
-        df = pd.DataFrame(columns=COLUMNS)
-
-    # Ensure required columns exist
-    for col in COLUMNS:
-        if col not in df.columns:
-            df[col] = pd.Series(dtype="object")
-
-    # Look up catalog price tiers for this artikul+client (may be more
-    # than one distinct-priced line — see allocate_tiered_quantity)
-    catalog_bytes = None
-    if not catalog_path or not os.path.exists(catalog_path):
-        from gearledger.data_layer import get_network_mode
-        mode = get_network_mode()
-        if mode == "server":
-            from gearledger.server import get_server
-            server = get_server()
-            if server and server.is_running():
-                catalog_bytes = server.get_uploaded_catalog_data()
-
-    if catalog_bytes is not None:
-        tiers = _lookup_catalog_tiers(artikul, catalog_bytes=catalog_bytes, client=client)
-    elif catalog_path and os.path.exists(catalog_path):
-        tiers = _lookup_catalog_tiers(artikul, catalog_path=catalog_path, client=client)
-    else:
-        print(f"[INFO] No catalog file selected")
-        tiers = []
-
-    if tiers:
-        print(
-            f"[INFO] Found {len(tiers)} catalog line(s) for {artikul}/{client}: "
-            f"{[(t['цена'], t['количество']) for t in tiers]}"
-        )
-    else:
-        print(f"[INFO] No catalog data found for {artikul}")
-
-    # Build match key components. Артикул + Клиент stay fixed for this
-    # whole call; Цена продажи varies per allocation below.
-    key_norm = _norm(artikul)
-    client_upper = (client or "").upper()
-
-    norm_col = "_NORM"
-    df[norm_col] = df["Артикул"].astype(str).map(_norm)
-    if "Клиент" in df.columns:
-        client_match = df["Клиент"].astype(str).str.upper() == client_upper
-    else:
-        client_match = pd.Series([False] * len(df))
-
-    def _existing_qty_at_price(price) -> int:
-        """How much is already recorded for this artikul+client at this
-        exact price — snapshot of df as of before this call's writes, so
-        allocate_tiered_quantity sees a consistent picture across all
-        tiers even though we haven't written anything yet."""
-        if "Цена продажи" not in df.columns or len(df) == 0:
-            return 0
-        price_match = df["Цена продажи"].apply(price_key) == price_key(price)
-        mask_price = (df[norm_col] == key_norm) & client_match & price_match
-        return int(
-            pd.to_numeric(df.loc[mask_price, "Количество"], errors="coerce")
-            .fillna(0)
-            .sum()
-        )
-
-    allocations = allocate_tiered_quantity(qty_inc, tiers, _existing_qty_at_price)
-
-    def _to_int(v):
-        try:
-            return int(pd.to_numeric(v, errors="coerce") or 0)
-        except Exception:
-            return 0
-
-    now = datetime.datetime.now()
-    any_inserted = False
-    any_updated = False
-
-    for alloc in allocations:
-        alloc_qty = alloc["qty"]
-        if alloc_qty <= 0:
-            continue
-        alloc_price = alloc["цена"]
-        alloc_brand = alloc["бренд"]
-        alloc_desc = alloc["описание"]
-
-        # Recompute against the current df each iteration — an earlier
-        # allocation in this same call may have appended a new row.
-        df[norm_col] = df["Артикул"].astype(str).map(_norm)
-        cur_client_match = (
-            df["Клиент"].astype(str).str.upper() == client_upper
-            if "Клиент" in df.columns
-            else pd.Series([False] * len(df))
-        )
-        price_match = (
-            df["Цена продажи"].apply(price_key) == price_key(alloc_price)
-            if "Цена продажи" in df.columns
-            else pd.Series([False] * len(df))
-        )
-        mask = (df[norm_col] == key_norm) & cur_client_match & price_match
-
-        if mask.any():
-            idx = df.index[mask][0]
-            # Only increment quantity, NOT weight (weight stays the same
-            # for existing items — matches every other duplicate-scan row)
-            df.loc[idx, "Количество"] = _to_int(df.loc[idx, "Количество"]) + alloc_qty
-            df.loc[idx, "Последнее обновление"] = now
-
-            if alloc_brand and (not df.loc[idx, "Брэнд"] or pd.isna(df.loc[idx, "Брэнд"])):
-                df.loc[idx, "Брэнд"] = alloc_brand
-            if alloc_desc and (
-                not df.loc[idx, "Описание"] or pd.isna(df.loc[idx, "Описание"])
-            ):
-                df.loc[idx, "Описание"] = alloc_desc
-
-            new_quantity = _to_int(df.loc[idx, "Количество"])
-            if alloc_price > 0:
-                df.loc[idx, "Цена продажи"] = alloc_price
-                df.loc[idx, "Сумма продажи"] = alloc_price * new_quantity
-            any_updated = True
-        else:
-            new_row = {
-                "Артикул": artikul,
-                "Клиент": client,
-                "Количество": alloc_qty,
-                "Вес": weight_inc,
-                "Последнее обновление": now,
-                "Брэнд": alloc_brand,
-                "Описание": alloc_desc,
-                "Цена продажи": alloc_price,
-                "Сумма продажи": alloc_price * alloc_qty,
-            }
-            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True, sort=False)
-            any_inserted = True
-
-    action = "inserted" if any_inserted else "updated"
-
-    # Drop temp column and save
-    if norm_col in df.columns:
-        df = df.drop(columns=[norm_col])
-
-    from gearledger.logging_utils import get_logger
-    _log = get_logger(__name__)
-
-    base, ext = os.path.splitext(path)
-    tmp_path = base + ".__tmp__" + ext  # e.g. results.__tmp__.xlsx
-    try:
-        df.to_excel(tmp_path, index=False)
-        os.replace(tmp_path, path)
-        _log.info("record_match %s: artikul=%s client=%s", action, artikul, client)
-        return {"ok": True, "action": action, "path": path, "error": ""}
-    except Exception as e:
-        _log.error("record_match write failed: artikul=%s error=%s", artikul, e, exc_info=True)
-        # Clean up incomplete temp file if it exists
-        try:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-        except OSError:
-            pass
-        return {"ok": False, "action": action, "path": path, "error": str(e)}
 
 
 def cleanup_orphan_tmp(path: str):
@@ -332,140 +155,6 @@ def rows_equal(rows_a, rows_b) -> bool:
         )
 
     return sorted(map(_key, rows_a)) == sorted(map(_key, rows_b))
-
-
-def delete_result_excel(
-    path: str, artikul: str, client: str, price: float = None
-) -> Dict[str, any]:
-    """Remove the row(s) matching (artikul, client) from the results
-    ledger. When `price` is given, only the row at that exact price tier
-    is removed (the same artikul+client can now have several rows at
-    different prices — see allocate_tiered_quantity); price=None deletes
-    every row for that artikul+client regardless of price, which is what
-    the Check Order "not in catalog" cleanup wants (it operates on
-    totals, not a specific tier).
-    Returns {"ok", "deleted", "error"} — deleted is the number of rows removed.
-    """
-    if not os.path.exists(path):
-        return {"ok": False, "deleted": 0, "error": "File not found"}
-    try:
-        df = pd.read_excel(path)
-    except Exception as e:
-        return {"ok": False, "deleted": 0, "error": str(e)}
-
-    if "Артикул" not in df.columns or "Клиент" not in df.columns:
-        return {"ok": False, "deleted": 0, "error": "Missing Артикул/Клиент columns"}
-
-    key_norm = _norm(artikul)
-    client_upper = (client or "").strip().upper()
-    mask = (df["Артикул"].astype(str).map(_norm) == key_norm) & (
-        df["Клиент"].astype(str).str.strip().str.upper() == client_upper
-    )
-    if price is not None and "Цена продажи" in df.columns:
-        mask = mask & (df["Цена продажи"].apply(price_key) == price_key(price))
-    deleted = int(mask.sum())
-    if deleted == 0:
-        return {"ok": True, "deleted": 0, "error": ""}
-
-    df = df.loc[~mask].reset_index(drop=True)
-
-    base, ext = os.path.splitext(path)
-    tmp_path = base + ".__tmp__" + ext
-    try:
-        df.to_excel(tmp_path, index=False)
-        os.replace(tmp_path, path)
-        return {"ok": True, "deleted": deleted, "error": ""}
-    except Exception as e:
-        try:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-        except OSError:
-            pass
-        return {"ok": False, "deleted": 0, "error": str(e)}
-
-
-def set_result_quantity_excel(
-    path: str, artikul: str, client: str, new_quantity: int, target_price: float = None
-) -> Dict[str, any]:
-    """Set the recorded quantity for the row matching (artikul, client),
-    recomputing Сумма продажи from the existing per-unit Цена продажи.
-    `target_price=None` (the default) affects every row for that
-    artikul+client regardless of price — used by the Check Order
-    "over-recorded" fix, which corrects a total, not one specific price
-    tier. Pass target_price to affect only that one tier's row instead.
-    Returns {"ok", "updated", "error"} — updated is the number of rows changed.
-    """
-    if not os.path.exists(path):
-        return {"ok": False, "updated": 0, "error": "File not found"}
-    try:
-        df = pd.read_excel(path)
-    except Exception as e:
-        return {"ok": False, "updated": 0, "error": str(e)}
-
-    if "Артикул" not in df.columns or "Клиент" not in df.columns:
-        return {"ok": False, "updated": 0, "error": "Missing Артикул/Клиент columns"}
-
-    key_norm = _norm(artikul)
-    client_upper = (client or "").strip().upper()
-    mask = (df["Артикул"].astype(str).map(_norm) == key_norm) & (
-        df["Клиент"].astype(str).str.strip().str.upper() == client_upper
-    )
-    if target_price is not None and "Цена продажи" in df.columns:
-        mask = mask & (df["Цена продажи"].apply(price_key) == price_key(target_price))
-    updated = int(mask.sum())
-    if updated == 0:
-        return {"ok": True, "updated": 0, "error": ""}
-
-    df.loc[mask, "Количество"] = new_quantity
-    if "Цена продажи" in df.columns:
-        price = pd.to_numeric(df.loc[mask, "Цена продажи"], errors="coerce").fillna(0)
-        if "Сумма продажи" in df.columns:
-            df.loc[mask, "Сумма продажи"] = price * new_quantity
-    if "Последнее обновление" in df.columns:
-        df["Последнее обновление"] = df["Последнее обновление"].astype(object)
-        df.loc[mask, "Последнее обновление"] = datetime.datetime.now().isoformat()
-
-    base, ext = os.path.splitext(path)
-    tmp_path = base + ".__tmp__" + ext
-    try:
-        df.to_excel(tmp_path, index=False)
-        os.replace(tmp_path, path)
-        return {"ok": True, "updated": updated, "error": ""}
-    except Exception as e:
-        try:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-        except OSError:
-            pass
-        return {"ok": False, "updated": 0, "error": str(e)}
-
-
-def get_results_quantity(path: str, artikul: str, client: str) -> int:
-    """Return the quantity already recorded in results for (artikul, client). 0 if not found."""
-    if not os.path.exists(path):
-        return 0
-    try:
-        df = pd.read_excel(path)
-        if "Артикул" not in df.columns or "Количество" not in df.columns:
-            return 0
-        key_norm = _norm(artikul)
-        client_upper = (client or "").upper()
-        norm_col = "_NORM"
-        df[norm_col] = df["Артикул"].astype(str).map(_norm)
-        if "Клиент" in df.columns:
-            client_match = df["Клиент"].astype(str).str.upper() == client_upper
-        else:
-            client_match = pd.Series([False] * len(df))
-        mask = (df[norm_col] == key_norm) & client_match
-        if mask.any():
-            val = df.loc[df.index[mask][0], "Количество"]
-            try:
-                return int(pd.to_numeric(val, errors="coerce") or 0)
-            except Exception:
-                return 0
-        return 0
-    except Exception:
-        return 0
 
 
 def _read_catalog_matches(

@@ -59,6 +59,15 @@ def main():
 
     # Load settings and inject into environment
     settings = load_settings()
+
+    # One-time upgrade path for anyone still on the old "standalone"
+    # storage mode — must run before any other code (including MainWindow
+    # construction) reads network_mode, since it normalizes the persisted
+    # value to "server" and imports any legacy results.xlsx into the DB.
+    from gearledger.data_layer import migrate_legacy_standalone_storage
+
+    settings = migrate_legacy_standalone_storage(settings)
+
     _log.info(
         "Settings: backend=%s lang=%s network=%s log_file=%s",
         settings.vision_backend,

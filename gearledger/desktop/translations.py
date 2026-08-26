@@ -1751,25 +1751,17 @@ TRANSLATIONS = {
         "en": "Select mode:",
         "ru": "Выберите режим:",
     },
-    "standalone_mode": {
-        "en": "📱 Standalone",
-        "ru": "📱 Автономный",
-    },
     "server_mode": {
-        "en": "🖥️ Server",
-        "ru": "🖥️ Сервер",
+        "en": "🖥️ Local",
+        "ru": "🖥️ Локально",
     },
     "client_mode": {
         "en": "💻 Client",
         "ru": "💻 Клиент",
     },
-    "standalone_tooltip": {
-        "en": "Work independently without network connection",
-        "ru": "Работать независимо без сетевого подключения",
-    },
     "server_tooltip": {
-        "en": "Run as server - other computers can connect to this one",
-        "ru": "Запустить как сервер - другие компьютеры могут подключаться к этому",
+        "en": "Work on this computer - optionally let other computers connect and record here too",
+        "ru": "Работать на этом компьютере - при желании разрешить другим компьютерам подключаться и записывать сюда",
     },
     "client_tooltip": {
         "en": "Connect to another computer running as server",
@@ -1780,12 +1772,12 @@ TRANSLATIONS = {
         "ru": "Порт:",
     },
     "start_server": {
-        "en": "▶️ Start Server",
-        "ru": "▶️ Запустить сервер",
+        "en": "📡 Share on Network",
+        "ru": "📡 Открыть доступ по сети",
     },
     "stop_server": {
-        "en": "⏹️ Stop Server",
-        "ru": "⏹️ Остановить сервер",
+        "en": "🔌 Stop Sharing",
+        "ru": "🔌 Остановить доступ",
     },
     "reconnect_sse": {
         "en": "🔄 Reconnect",

@@ -49,7 +49,14 @@ class Settings:
     piper_voice: str = "hy_AM-gor-medium"  # Default Armenian Piper voice
     piper_binary_path: str = ""  # Custom Piper executable path (optional)
     # Network mode settings
-    network_mode: str = "standalone"  # "standalone", "server", or "client"
+    network_mode: str = "server"  # "server" (local, solo or hosting) or "client"
+    # Independently controls whether the local HTTP listener binds a port
+    # for LAN clients when network_mode == "server". Decoupled from
+    # storage (server mode's DB backend is always used regardless of this
+    # flag) — off by default so solo users get zero network exposure
+    # (matching the old "standalone" behavior) while still using the DB
+    # instead of an Excel file.
+    server_sharing_enabled: bool = False
     # Port for server mode. Default deliberately avoids 8080 — Windows'
     # Hyper-V/WSL2 virtual switch commonly reserves it as part of an
     # "excluded port range" for its own NAT, which silently drops inbound

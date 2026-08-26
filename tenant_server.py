@@ -23,6 +23,20 @@ wiped on every restart. Overriding _catalog_data/_catalog_filename/
 _catalog_upload_time as properties backed by CatalogStore fixes every one
 of those call sites at once, since they all go through `self.<attr>`,
 without duplicating any of that route logic here.
+
+A third instance of the same bug lives in gearledger.data_layer: five
+functions there (get_all_results, _record_to_database, etc.) call the bare
+get_database() singleton directly — not through GearLedgerServer._get_db()
+at all — so overriding _get_db() alone doesn't reach them. This matters
+today for GET /api/completeness (wraps check_catalog_completeness, which
+calls data_layer.get_all_results internally) and will matter for whatever
+Phase 2's /api/scan route ends up needing from data_layer/pipeline.py.
+Since every one of those call sites does `from .database import
+get_database` *inside* the function body (not once at module import time),
+patching the gearledger.database.get_database *function itself* — done
+once below — is enough to fix all of them, present and future, without
+touching gearledger's source or special-casing each call site as it's
+discovered.
 """
 import os
 import re
@@ -33,6 +47,7 @@ import flask
 from catalog_store import get_catalog_store
 from gearledger.database import Database
 from gearledger.server import GearLedgerServer
+import gearledger.database as _gearledger_database
 
 _SAFE_TENANT_ID = re.compile(r"^[a-f0-9]{32}$")
 
@@ -50,6 +65,23 @@ class TenantScopedServer(GearLedgerServer):
         super().__init__(*args, **kwargs)
         self._tenant_dbs: dict[str, Database] = {}
         self._tenant_dbs_lock = threading.Lock()
+        self._patch_database_singleton()
+
+    def _patch_database_singleton(self) -> None:
+        def tenant_aware_get_database(db_path: str = None) -> Database:
+            tenant_id = self._current_tenant_id()
+            if tenant_id is None:
+                raise RuntimeError(
+                    "gearledger.database.get_database() called with no "
+                    "tenant in context — every caller reachable from an "
+                    "authenticated request should resolve via "
+                    "flask.g.tenant_id. This means either a route is "
+                    "missing the auth guard, or DB code is running outside "
+                    "a request."
+                )
+            return self._get_db()
+
+        _gearledger_database.get_database = tenant_aware_get_database
 
     def _current_tenant_id(self):
         # Guard against access outside a request (e.g. during __init__,

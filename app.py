@@ -15,11 +15,13 @@ before_request guard and tenant_server.py for how "which tenant" turns into
 import os
 
 from auth import init_auth
+from routes import init_routes
 from tenant_server import TenantScopedServer
 
 _server = TenantScopedServer()
 app = _server.app
 init_auth(app)
+init_routes(app, _server)
 
 if __name__ == "__main__":
     # Local dev only — gunicorn (via requirements.txt) is the real entrypoint.

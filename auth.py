@@ -21,28 +21,52 @@ from flask_jwt_extended import (
     get_jwt_identity,
     verify_jwt_in_request,
 )
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from accounts import get_accounts_store
 
-# Routes reachable without a JWT. GEARLEDGER_JWT_SECRET should always be set
-# in real deployments — the fallback below is only so local dev doesn't
-# require extra setup, and is loud about it so it can't be mistaken for a
-# real deployment secret.
+# Routes reachable without a JWT.
 _PUBLIC_PATHS = {"/api/auth/signup", "/api/auth/login", "/api/status"}
+
+_MIN_SECRET_BYTES = 32  # matches HS256's recommended minimum key length
+
+
+def _load_jwt_secret() -> str:
+    """No insecure fallback: a missing or weak secret fails the boot loudly
+    instead of quietly signing tokens with something guessable. (This is
+    what an earlier version of this file didn't do — it fell back to a
+    hardcoded dev string, which is exactly the kind of thing that survives
+    into a real deployment by accident.)
+
+    For local dev: export GEARLEDGER_JWT_SECRET="$(openssl rand -hex 32)"
+    """
+    secret = os.getenv("GEARLEDGER_JWT_SECRET")
+    if not secret:
+        raise RuntimeError(
+            "GEARLEDGER_JWT_SECRET is not set. Generate one with "
+            "`openssl rand -hex 32` and export it before starting the "
+            "server — there is no dev fallback, so tokens are never signed "
+            "with a guessable key."
+        )
+    if len(secret.encode()) < _MIN_SECRET_BYTES:
+        raise RuntimeError(
+            f"GEARLEDGER_JWT_SECRET is only {len(secret.encode())} bytes — "
+            f"need at least {_MIN_SECRET_BYTES} for HS256. Generate one with "
+            "`openssl rand -hex 32`."
+        )
+    return secret
 
 
 def init_auth(app: flask.Flask) -> None:
-    secret = os.getenv("GEARLEDGER_JWT_SECRET")
-    if not secret:
-        secret = "dev-only-insecure-secret-do-not-deploy"
-        print(
-            "[AUTH] WARNING: GEARLEDGER_JWT_SECRET not set — using an "
-            "insecure development default. Set it before deploying anywhere "
-            "reachable from outside localhost."
-        )
-    app.config["JWT_SECRET_KEY"] = secret
+    app.config["JWT_SECRET_KEY"] = _load_jwt_secret()
     app.config["JWT_ACCESS_TOKEN_EXPIRES"] = datetime.timedelta(days=7)
     JWTManager(app)
+
+    # In-memory storage: rate limits are per-process, not shared across
+    # gunicorn workers. Fine for a single worker (today's deployment size);
+    # revisit with a Redis storage_uri if/when this runs with >1 worker.
+    limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 
     @app.before_request
     def _require_auth():
@@ -58,6 +82,7 @@ def init_auth(app: flask.Flask) -> None:
         return None
 
     @app.route("/api/auth/signup", methods=["POST"])
+    @limiter.limit("5 per hour")
     def signup():
         body = request.get_json(silent=True) or {}
         email = (body.get("email") or "").strip()
@@ -78,6 +103,7 @@ def init_auth(app: flask.Flask) -> None:
         return jsonify({"access_token": token, "tenant_id": user["tenant_id"]}), 201
 
     @app.route("/api/auth/login", methods=["POST"])
+    @limiter.limit("10 per minute")
     def login():
         body = request.get_json(silent=True) or {}
         email = (body.get("email") or "").strip()

@@ -13,6 +13,7 @@
 flask>=3.0.0
 flask-cors>=4.0.0
 flask-jwt-extended>=4.6.0
+flask-limiter>=3.5.0
 
 # Turns out load-bearing for core Phase 1 routes, not just Phase 2:
 # POST /api/results imports gearledger.result_ledger for catalog-tier

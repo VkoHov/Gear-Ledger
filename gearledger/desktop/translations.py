@@ -1927,6 +1927,63 @@ TRANSLATIONS = {
         "en": "No network connection.\n\nThis computer isn't connected to any network (WiFi/Ethernet) — please check your network connection and try again.",
         "ru": "Нет подключения к сети.\n\nЭтот компьютер не подключён ни к одной сети (WiFi/Ethernet) — проверьте подключение к сети и попробуйте снова.",
     },
+    # ============ Cloud Login ============
+    "log_in_to_cloud": {
+        "en": "☁️ Log In to Cloud",
+        "ru": "☁️ Войти в облако",
+    },
+    "cloud_login_title": {
+        "en": "Cloud Login",
+        "ru": "Вход в облако",
+    },
+    "log_in": {
+        "en": "Log In",
+        "ru": "Войти",
+    },
+    "sign_up": {
+        "en": "Sign Up",
+        "ru": "Регистрация",
+    },
+    "email_label": {
+        "en": "Email:",
+        "ru": "Эл. почта:",
+    },
+    "password_label": {
+        "en": "Password:",
+        "ru": "Пароль:",
+    },
+    "cloud_server_label": {
+        "en": "Cloud server address:",
+        "ru": "Адрес облачного сервера:",
+    },
+    "email_password_required": {
+        "en": "Email and password are required.",
+        "ru": "Требуются эл. почта и пароль.",
+    },
+    "cloud_server_required": {
+        "en": "Cloud server address is required.",
+        "ru": "Требуется адрес облачного сервера.",
+    },
+    "logging_in": {
+        "en": "Logging in...",
+        "ru": "Вход...",
+    },
+    "signing_up": {
+        "en": "Signing up...",
+        "ru": "Регистрация...",
+    },
+    "login_failed": {
+        "en": "Login failed",
+        "ru": "Ошибка входа",
+    },
+    "signup_failed": {
+        "en": "Sign up failed",
+        "ru": "Ошибка регистрации",
+    },
+    "session_expired": {
+        "en": "Your cloud session has expired. Please log in again.",
+        "ru": "Срок действия облачной сессии истёк. Пожалуйста, войдите снова.",
+    },
 }
 
 

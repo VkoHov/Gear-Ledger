@@ -162,11 +162,22 @@ class NetworkSettingsDialog(QDialog):
         self.change_server_btn.clicked.connect(self._refresh_discovery)
         connect_row.addWidget(self.change_server_btn)
 
+        # Separate from LAN Connect/Change Server: this skips discovery
+        # entirely and goes straight to a fixed cloud URL, either reusing a
+        # stored token or opening LoginDialog to get one.
+        self.cloud_login_btn = QPushButton(tr("log_in_to_cloud"))
+        self.cloud_login_btn.setStyleSheet(
+            "background-color: #16a085; color: white; font-weight: bold; padding: 6px 12px;"
+        )
+        self.cloud_login_btn.clicked.connect(self._open_cloud_login)
+        connect_row.addWidget(self.cloud_login_btn)
+
         # Rotating spinner icon shown directly on whichever button
         # triggered a connect/search, instead of a separate progress-bar
         # widget — reads as part of the button rather than bolted on.
         self._connect_btn_spinner = ButtonSpinner(self.connect_btn)
         self._change_server_btn_spinner = ButtonSpinner(self.change_server_btn)
+        self._cloud_login_btn_spinner = ButtonSpinner(self.cloud_login_btn)
 
         connect_row.addStretch(1)
 
@@ -340,6 +351,7 @@ class NetworkSettingsDialog(QDialog):
         self.discovery_status_label.setVisible(is_client)
         self.connect_btn.setVisible(is_client)
         self.change_server_btn.setVisible(is_client)
+        self.cloud_login_btn.setVisible(is_client)
         self.connection_status_label.setVisible(is_client)
 
         # Enable/disable based on mode
@@ -349,6 +361,7 @@ class NetworkSettingsDialog(QDialog):
         self.server_address_combo.setEnabled(is_client)
         self.connect_btn.setEnabled(is_client)
         self.change_server_btn.setEnabled(is_client)
+        self.cloud_login_btn.setEnabled(is_client)
 
         # Update button states based on current connection status
         from gearledger.server import get_server
@@ -401,6 +414,37 @@ class NetworkSettingsDialog(QDialog):
                 self.connection_status_label.setStyleSheet(
                     "color: #7f8c8d; font-style: italic;"
                 )
+
+        # Mid-session token expiry: a previously-successful cloud
+        # connection whose most recent request came back 401. Caught here
+        # (this method also runs on the 3s status timer while the dialog
+        # is open) rather than only at initial connect time.
+        if is_client and client and getattr(client, "needs_reauth", False):
+            self._handle_reauth_needed()
+
+    def _handle_reauth_needed(self):
+        """Clear the stale token and prompt the user to log back in to
+        Cloud. Guarded against re-firing every 3s while the resulting
+        dialog/message box is already on screen."""
+        if getattr(self, "_reauth_prompt_active", False):
+            return
+        self._reauth_prompt_active = True
+        try:
+            from gearledger.api_client import disconnect_from_server
+            from . import settings_manager
+
+            settings_manager.clear_auth()
+            disconnect_from_server()
+            self._client = None
+            self.client_disconnected.emit()
+            self._update_network_ui()
+
+            QMessageBox.information(
+                self, tr("cloud_login_title"), tr("session_expired")
+            )
+            self._open_cloud_login()
+        finally:
+            self._reauth_prompt_active = False
 
     def _on_advanced_toggled(self, checked: bool):
         """Show/hide the manual address field + discovery button."""
@@ -614,6 +658,80 @@ class NetworkSettingsDialog(QDialog):
         QMessageBox.information(
             self, tr("connection"), tr("connected_msg", address=display)
         )
+
+    def _open_cloud_login(self):
+        """Log In to Cloud: reuse a stored token if there is one, otherwise
+        open LoginDialog to get one. Skips LAN discovery entirely — this
+        always goes straight to a fixed cloud URL."""
+        from . import settings_manager
+
+        settings = settings_manager.load_settings()
+        stored_token = settings_manager.get_auth_token()
+        if stored_token and settings.cloud_server_url:
+            self._connect_cloud(settings.cloud_server_url, stored_token)
+            return
+
+        from .login_dialog import LoginDialog
+
+        dlg = LoginDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result:
+            self._connect_cloud(
+                dlg.result["cloud_server_url"], dlg.result["access_token"]
+            )
+
+    def _connect_cloud(self, address: str, auth_token: str):
+        """Connect to the cloud backend with a token in hand — either just
+        obtained from LoginDialog or reused from a prior session. Mirrors
+        _connect_to_address()'s shape but never touches LAN discovery, and
+        an UNAUTHORIZED failure here means the token itself is bad (not
+        just "server unreachable"), so it clears it and re-prompts login
+        instead of showing a generic connection error."""
+        from gearledger.api_client import connect_to_server, get_last_connect_error
+        from gearledger.data_layer import set_runtime_mode
+        from . import settings_manager
+        from .translations import connection_error_detail
+
+        self.cloud_login_btn.setEnabled(False)
+        self.connect_btn.setEnabled(False)
+        self.change_server_btn.setEnabled(False)
+        self.cloud_login_btn.setText(tr("connecting"))
+        self._cloud_login_btn_spinner.start()
+
+        try:
+            self._client = connect_to_server(address, auth_token=auth_token)
+        except Exception as e:
+            self._client = None
+            error_detail = str(e)
+        else:
+            error_detail = None if self._client else get_last_connect_error()
+
+        self._cloud_login_btn_spinner.stop()
+        self.cloud_login_btn.setEnabled(True)
+        self.connect_btn.setEnabled(True)
+        self.change_server_btn.setEnabled(True)
+        self.cloud_login_btn.setText(tr("log_in_to_cloud"))
+
+        if self._client:
+            set_runtime_mode("client")
+            self._finish_successful_connect(address)
+            return
+
+        if error_detail == "UNAUTHORIZED":
+            settings_manager.clear_auth()
+            QMessageBox.information(
+                self, tr("cloud_login_title"), tr("session_expired")
+            )
+            self._open_cloud_login()
+            return
+
+        print(f"[NETWORK_SETTINGS] Cloud connect to {address} failed: {error_detail}")
+        if error_detail == "NO_NETWORK":
+            msg = connection_error_detail(error_detail)
+        else:
+            msg = tr("connection_failed", address=address)
+            if error_detail:
+                msg = f"{msg}\n\n{connection_error_detail(error_detail)}"
+        QMessageBox.critical(self, tr("connection"), msg)
 
     def _start_one_touch_connect(self):
         """Kick off the shared background worker: try the saved address

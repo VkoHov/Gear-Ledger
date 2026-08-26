@@ -105,6 +105,50 @@ Sources checked 2026-07-20: [Cheapest VPS Hosting 2026 (Liquid Web)](https://www
 [Render vs Railway (Render's own comparison)](https://render.com/articles/render-vs-railway).
 Verify current pricing before committing — these change.
 
+## Auth hardening backlog
+
+The backend brought over from `web-app/installable-core` (now living in
+`server/` on `desktop/cloud-auth`) is a deliberately minimal v1: JWT auth,
+per-tenant SQLite, rate-limited signup/login — enough to build the desktop
+login flow against. It intentionally punted on several things a
+production SaaS auth system should have. None of these block building the
+desktop login screen; they're tracked here so they don't get lost.
+
+- **Refresh tokens.** Today there's one 7-day access token, no refresh
+  flow — `server/auth.py` says so explicitly ("revisit if 'log back in
+  every week' turns out to be annoying"). The more standard shape is a
+  short-lived access token (kept in memory on the client) plus a
+  long-lived, revocable refresh token, minted via a new
+  `POST /api/auth/refresh`. Needs a `sessions` table in `accounts.db`
+  (one row per issued refresh token, so a compromised device's session
+  can be revoked without invalidating every other login).
+- **Token storage on the desktop.** Whatever long-lived token exists
+  (today: the 7-day access token; post-refresh-tokens: the refresh token)
+  should live in the OS credential store — Windows Credential
+  Manager/Keychain on macOS — via the `keyring` library, not in plaintext
+  in `settings.json`.
+- **Password hashing.** `server/accounts.py` currently hashes with
+  `pbkdf2:sha256` (werkzeug's default, scrypt, needs OpenSSL built with
+  scrypt support — unavailable under macOS's LibreSSL-backed system
+  Python, hence the pbkdf2 fallback). `argon2-cffi` gets to argon2id
+  without going through OpenSSL at all, so it isn't actually a
+  tradeoff — just a library swap, cheap to do whenever this area is
+  touched next.
+- **Multi-user tenants.** `accounts.db` has `tenants` + `users` but no
+  `memberships`/roles table — today signup makes exactly one
+  user-owns-one-tenant pair. Adding a memberships table with a role
+  (owner/admin/user) is the natural extension whenever "invite a
+  coworker" becomes a real feature; no rearchitecting needed, just a new
+  table and a role check alongside the existing tenant check.
+- **Password reset.** Not built. Needs a transactional email provider
+  (Resend/SendGrid, per the cost table above) plus a short-lived
+  single-use reset token; existing refresh sessions should be invalidated
+  on reset.
+- **Treat the desktop client as untrusted.** Once there's more than one
+  role per tenant, permissions currently expressed by hiding a PyQt
+  button (if any ever are) must also be enforced server-side — assume the
+  API is called directly, not just through the app.
+
 ## Open questions (not yet decided)
 
 - Pricing model specifics (per-seat vs per-location vs flat tiers).

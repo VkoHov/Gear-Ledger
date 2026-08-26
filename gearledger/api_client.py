@@ -33,13 +33,17 @@ def has_network_connection() -> bool:
 class APIClient:
     """Client for connecting to Gear Ledger server."""
 
-    def __init__(self, server_url: str, timeout: int = 10):
+    def __init__(self, server_url: str, timeout: int = 10, auth_token: Optional[str] = None):
         """
         Initialize API client.
 
         Args:
             server_url: Server URL (e.g., "http://192.168.1.100:8080")
             timeout: Request timeout in seconds
+            auth_token: JWT to send as "Authorization: Bearer <token>" on
+                every request. Only meaningful against the cloud backend
+                (server/) — a plain LAN gearledger.server.GearLedgerServer
+                has no auth and just ignores the header.
         """
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
@@ -55,12 +59,28 @@ class APIClient:
         # regardless of whether the connection came from a saved address,
         # single-server discovery, or the picker.
         self.server_name: Optional[str] = None
+        # Set by _on_response() the moment any request comes back 401 —
+        # callers (network_settings_dialog) poll this to tell "the cloud
+        # token expired" apart from a generic connection failure, so they
+        # can clear the stored token and re-prompt login instead of just
+        # showing a dead-end error.
+        self.needs_reauth = False
+
+        self.session = requests.Session()
+        if auth_token:
+            self.session.headers["Authorization"] = f"Bearer {auth_token}"
+        self.session.hooks["response"].append(self._on_response)
+
+    def _on_response(self, response, *args, **kwargs):
+        if response.status_code == 401:
+            self.needs_reauth = True
+            self.last_error = "UNAUTHORIZED"
 
     def check_connection(self) -> bool:
         """Check if server is reachable and register as connected client."""
         try:
             # First check server status
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/status",
                 timeout=self.timeout,
             )
@@ -78,15 +98,23 @@ class APIClient:
             except Exception:
                 self.server_name = None
 
-            # Register as connected client by calling sync/version endpoint
-            # This allows server to track connected clients
+            # Register as connected client by calling sync/version endpoint.
+            # This also doubles as the auth check: /api/status is
+            # deliberately public (auth.py's _PUBLIC_PATHS), so it alone
+            # would report "connected" even with a dead/expired cloud
+            # token — /api/sync/version isn't public, so a 401 here is
+            # what actually catches that case.
             try:
-                requests.get(
+                sync_response = self.session.get(
                     f"{self.server_url}/api/sync/version",
                     timeout=self.timeout,
                 )
+                if sync_response.status_code == 401:
+                    self._connected = False
+                    self.last_error = "UNAUTHORIZED"
+                    return False
             except Exception:
-                pass  # Ignore errors, but still mark as connected if status worked
+                pass  # network hiccup on this secondary call — status check already succeeded
 
             self._connected = True
             self.last_error = None
@@ -138,7 +166,7 @@ class APIClient:
     ) -> Dict[str, Any]:
         """Add or update a result on the server."""
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.server_url}/api/results",
                 json={
                     "artikul": artikul,
@@ -183,7 +211,7 @@ class APIClient:
         """Get all results from server."""
         try:
             params = {"client": client} if client else {}
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/results",
                 params=params,
                 timeout=self.timeout,
@@ -198,7 +226,7 @@ class APIClient:
     def get_result_by_id(self, result_id: int) -> Optional[Dict[str, Any]]:
         """Get a single result by ID."""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/results/{result_id}",
                 timeout=self.timeout,
             )
@@ -212,7 +240,7 @@ class APIClient:
     def update_result(self, result_id: int, **kwargs) -> bool:
         """Update specific fields of a result."""
         try:
-            response = requests.put(
+            response = self.session.put(
                 f"{self.server_url}/api/results/{result_id}",
                 json=kwargs,
                 timeout=self.timeout,
@@ -225,7 +253,7 @@ class APIClient:
     def delete_result(self, result_id: int) -> bool:
         """Delete a result by ID."""
         try:
-            response = requests.delete(
+            response = self.session.delete(
                 f"{self.server_url}/api/results/{result_id}",
                 timeout=self.timeout,
             )
@@ -237,7 +265,7 @@ class APIClient:
     def clear_all_results(self, client: str = None) -> int:
         """Clear all results."""
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.server_url}/api/results/clear",
                 json={"client": client} if client else {},
                 timeout=self.timeout,
@@ -250,7 +278,7 @@ class APIClient:
     def get_sync_version(self) -> int:
         """Get current sync version from server."""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/sync/version",
                 timeout=self.timeout,
             )
@@ -264,7 +292,7 @@ class APIClient:
     def get_clients(self) -> List[str]:
         """Get list of unique clients."""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/clients",
                 timeout=self.timeout,
             )
@@ -293,11 +321,13 @@ def get_last_connect_error() -> Optional[str]:
     return _last_connect_error
 
 
-def connect_to_server(server_url: str, timeout: int = 10) -> Optional[APIClient]:
+def connect_to_server(
+    server_url: str, timeout: int = 10, auth_token: Optional[str] = None
+) -> Optional[APIClient]:
     """Connect to a server."""
     global _client_instance, _last_connect_error
 
-    client = APIClient(server_url, timeout)
+    client = APIClient(server_url, timeout, auth_token=auth_token)
     if client.check_connection():
         _client_instance = client
         _last_connect_error = None
@@ -325,7 +355,7 @@ def _add_catalog_methods():
     def get_catalog_info(self) -> Dict[str, Any]:
         """Get catalog metadata from server."""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/catalog/info",
                 timeout=self.timeout,
             )
@@ -339,7 +369,7 @@ def _add_catalog_methods():
     def download_catalog(self, local_path: str) -> Dict[str, Any]:
         """Download catalog file from server to local path."""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.server_url}/api/catalog",
                 timeout=self.timeout,
                 stream=True,
@@ -378,7 +408,7 @@ def _add_catalog_methods():
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 }
-                response = requests.post(
+                response = self.session.post(
                     f"{self.server_url}/api/catalog",
                     files=files,
                     timeout=30,

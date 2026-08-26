@@ -16,7 +16,8 @@ import uuid
 from pathlib import Path
 from typing import Optional, TypedDict
 
-from werkzeug.security import check_password_hash, generate_password_hash
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
 
 
 class User(TypedDict):
@@ -27,6 +28,13 @@ class User(TypedDict):
 
 def _default_db_path() -> str:
     return os.getenv("GEARLEDGER_ACCOUNTS_DB_PATH", "accounts.db")
+
+
+# argon2id, not werkzeug's default (scrypt via hashlib, which needs OpenSSL
+# built with scrypt support — unavailable under LibreSSL, the macOS system
+# Python's SSL backend). argon2-cffi doesn't go through OpenSSL at all, so
+# this sidesteps that instead of trading one hashing weakness for another.
+_hasher = PasswordHasher()
 
 
 class AccountsStore:
@@ -81,16 +89,11 @@ class AccountsStore:
 
         tenant_id = uuid.uuid4().hex
         user_id = uuid.uuid4().hex
-        # Hash before opening any write transaction: pbkdf2 is pure Python/C
-        # with no DB access, so if it ever raises, nothing has been written
-        # and there's no dangling transaction left holding SQLite's write
-        # lock for other requests.
-        #
-        # Pinned to pbkdf2 rather than werkzeug's scrypt default: scrypt
-        # needs hashlib.scrypt, which requires OpenSSL built with scrypt
-        # support — unavailable under LibreSSL (the macOS system Python's
-        # SSL backend), so the default crashes signup in that environment.
-        password_hash = generate_password_hash(password, method="pbkdf2:sha256")
+        # Hash before opening any write transaction: hashing is pure CPU
+        # work with no DB access, so if it ever raises, nothing has been
+        # written and there's no dangling transaction left holding SQLite's
+        # write lock for other requests.
+        password_hash = _hasher.hash(password)
 
         conn.execute(
             "INSERT INTO tenants (id, name) VALUES (?, ?)", (tenant_id, email)
@@ -109,7 +112,11 @@ class AccountsStore:
             "SELECT id, email, password_hash, tenant_id FROM users WHERE email = ?",
             (email.strip().lower(),),
         ).fetchone()
-        if row is None or not check_password_hash(row["password_hash"], password):
+        if row is None:
+            return None
+        try:
+            _hasher.verify(row["password_hash"], password)
+        except VerifyMismatchError:
             return None
         return {"id": row["id"], "email": row["email"], "tenant_id": row["tenant_id"]}
 

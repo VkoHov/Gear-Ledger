@@ -71,6 +71,13 @@ class Settings:
     # IP:port (e.g. "Warehouse Server") — empty means fall back to this
     # machine's hostname, set at server-start time.
     server_name: str = ""
+    # Cloud auth: identity/tenant metadata only, not secret — safe to keep
+    # in plain settings.json. The JWT itself is not a Settings field; it
+    # lives in the OS credential store (see get_auth_token() below) rather
+    # than plaintext on disk.
+    auth_email: str = ""
+    auth_tenant_id: str = ""
+    cloud_server_url: str = ""
     # Last Reset/Restore breadcrumb — informational only, not true version
     # tracking (the app has no notion of "is the live data still exactly
     # version X" once anything changes after a restore).
@@ -225,4 +232,59 @@ def set_piper_binary_path(path: str):
     """Set custom Piper binary path."""
     settings = load_settings()
     settings.piper_binary_path = path or ""
+    save_settings(settings)
+
+
+# Cloud auth token storage — deliberately not a Settings/settings.json
+# field. A JWT is a bearer credential (anyone holding it can act as this
+# tenant for up to 7 days), so it goes in the OS credential store (Windows
+# Credential Manager / macOS Keychain via `keyring`) instead of plaintext
+# JSON on disk. Everything *about* the login (email, tenant id, which
+# cloud URL) is non-secret and still lives in Settings as usual.
+_KEYRING_SERVICE = "GearLedger"
+_KEYRING_USERNAME = "cloud_auth_token"
+
+
+def get_auth_token() -> str:
+    """Return the stored JWT, or "" if there isn't one (never logged in,
+    logged out, or the OS keyring is unavailable/inaccessible)."""
+    try:
+        import keyring
+
+        return keyring.get_password(_KEYRING_SERVICE, _KEYRING_USERNAME) or ""
+    except Exception as e:
+        print(f"[WARNING] Failed to read auth token from keyring: {e}")
+        return ""
+
+
+def save_auth(token: str, tenant_id: str, email: str, cloud_server_url: str):
+    """Persist a successful login: token goes to the OS keyring, everything
+    else to settings.json."""
+    try:
+        import keyring
+
+        keyring.set_password(_KEYRING_SERVICE, _KEYRING_USERNAME, token)
+    except Exception as e:
+        print(f"[ERROR] Failed to save auth token to keyring: {e}")
+
+    settings = load_settings()
+    settings.auth_tenant_id = tenant_id
+    settings.auth_email = email
+    settings.cloud_server_url = cloud_server_url
+    save_settings(settings)
+
+
+def clear_auth():
+    """Log out: drop the token from the keyring and forget the tenant/email
+    so the login dialog doesn't pre-fill a session that no longer works."""
+    try:
+        import keyring
+
+        keyring.delete_password(_KEYRING_SERVICE, _KEYRING_USERNAME)
+    except Exception:
+        pass  # nothing stored, or keyring unavailable — either way, nothing to clean up
+
+    settings = load_settings()
+    settings.auth_tenant_id = ""
+    settings.auth_email = ""
     save_settings(settings)

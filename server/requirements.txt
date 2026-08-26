@@ -1,10 +1,8 @@
-# Local dev dependency: the shared business logic (database, invoice
-# generation, matching, etc.) lives in the Gear-Ledger repo, on the
-# web-app/installable-core branch, checked out as a sibling worktree.
-# This is an editable install so changes there are picked up without
-# reinstalling. Before deploying anywhere, this needs to become a pinned
-# git+https dependency instead (once that branch/commit is pushed).
--e ../Gear-Ledger-web-app
+# The shared business logic (database, invoice generation, matching, etc.)
+# lives one level up in this same repo (gearledger/). Editable install so
+# changes there are picked up without reinstalling. Before deploying
+# anywhere, this needs to become a pinned git+https dependency instead.
+-e ..
 
 # gearledger's pyproject.toml declares no runtime dependencies of its own
 # (it's meant to be installed alongside the desktop app's requirements.txt,

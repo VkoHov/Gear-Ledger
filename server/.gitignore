@@ -1,6 +1,4 @@
-venv/
-__pycache__/
-*.pyc
+# Root .gitignore already covers venv/, __pycache__/, *.pyc, .env.
+# Server-specific runtime data not covered there:
 *.db
 tenant_data/
-.env

@@ -33,6 +33,19 @@ export function fetchClients(): Promise<ClientsResponse> {
   return apiJson<ClientsResponse>("/api/clients");
 }
 
+export interface CreateResultInput {
+  artikul: string;
+  client: string;
+  quantity: number;
+}
+
+export function createResult(input: CreateResultInput): Promise<{ ok: boolean }> {
+  return apiJson<{ ok: boolean }>("/api/results", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function updateResult(id: number, fields: Partial<ResultRow>): Promise<{ ok: boolean }> {
   return apiJson<{ ok: boolean }>(`/api/results/${id}`, {
     method: "PUT",

@@ -1988,6 +1988,26 @@ TRANSLATIONS = {
         "en": "An account is required to use Gear Ledger. Please log in or sign up to continue.",
         "ru": "Для использования Gear Ledger требуется аккаунт. Пожалуйста, войдите или зарегистрируйтесь, чтобы продолжить.",
     },
+    "logged_in_as": {
+        "en": "Logged in as {email}",
+        "ru": "Вы вошли как {email}",
+    },
+    "not_logged_in": {
+        "en": "Not logged in",
+        "ru": "Вы не вошли в систему",
+    },
+    "logout": {
+        "en": "Log Out",
+        "ru": "Выйти",
+    },
+    "logout_confirm": {
+        "en": "Log out of your Gear Ledger account?\n\nYou'll need to log in again the next time you launch the app.",
+        "ru": "Выйти из аккаунта Gear Ledger?\n\nПри следующем запуске приложения потребуется войти снова.",
+    },
+    "logged_out_msg": {
+        "en": "You have been logged out.",
+        "ru": "Вы вышли из системы.",
+    },
 }
 
 

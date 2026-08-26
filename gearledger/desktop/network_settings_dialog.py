@@ -55,7 +55,7 @@ class NetworkSettingsDialog(QDialog):
         self._search_worker = None
 
         self._setup_ui()
-        self._load_settings_to_ui()
+        self._load_settings_to_ui()  # ends by calling _update_network_ui(), which also refreshes the account status label
 
         # Live-refresh while the dialog is open: connection/sharing state
         # can change from outside this dialog (e.g. Disconnect/Share-on-
@@ -72,6 +72,24 @@ class NetworkSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
+
+        # Cloud account — deliberately outside the Server/Client mode
+        # groupbox below: the account/session is orthogonal to which mode
+        # you're using for data (see login_dialog.py's required-gate
+        # docstring), so this stays visible and usable regardless of which
+        # radio is selected.
+        account_row = QHBoxLayout()
+        self.account_status_label = QLabel("")
+        self.account_status_label.setStyleSheet("color: #7f8c8d;")
+        account_row.addWidget(self.account_status_label)
+        account_row.addStretch(1)
+        self.logout_btn = QPushButton(tr("logout"))
+        self.logout_btn.setStyleSheet(
+            "background-color: #95a5a6; color: white; font-weight: bold; padding: 4px 12px;"
+        )
+        self.logout_btn.clicked.connect(self._on_logout_clicked)
+        account_row.addWidget(self.logout_btn)
+        layout.addLayout(account_row)
 
         # Network Configuration
         network_group = QGroupBox(tr("network_configuration"))
@@ -422,29 +440,50 @@ class NetworkSettingsDialog(QDialog):
         if is_client and client and getattr(client, "needs_reauth", False):
             self._handle_reauth_needed()
 
-    def _handle_reauth_needed(self):
-        """Clear the stale token and prompt the user to log back in to
-        Cloud. Guarded against re-firing every 3s while the resulting
-        dialog/message box is already on screen."""
-        if getattr(self, "_reauth_prompt_active", False):
-            return
-        self._reauth_prompt_active = True
-        try:
-            from gearledger.api_client import disconnect_from_server
-            from . import settings_manager
+        self._update_account_ui()
 
-            settings_manager.clear_auth()
+    def _update_account_ui(self):
+        """Reflect current login state — independent of the Server/Client
+        radio, since the account itself isn't tied to either mode."""
+        from . import settings_manager
+
+        settings = settings_manager.load_settings()
+        if settings_manager.get_auth_token() and settings.auth_email:
+            self.account_status_label.setText(
+                tr("logged_in_as", email=settings.auth_email)
+            )
+            self.logout_btn.setEnabled(True)
+        else:
+            self.account_status_label.setText(tr("not_logged_in"))
+            self.logout_btn.setEnabled(False)
+
+    def _on_logout_clicked(self):
+        """Log out: disconnect any active cloud session and drop the
+        stored token. Confirmed first since — with app_desktop.py now
+        gating launch on having an account at all — this means the next
+        app launch will require logging in again."""
+        from . import settings_manager
+        from gearledger.api_client import disconnect_from_server, get_client
+
+        reply = QMessageBox.question(
+            self,
+            tr("logout"),
+            tr("logout_confirm"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        client = get_client()
+        if client and client.is_connected():
             disconnect_from_server()
             self._client = None
             self.client_disconnected.emit()
-            self._update_network_ui()
 
-            QMessageBox.information(
-                self, tr("cloud_login_title"), tr("session_expired")
-            )
-            self._open_cloud_login()
-        finally:
-            self._reauth_prompt_active = False
+        settings_manager.clear_auth()
+        self._update_network_ui()  # also refreshes the account status label
+        QMessageBox.information(self, tr("logout"), tr("logged_out_msg"))
 
     def _on_advanced_toggled(self, checked: bool):
         """Show/hide the manual address field + discovery button."""

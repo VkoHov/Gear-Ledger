@@ -68,6 +68,18 @@ def main():
 
     settings = migrate_legacy_standalone_storage(settings)
 
+    # Seed the runtime network mode from the persisted setting immediately.
+    # get_network_mode() prefers _runtime_mode over settings, and that
+    # global defaults to "server" until something calls set_runtime_mode()
+    # - previously nothing did that synchronously, so the app always
+    # rendered as Local/server mode on launch even when settings said
+    # "client", until either the (deferred, async) auto-connect happened
+    # to succeed or the user opened Network Settings (whose radio-toggle
+    # handler was the only thing that set it eagerly).
+    from gearledger.data_layer import set_runtime_mode
+
+    set_runtime_mode("client" if settings.network_mode == "client" else "server")
+
     _log.info(
         "Settings: backend=%s lang=%s network=%s log_file=%s",
         settings.vision_backend,

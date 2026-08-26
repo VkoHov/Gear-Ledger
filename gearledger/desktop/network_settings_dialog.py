@@ -989,8 +989,14 @@ class NetworkSettingsDialog(QDialog):
 
         If a background connect/search worker is still running, detach our
         signal handlers so it doesn't try to touch this dialog's widgets
-        after it's gone — the thread itself is still allowed to finish and
-        clean up via its Qt parent.
+        after it's gone, then wait for it to actually finish. The wait
+        matters specifically because Logout can trigger
+        QApplication.closeAllWindows() right after this dialog closes —
+        letting the worker merely "finish later via its Qt parent" isn't
+        enough once the whole app might be tearing down moments later;
+        destroying a QThread object while its thread is still running
+        aborts the process (each of these workers is internally bounded to
+        a few seconds, so this wait is short, not indefinite).
         """
         for worker in (self._connect_worker, self._search_worker):
             if worker:
@@ -998,5 +1004,7 @@ class NetworkSettingsDialog(QDialog):
                     worker.disconnect()
                 except Exception:
                     pass
+                if worker.isRunning():
+                    worker.wait(10000)
         self._status_timer.stop()
         super().closeEvent(event)

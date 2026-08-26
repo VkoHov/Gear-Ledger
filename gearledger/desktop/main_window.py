@@ -3393,4 +3393,16 @@ class MainWindow(QWidget):
             self._sse_client.stop()
             self._sse_client = None
 
+        # Wait for any other in-flight background QThread workers before
+        # the window (and, via NetworkSettingsDialog's Logout ->
+        # closeAllWindows(), possibly the whole app) tears down --
+        # destroying a QThread object while its thread is still running
+        # aborts the process. None of these expose a cancel/stop(); they're
+        # short, internally-timeout-bounded network calls (a few seconds
+        # each, worst case), so waiting them out here is the safe option.
+        for _attr in ("_connect_worker", "_auto_connect_worker", "_manual_search_worker"):
+            _worker = getattr(self, _attr, None)
+            if _worker is not None and _worker.isRunning():
+                _worker.wait(10000)
+
         super().closeEvent(event)

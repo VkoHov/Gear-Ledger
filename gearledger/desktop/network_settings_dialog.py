@@ -37,6 +37,12 @@ class NetworkSettingsDialog(QDialog):
     network_mode_changed = pyqtSignal(str, str)  # mode, address
     # Signal emitted when server receives data (to refresh UI)
     server_data_changed = pyqtSignal()
+    # Signal emitted when the client disconnects but stays in Client mode
+    # (as opposed to network_mode_changed, which means the mode itself
+    # changed) — lets the main window stop its SSE client etc. without
+    # main_window._on_network_mode_changed() treating this as a switch
+    # away from Client mode.
+    client_disconnected = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -482,18 +488,17 @@ class NetworkSettingsDialog(QDialog):
         in, that takes priority as an explicit admin override.
         """
         from gearledger.api_client import disconnect_from_server, get_client
-        from gearledger.data_layer import set_runtime_mode
 
         self._client = get_client()
 
         if self._client and self._client.is_connected():
-            # Disconnect - falls back to local (server) mode, not a
-            # nonexistent standalone mode
+            # Disconnect stays in Client mode (just not connected) so the
+            # dialog is ready to reconnect and doesn't reveal local
+            # catalog/results editing that Client mode intentionally
+            # hides. Emit client_disconnected (not network_mode_changed)
+            # since the mode itself hasn't changed.
             disconnect_from_server()
             self._client = None
-            set_runtime_mode("server")
-            self.settings.network_mode = "server"
-            save_settings(self.settings)
             self.connection_status_label.setText(tr("connection_status_disconnected"))
             self.connection_status_label.setStyleSheet(
                 "color: #7f8c8d; font-style: italic;"
@@ -502,7 +507,7 @@ class NetworkSettingsDialog(QDialog):
             self.connect_btn.setStyleSheet(
                 "background-color: #3498db; color: white; font-weight: bold; padding: 6px 12px;"
             )
-            self.network_mode_changed.emit("server", "")
+            self.client_disconnected.emit()
             QMessageBox.information(self, tr("connection"), tr("disconnected_msg"))
             return
 

@@ -1382,26 +1382,29 @@ class MainWindow(QWidget):
         friendly-name picker if more than one is found.
         """
         from gearledger.api_client import disconnect_from_server, get_client
-        from gearledger.data_layer import set_runtime_mode
-        from gearledger.desktop.settings_manager import load_settings, save_settings
 
         client = get_client()
         if client and client.is_connected():
             disconnect_from_server()
-            set_runtime_mode("server")
-            settings = load_settings()
-            settings.network_mode = "server"
-            save_settings(settings)
-            if self._sse_client:
-                self._sse_client.stop()
-                self._sse_client = None
-            self._client_initialized = False
-            self.append_logs(["🔌 Disconnected from server"])
-            self._update_network_status()
-            self.settings_widget.update_catalog_ui_for_mode()
+            self._handle_client_disconnected()
             return
 
         self._start_one_touch_connect()
+
+    def _handle_client_disconnected(self):
+        """Shared UI refresh after the client disconnects. Stays in Client
+        mode (not a fallback to Local/server mode) so the app is ready to
+        reconnect and doesn't expose local catalog/results editing that
+        Client mode intentionally hides — network_mode is left untouched."""
+        if self._sse_client:
+            self._sse_client.stop()
+            self._sse_client = None
+        self._client_initialized = False
+        if hasattr(self, "client_init_progress_label"):
+            self.client_init_progress_label.setVisible(False)
+        self.append_logs(["🔌 Disconnected from server"])
+        self._update_network_status()
+        self.settings_widget.update_catalog_ui_for_mode()
 
     def _set_connecting_ui(self, active: bool):
         """Spin a small rotating icon directly on the Connect button and
@@ -1538,6 +1541,7 @@ class MainWindow(QWidget):
         # Connect signals
         dlg.network_mode_changed.connect(self._on_network_mode_changed)
         dlg.server_data_changed.connect(self._on_server_data_changed)
+        dlg.client_disconnected.connect(self._handle_client_disconnected)
 
         dlg.exec()
 

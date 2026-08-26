@@ -32,6 +32,9 @@ class ClientConnectWorker(QThread):
     def run(self):
         from gearledger.api_client import connect_to_server
 
+        if self.isInterruptionRequested():
+            return
+
         if self._saved_address:
             address = self._saved_address
             if not address.startswith("http://") and not address.startswith("https://"):
@@ -49,12 +52,22 @@ class ClientConnectWorker(QThread):
                 self.connected.emit(address)
                 return
 
+        if self.isInterruptionRequested():
+            return
+
         # Fall back to LAN discovery.
         import time
         from gearledger.network_discovery import ServerDiscovery
 
         discovery = ServerDiscovery()
         discovery.start()
-        time.sleep(4)
+        # Interruptible in small increments rather than a flat sleep(4) —
+        # lets a shutdown mid-discovery return promptly instead of always
+        # taking the full 4s.
+        for _ in range(40):
+            if self.isInterruptionRequested():
+                break
+            time.sleep(0.1)
         discovery.stop()
-        self.discovery_finished.emit(discovery.get_discovered_servers())
+        if not self.isInterruptionRequested():
+            self.discovery_finished.emit(discovery.get_discovered_servers())

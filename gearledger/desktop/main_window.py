@@ -197,6 +197,14 @@ class _AutoConnectWorker(QThread):
 
         last_detail = ""
         for attempt in range(self._attempts):
+            # Checked via Qt's built-in requestInterruption()/
+            # isInterruptionRequested() rather than a custom flag: closeEvent
+            # calls requestInterruption() before waiting on this thread, so
+            # a shutdown mid-retry-loop returns after the current in-flight
+            # attempt (bounded by its own 6s timeout) instead of running the
+            # full worst-case ~3*6s + 2*2s ≈ 22s of remaining retries.
+            if self.isInterruptionRequested():
+                return
             try:
                 client = connect_to_server(self._address, timeout=6)
             except Exception as e:
@@ -207,8 +215,11 @@ class _AutoConnectWorker(QThread):
                 return
             last_detail = get_last_connect_error() or last_detail
             if attempt < self._attempts - 1:
+                if self.isInterruptionRequested():
+                    return
                 time.sleep(self._delay)
-        self.failed.emit(last_detail)
+        if not self.isInterruptionRequested():
+            self.failed.emit(last_detail)
 
 
 class AddToResultsDialog(QDialog):
@@ -3397,12 +3408,15 @@ class MainWindow(QWidget):
         # the window (and, via NetworkSettingsDialog's Logout ->
         # closeAllWindows(), possibly the whole app) tears down --
         # destroying a QThread object while its thread is still running
-        # aborts the process. None of these expose a cancel/stop(); they're
-        # short, internally-timeout-bounded network calls (a few seconds
-        # each, worst case), so waiting them out here is the safe option.
+        # aborts the process. requestInterruption() is a no-op for workers
+        # that don't check it (harmless), and cuts _AutoConnectWorker's
+        # potential ~22s of remaining retries down to whatever's left of
+        # its current in-flight attempt (<=6s) -- comfortably inside the
+        # wait bound below.
         for _attr in ("_connect_worker", "_auto_connect_worker", "_manual_search_worker"):
             _worker = getattr(self, _attr, None)
             if _worker is not None and _worker.isRunning():
+                _worker.requestInterruption()
                 _worker.wait(10000)
 
         super().closeEvent(event)

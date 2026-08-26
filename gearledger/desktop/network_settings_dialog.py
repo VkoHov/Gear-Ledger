@@ -1005,6 +1005,7 @@ class NetworkSettingsDialog(QDialog):
                 except Exception:
                     pass
                 if worker.isRunning():
+                    worker.requestInterruption()
                     worker.wait(10000)
         self._status_timer.stop()
         super().closeEvent(event)

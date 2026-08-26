@@ -131,11 +131,17 @@ def main():
     from gearledger.desktop import settings_manager as _sm
     from gearledger.desktop.login_dialog import LoginDialog
 
-    if not _sm.get_auth_token():
-        login_dlg = LoginDialog(required=True)
-        if login_dlg.exec() != QDialog.DialogCode.Accepted or not login_dlg.result:
-            sys.exit(0)
-        settings = load_settings()
+    def _require_login_or_exit():
+        """Show the blocking login gate if there's no stored token;
+        declining it (Cancel or closing the window) exits the whole
+        process instead of returning. Reused both for the initial launch
+        and — via the main-window loop below — after a Logout."""
+        if not _sm.get_auth_token():
+            login_dlg = LoginDialog(required=True)
+            if login_dlg.exec() != QDialog.DialogCode.Accepted or not login_dlg.result:
+                sys.exit(0)
+
+    _require_login_or_exit()
 
     # Validate API key if OpenAI backend is selected (after QApplication is created)
     if settings.vision_backend == "openai" and settings.openai_api_key:
@@ -219,13 +225,25 @@ def main():
         if settings.openai_api_key:
             os.environ["OPENAI_API_KEY"] = settings.openai_api_key
 
-    win = MainWindow()
-    win.show()
+    # Normally runs once. Logging out (Network Settings -> Logout) closes
+    # MainWindow the same way any normal close does, but sets
+    # win._logout_requested first (see MainWindow._on_logout_requested) --
+    # that's the signal to drop back to the login gate and rebuild the
+    # window in-process instead of exiting, so logging out doesn't force a
+    # full manual relaunch to log back in.
+    while True:
+        win = MainWindow()
+        win.show()
 
-    # Check if catalog file is required and not set
-    win._ensure_catalog_file()
+        # Check if catalog file is required and not set
+        win._ensure_catalog_file()
 
-    sys.exit(app.exec())
+        exit_code = app.exec()
+
+        if not getattr(win, "_logout_requested", False):
+            sys.exit(exit_code)
+
+        _require_login_or_exit()
 
 
 if __name__ == "__main__":

@@ -1544,6 +1544,16 @@ class MainWindow(QWidget):
                     msg = f"{msg}\n\n{connection_error_detail(detail)}"
             QMessageBox.critical(self, tr("connection"), msg)
 
+    def _on_logout_requested(self):
+        """Logging out closes this window the same way any normal close
+        does (closeEvent already handles camera/scale/thread cleanup) --
+        the only difference is this flag, which app_desktop.py's main()
+        checks after its app.exec() call returns to tell "logged out,
+        show the login gate again" apart from "user actually quit the
+        app"."""
+        self._logout_requested = True
+        self.close()
+
     def _open_network_settings(self):
         """Open the network settings dialog."""
         from .network_settings_dialog import NetworkSettingsDialog
@@ -1555,6 +1565,7 @@ class MainWindow(QWidget):
         dlg.network_mode_changed.connect(self._on_network_mode_changed)
         dlg.server_data_changed.connect(self._on_server_data_changed)
         dlg.client_disconnected.connect(self._handle_client_disconnected)
+        dlg.logout_requested.connect(self._on_logout_requested)
 
         dlg.exec()
 

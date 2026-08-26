@@ -43,6 +43,11 @@ class NetworkSettingsDialog(QDialog):
     # main_window._on_network_mode_changed() treating this as a switch
     # away from Client mode.
     client_disconnected = pyqtSignal()
+    # Emitted when the user logs out. This dialog doesn't own app
+    # lifecycle decisions — it just reports "logout happened" and closes
+    # itself; MainWindow decides what that means (close itself so
+    # app_desktop.py's main() loop can drop back to the login gate).
+    logout_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -459,24 +464,16 @@ class NetworkSettingsDialog(QDialog):
 
     def _on_logout_clicked(self):
         """Log out: disconnect any active cloud session, drop the stored
-        token, and quit the app.
+        token, and hand off to MainWindow via logout_requested.
 
-        The app-launch gate (app_desktop.py) only runs once, before
-        MainWindow is even constructed — clearing the token alone doesn't
-        touch the MainWindow already open behind this dialog, so without
-        actually quitting, "logged out" would be a lie: the rest of the
-        app would keep working normally until the next full restart. The
-        confirm text below already tells the user this is what happens.
-
-        Closes via closeAllWindows() rather than QApplication.quit():
-        quit() just stops the event loop and does NOT run MainWindow's
-        closeEvent, which is what actually stops the SSE client thread
-        (sse_client.py's stop() blocks up to 5s for the QThread to really
-        finish). Skipping that left a QThread alive when the interpreter
-        tore down the process, which PyQt aborts on ("QThread: Destroyed
-        while thread is still running") — closeAllWindows() runs every
-        top-level widget's normal closeEvent first, and the app quits on
-        its own once the last window closes (Qt's default)."""
+        This dialog doesn't decide what happens after logout — it used to
+        (calling QApplication.closeAllWindows() directly), which worked
+        but quit the whole app, forcing a manual relaunch to log back in.
+        Emitting logout_requested and just closing this dialog instead
+        lets MainWindow close itself (running its own closeEvent cleanup
+        — camera/scale/threads — the same as any normal close) while
+        app_desktop.py's main() loop notices and drops straight back to
+        the login gate instead of exiting the process."""
         from . import settings_manager
         from gearledger.api_client import disconnect_from_server, get_client
 
@@ -497,11 +494,8 @@ class NetworkSettingsDialog(QDialog):
             self.client_disconnected.emit()
 
         settings_manager.clear_auth()
-        QMessageBox.information(self, tr("logout"), tr("logged_out_msg"))
-
-        from PyQt6.QtWidgets import QApplication
-
-        QApplication.instance().closeAllWindows()
+        self.logout_requested.emit()
+        self.accept()
 
     def _on_advanced_toggled(self, checked: bool):
         """Show/hide the manual address field + discovery button."""

@@ -51,6 +51,16 @@ class NetworkSettingsDialog(QDialog):
         self._setup_ui()
         self._load_settings_to_ui()
 
+        # Live-refresh while the dialog is open: connection/sharing state
+        # can change from outside this dialog (e.g. Disconnect/Share-on-
+        # Network clicked on the main window toolbar, or an auto-connect
+        # completing after this dialog was already opened) — without this,
+        # the dialog silently goes stale, still showing a mode/connection
+        # state that no longer matches what the rest of the app is doing.
+        self._status_timer = QTimer(self)
+        self._status_timer.timeout.connect(self._update_network_ui)
+        self._status_timer.start(3000)
+
     def _setup_ui(self):
         """Set up the network settings UI."""
         layout = QVBoxLayout(self)
@@ -742,4 +752,5 @@ class NetworkSettingsDialog(QDialog):
                     worker.disconnect()
                 except Exception:
                     pass
+        self._status_timer.stop()
         super().closeEvent(event)

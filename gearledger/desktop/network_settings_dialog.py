@@ -736,19 +736,21 @@ class NetworkSettingsDialog(QDialog):
     def _start_one_touch_connect(self):
         """Kick off the shared background worker: try the saved address
         first, then fall back to LAN discovery — never blocks the UI."""
-        from gearledger.desktop.settings_manager import load_settings
+        from gearledger.desktop import settings_manager
         from gearledger.desktop.client_connect_worker import ClientConnectWorker
 
         if getattr(self, "_connect_worker", None) is not None:
             return  # already in progress
 
-        settings = load_settings()
+        settings = settings_manager.load_settings()
         saved_address = (settings.server_address or "").strip()
 
         self._set_connecting_ui(True)
         self.connect_btn.setText(tr("connecting"))
 
-        self._connect_worker = ClientConnectWorker(saved_address, self)
+        self._connect_worker = ClientConnectWorker(
+            saved_address, self, auth_token=settings_manager.get_auth_token()
+        )
         self._connect_worker.connected.connect(self._on_one_touch_connected)
         self._connect_worker.discovery_finished.connect(
             self._on_one_touch_discovery_finished

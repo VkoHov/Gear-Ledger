@@ -18,9 +18,16 @@ class ClientConnectWorker(QThread):
     connected = pyqtSignal(str)  # address
     discovery_finished = pyqtSignal(list)  # List[DiscoveredServer]
 
-    def __init__(self, saved_address: str, parent=None):
+    def __init__(self, saved_address: str, parent=None, auth_token: str = ""):
         super().__init__(parent)
         self._saved_address = (saved_address or "").strip()
+        # Empty string when there's no stored cloud login — connect_to_server
+        # treats that the same as "no token", so this fast path behaves
+        # identically to before for a plain LAN reconnect. When the saved
+        # address is actually the cloud backend (from a prior "Log In to
+        # Cloud"), this is what makes the reconnect authenticate instead of
+        # 401ing and falling through to a pointless LAN discovery scan.
+        self._auth_token = auth_token or ""
 
     def run(self):
         from gearledger.api_client import connect_to_server
@@ -33,7 +40,9 @@ class ClientConnectWorker(QThread):
             # blocking the worker (and thus the "Connecting..." state) for
             # the full default timeout if the saved server is gone.
             try:
-                client = connect_to_server(address, timeout=4)
+                client = connect_to_server(
+                    address, timeout=4, auth_token=self._auth_token
+                )
             except Exception:
                 client = None
             if client:

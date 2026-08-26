@@ -189,7 +189,6 @@ def main():
     # Show settings dialog on first launch if API key is missing and using OpenAI
     if not settings.openai_api_key and settings.vision_backend == "openai":
         from gearledger.desktop.settings_page import SettingsPage
-        from PyQt6.QtWidgets import QDialog
 
         dlg = QDialog()
         dlg.setWindowTitle("Gear Ledger - Initial Setup")

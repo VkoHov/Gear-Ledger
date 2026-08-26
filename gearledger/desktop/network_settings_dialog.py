@@ -466,7 +466,17 @@ class NetworkSettingsDialog(QDialog):
         touch the MainWindow already open behind this dialog, so without
         actually quitting, "logged out" would be a lie: the rest of the
         app would keep working normally until the next full restart. The
-        confirm text below already tells the user this is what happens."""
+        confirm text below already tells the user this is what happens.
+
+        Closes via closeAllWindows() rather than QApplication.quit():
+        quit() just stops the event loop and does NOT run MainWindow's
+        closeEvent, which is what actually stops the SSE client thread
+        (sse_client.py's stop() blocks up to 5s for the QThread to really
+        finish). Skipping that left a QThread alive when the interpreter
+        tore down the process, which PyQt aborts on ("QThread: Destroyed
+        while thread is still running") — closeAllWindows() runs every
+        top-level widget's normal closeEvent first, and the app quits on
+        its own once the last window closes (Qt's default)."""
         from . import settings_manager
         from gearledger.api_client import disconnect_from_server, get_client
 
@@ -491,7 +501,7 @@ class NetworkSettingsDialog(QDialog):
 
         from PyQt6.QtWidgets import QApplication
 
-        QApplication.instance().quit()
+        QApplication.instance().closeAllWindows()
 
     def _on_advanced_toggled(self, checked: bool):
         """Show/hide the manual address field + discovery button."""

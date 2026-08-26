@@ -88,6 +88,14 @@ class LoginDialog(QDialog):
         dialog, so this shows an explanatory banner making that clear up
         front rather than surprising the user."""
         super().__init__(parent)
+        # Applied directly rather than relying on inheriting it from a
+        # parent: the app-launch gate shows this dialog with parent=None
+        # (MainWindow doesn't exist yet), so without its own copy it falls
+        # back to raw OS theming — unreadable in dark mode, and
+        # inconsistent with every other dialog in the app either way.
+        from .app_style import get_app_stylesheet
+
+        self.setStyleSheet(get_app_stylesheet())
         self.setWindowTitle(tr("cloud_login_title"))
         self.setMinimumWidth(380)
         self.result: Optional[AuthResult] = None
@@ -132,11 +140,17 @@ class LoginDialog(QDialog):
             "text-decoration: underline;"
         )
         self.toggle_btn.clicked.connect(self._toggle_mode)
+        # Without this, Qt's default "Enter triggers the first autoDefault
+        # button" behavior picks toggle_btn (created first) over the
+        # actual submit button — Enter would switch Login/Signup instead
+        # of submitting the form.
+        self.toggle_btn.setAutoDefault(False)
         button_row.addWidget(self.toggle_btn)
         button_row.addStretch(1)
 
         cancel_btn = QPushButton(tr("cancel"))
         cancel_btn.clicked.connect(self.reject)
+        cancel_btn.setAutoDefault(False)
         button_row.addWidget(cancel_btn)
 
         self.submit_btn = QPushButton()
@@ -144,6 +158,8 @@ class LoginDialog(QDialog):
             "background-color: #3498db; color: white; font-weight: bold; padding: 6px 16px;"
         )
         self.submit_btn.clicked.connect(self._submit)
+        self.submit_btn.setDefault(True)
+        self.submit_btn.setAutoDefault(True)
         button_row.addWidget(self.submit_btn)
         self._submit_spinner = ButtonSpinner(self.submit_btn)
 

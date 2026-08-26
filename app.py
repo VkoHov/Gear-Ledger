@@ -20,8 +20,9 @@ from tenant_server import TenantScopedServer
 
 _server = TenantScopedServer()
 app = _server.app
-init_auth(app)
-init_routes(app, _server)
+app.config["MAX_CONTENT_LENGTH"] = 15 * 1024 * 1024  # 15 MB: catalog/image uploads
+_limiter = init_auth(app)
+init_routes(app, _server, _limiter)
 
 if __name__ == "__main__":
     # Local dev only — gunicorn (via requirements.txt) is the real entrypoint.

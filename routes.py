@@ -14,9 +14,11 @@ from io import BytesIO
 
 import flask
 from flask import jsonify, request, send_file
+from flask_limiter import Limiter
 
 from gearledger.data_layer import check_catalog_completeness
 from gearledger.invoice_generator import generate_invoice_from_results
+from gearledger.pipeline import process_image
 from gearledger.result_ledger import rows_to_dataframe
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -42,7 +44,7 @@ def _cleanup(*paths: str) -> None:
             os.remove(path)
 
 
-def init_routes(app: flask.Flask, server) -> None:
+def init_routes(app: flask.Flask, server, limiter: Limiter) -> None:
     @app.route("/api/invoice", methods=["POST"])
     def generate_invoice():
         db = server._get_db()
@@ -103,4 +105,42 @@ def init_routes(app: flask.Flask, server) -> None:
             _cleanup(catalog_path, results_path)
 
         status = 200 if result.get("ok") else 400
+        return jsonify(result), status
+
+    @app.route("/api/scan", methods=["POST"])
+    @limiter.limit("20 per minute")
+    def scan_image():
+        # Tighter than the other routes here on purpose: this is the one
+        # endpoint that costs real, metered OpenAI Vision API money per
+        # call, not just server compute — MAX_CONTENT_LENGTH (app.py) caps
+        # payload size, this caps call frequency per IP.
+        if "image" not in request.files:
+            return jsonify({"ok": False, "error": "no image provided"}), 400
+        image_file = request.files["image"]
+        if image_file.filename == "":
+            return jsonify({"ok": False, "error": "no image selected"}), 400
+
+        catalog_bytes = server.get_uploaded_catalog_data()
+        if not catalog_bytes:
+            return jsonify({"ok": False, "error": "no catalog uploaded"}), 400
+
+        suffix = os.path.splitext(image_file.filename)[1] or ".jpg"
+        image_fd, image_path = tempfile.mkstemp(suffix=suffix)
+        with os.fdopen(image_fd, "wb") as f:
+            image_file.save(f)
+        catalog_path = _write_temp_catalog_xlsx(catalog_bytes)
+        try:
+            result = process_image(image_path, catalog_path)
+            status = 200 if result.get("ok") else 400
+        except Exception as exc:
+            # process_image only catches some of its own failure modes
+            # internally (e.g. a bad GPT JSON response) — a raised
+            # exception (rate limit, network error, bad key) is the vision
+            # API itself failing, not a bad request, so it's not the
+            # client's fault the way the other 400s above are.
+            result = {"ok": False, "error": str(exc)}
+            status = 502
+        finally:
+            _cleanup(image_path, catalog_path)
+
         return jsonify(result), status

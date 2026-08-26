@@ -58,7 +58,7 @@ def _load_jwt_secret() -> str:
     return secret
 
 
-def init_auth(app: flask.Flask) -> None:
+def init_auth(app: flask.Flask) -> Limiter:
     app.config["JWT_SECRET_KEY"] = _load_jwt_secret()
     app.config["JWT_ACCESS_TOKEN_EXPIRES"] = datetime.timedelta(days=7)
     JWTManager(app)
@@ -66,6 +66,8 @@ def init_auth(app: flask.Flask) -> None:
     # In-memory storage: rate limits are per-process, not shared across
     # gunicorn workers. Fine for a single worker (today's deployment size);
     # revisit with a Redis storage_uri if/when this runs with >1 worker.
+    # Returned so routes.py can put a tighter limit on /api/scan, which
+    # costs real money per call unlike everything else here.
     limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 
     @app.before_request
@@ -119,3 +121,5 @@ def init_auth(app: flask.Flask) -> None:
             identity=user["id"], additional_claims={"tenant_id": user["tenant_id"]}
         )
         return jsonify({"access_token": token, "tenant_id": user["tenant_id"]}), 200
+
+    return limiter

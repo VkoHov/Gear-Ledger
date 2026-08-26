@@ -24,4 +24,11 @@ flask-limiter>=3.5.0
 pandas>=2.0.0
 openpyxl>=3.1.0
 
+# POST /api/scan imports gearledger.pipeline, which imports PIL at module
+# level (gpt_utils.py) and the openai client library lazily, only once an
+# OPENAI_API_KEY is actually configured (get_openai_client short-circuits
+# to None before importing it otherwise).
+pillow>=10.0.0
+openai>=1.0.0
+
 gunicorn>=21.2.0

@@ -1,0 +1,32 @@
+# The shared business logic (database, invoice generation, matching, etc.)
+# lives one level up in this same repo (gearledger/). Editable install so
+# changes there are picked up without reinstalling. Before deploying
+# anywhere, this needs to become a pinned git+https dependency instead.
+-e ..
+
+# gearledger's pyproject.toml declares no runtime dependencies of its own
+# (it's meant to be installed alongside the desktop app's requirements.txt,
+# which isn't relevant here) — so this repo pins the actual runtime deps
+# gearledger.server needs.
+flask>=3.0.0
+flask-cors>=4.0.0
+flask-jwt-extended>=4.6.0
+flask-limiter>=3.5.0
+
+# Turns out load-bearing for core Phase 1 routes, not just Phase 2:
+# POST /api/results imports gearledger.result_ledger for catalog-tier
+# lookup, which imports pandas at module level — this isn't an
+# invoice/completeness-only dependency as originally assumed here.
+# openpyxl travels with it since excel_utils.py (catalog upload/parsing)
+# needs it the same way.
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# POST /api/scan imports gearledger.pipeline, which imports PIL at module
+# level (gpt_utils.py) and the openai client library lazily, only once an
+# OPENAI_API_KEY is actually configured (get_openai_client short-circuits
+# to None before importing it otherwise).
+pillow>=10.0.0
+openai>=1.0.0
+
+gunicorn>=21.2.0

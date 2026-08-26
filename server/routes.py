@@ -16,10 +16,11 @@ import flask
 from flask import jsonify, request, send_file
 from flask_limiter import Limiter
 
+from gearledger.config import DEFAULT_MIN_FUZZY
 from gearledger.data_layer import check_catalog_completeness
 from gearledger.excel_utils import get_catalog_stock
 from gearledger.invoice_generator import generate_invoice_from_results
-from gearledger.pipeline import process_image
+from gearledger.pipeline import process_image, run_fuzzy_match
 from gearledger.result_ledger import _norm, rows_to_dataframe
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -107,6 +108,50 @@ def init_routes(app: flask.Flask, server, limiter: Limiter) -> None:
 
         status = 200 if result.get("ok") else 400
         return jsonify(result), status
+
+    @app.route("/api/catalog/lookup", methods=["GET"])
+    def lookup_catalog_code():
+        """
+        Manual-entry code lookup: given just an article code, resolve which
+        client it belongs to, mirroring the desktop's manual-entry flow
+        (main_window.py:_on_manual_entry_requested / _ManualSearchWorker) —
+        the user only ever types the code there, never a client name; the
+        catalog lookup finds the client for them, with a picker shown when
+        the same code is ambiguous across more than one client.
+
+        Wraps gearledger.pipeline.run_fuzzy_match the same way the desktop
+        worker thread does (despite the name, it's exact-match-after-
+        normalization, not literal fuzzy matching).
+        """
+        code = (request.args.get("code") or "").strip()
+        if not code:
+            return jsonify({"ok": False, "error": "code is required"}), 400
+
+        catalog_bytes = server.get_uploaded_catalog_data()
+        if not catalog_bytes:
+            return jsonify({"ok": False, "error": "no catalog uploaded"}), 400
+
+        catalog_path = _write_temp_catalog_xlsx(catalog_bytes)
+        try:
+            result = run_fuzzy_match(catalog_path, [(code, code)], DEFAULT_MIN_FUZZY)
+        finally:
+            _cleanup(catalog_path)
+
+        # run_fuzzy_match's "ok" only reflects whether the catalog could be
+        # read at all — "no match for this code" is a *successful* result
+        # with match_client/match_artikul left None, not an error.
+        if not result.get("ok"):
+            return jsonify({"ok": False, "error": result.get("error") or "catalog read failed"}), 400
+
+        multi_match = [{"client": c, "artikul": a} for c, a in (result.get("multi_match") or [])]
+        return jsonify(
+            {
+                "ok": True,
+                "match_client": result.get("match_client"),
+                "match_artikul": result.get("match_artikul"),
+                "multi_match": multi_match,
+            }
+        )
 
     @app.route("/api/catalog/stock", methods=["GET"])
     def get_catalog_stock_for_entry():

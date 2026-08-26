@@ -1,31 +1,52 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
-import { fetchStockPreview } from "../api/manualEntry";
+import { lookupCatalogCode, fetchStockPreview, type CodeMatch } from "../api/manualEntry";
 import { createResult } from "../api/results";
 
 export function ManualEntry() {
   const queryClient = useQueryClient();
-  const [artikul, setArtikul] = useState("");
-  const [client, setClient] = useState("");
-  const [lookedUp, setLookedUp] = useState<{ artikul: string; client: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [resolved, setResolved] = useState<{ artikul: string; client: string } | null>(null);
+  const [candidates, setCandidates] = useState<CodeMatch[] | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [quantity, setQuantity] = useState("1");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  const lookupMutation = useMutation({
+    mutationFn: (submittedCode: string) => lookupCatalogCode(submittedCode),
+    onSuccess: (result) => {
+      setNotFound(false);
+      setCandidates(null);
+      setResolved(null);
+      if (!result.match_client || !result.match_artikul) {
+        setNotFound(true);
+        return;
+      }
+      if (result.multi_match.length > 1) {
+        setCandidates(result.multi_match);
+        return;
+      }
+      setResolved({ artikul: result.match_artikul, client: result.match_client });
+      setQuantity("1");
+    },
+  });
+
   const stockQuery = useQuery({
-    queryKey: ["stock-preview", lookedUp?.artikul, lookedUp?.client],
-    queryFn: () => fetchStockPreview(lookedUp!.artikul, lookedUp!.client),
-    enabled: lookedUp !== null,
+    queryKey: ["stock-preview", resolved?.artikul, resolved?.client],
+    queryFn: () => fetchStockPreview(resolved!.artikul, resolved!.client),
+    enabled: resolved !== null,
   });
 
   const addMutation = useMutation({
     mutationFn: () =>
-      createResult({ artikul: lookedUp!.artikul, client: lookedUp!.client, quantity: Number(quantity) }),
+      createResult({ artikul: resolved!.artikul, client: resolved!.client, quantity: Number(quantity) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["results"] });
-      setSuccessMessage(`Added ${quantity} × ${lookedUp!.artikul} for ${lookedUp!.client}`);
-      setLookedUp(null);
-      setArtikul("");
-      setClient("");
+      setSuccessMessage(`Added ${quantity} × ${resolved!.artikul} for ${resolved!.client}`);
+      setCode("");
+      setResolved(null);
+      setCandidates(null);
+      setNotFound(false);
       setQuantity("1");
     },
   });
@@ -33,10 +54,16 @@ export function ManualEntry() {
   function handleLookup(event: FormEvent) {
     event.preventDefault();
     setSuccessMessage(null);
-    if (artikul.trim() && client.trim()) {
-      setLookedUp({ artikul: artikul.trim(), client: client.trim() });
-      setQuantity("1");
+    const trimmed = code.trim();
+    if (trimmed) {
+      lookupMutation.mutate(trimmed);
     }
+  }
+
+  function pickCandidate(candidate: CodeMatch) {
+    setCandidates(null);
+    setResolved({ artikul: candidate.artikul, client: candidate.client });
+    setQuantity("1");
   }
 
   const preview = stockQuery.data;
@@ -50,35 +77,54 @@ export function ManualEntry() {
 
       <form onSubmit={handleLookup} className="mb-6 flex max-w-lg items-end gap-3">
         <label className="flex-1 text-sm text-neutral-600">
-          Article
+          Article code
           <input
-            value={artikul}
-            onChange={(e) => setArtikul(e.target.value)}
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="e.g. ABC123"
             className="mt-1 w-full rounded border border-neutral-300 px-3 py-2"
           />
         </label>
-        <label className="flex-1 text-sm text-neutral-600">
-          Client
-          <input
-            value={client}
-            onChange={(e) => setClient(e.target.value)}
-            className="mt-1 w-full rounded border border-neutral-300 px-3 py-2"
-          />
-        </label>
-        <button type="submit" className="rounded border border-neutral-300 px-3 py-2 text-sm">
-          Look up stock
+        <button
+          type="submit"
+          disabled={lookupMutation.isPending}
+          className="rounded bg-neutral-900 px-3 py-2 text-sm text-white disabled:opacity-50"
+        >
+          {lookupMutation.isPending ? "Searching…" : "Find and add"}
         </button>
       </form>
 
       {successMessage && <p className="mb-4 text-sm text-green-700">{successMessage}</p>}
+      {lookupMutation.isError && <p className="mb-4 text-sm text-red-600">Lookup failed.</p>}
+      {notFound && <p className="mb-4 text-sm text-neutral-500">No match found for "{code}".</p>}
 
-      {lookedUp && stockQuery.isLoading && <p className="text-neutral-500">Checking stock…</p>}
-      {lookedUp && stockQuery.isError && <p className="text-red-600">Failed to check stock.</p>}
+      {candidates && (
+        <div className="mb-6 max-w-lg rounded border border-neutral-200 p-4">
+          <p className="mb-2 text-sm text-neutral-600">
+            This code matches more than one client — pick which one:
+          </p>
+          <div className="flex flex-col gap-2">
+            {candidates.map((candidate) => (
+              <button
+                key={`${candidate.client}-${candidate.artikul}`}
+                type="button"
+                onClick={() => pickCandidate(candidate)}
+                className="rounded border border-neutral-300 px-3 py-2 text-left text-sm hover:bg-neutral-50"
+              >
+                {candidate.artikul} → {candidate.client}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
-      {lookedUp && preview && (
+      {resolved && stockQuery.isLoading && <p className="text-neutral-500">Checking stock…</p>}
+      {resolved && stockQuery.isError && <p className="text-red-600">Failed to check stock.</p>}
+
+      {resolved && preview && (
         <div className="max-w-lg rounded border border-neutral-200 p-4">
           <p className="mb-2 font-medium">
-            {lookedUp.artikul} → {lookedUp.client}
+            {resolved.artikul} → {resolved.client}
           </p>
 
           {preview.tracked ? (

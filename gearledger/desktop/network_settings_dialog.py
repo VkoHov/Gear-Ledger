@@ -458,10 +458,15 @@ class NetworkSettingsDialog(QDialog):
             self.logout_btn.setEnabled(False)
 
     def _on_logout_clicked(self):
-        """Log out: disconnect any active cloud session and drop the
-        stored token. Confirmed first since — with app_desktop.py now
-        gating launch on having an account at all — this means the next
-        app launch will require logging in again."""
+        """Log out: disconnect any active cloud session, drop the stored
+        token, and quit the app.
+
+        The app-launch gate (app_desktop.py) only runs once, before
+        MainWindow is even constructed — clearing the token alone doesn't
+        touch the MainWindow already open behind this dialog, so without
+        actually quitting, "logged out" would be a lie: the rest of the
+        app would keep working normally until the next full restart. The
+        confirm text below already tells the user this is what happens."""
         from . import settings_manager
         from gearledger.api_client import disconnect_from_server, get_client
 
@@ -482,8 +487,11 @@ class NetworkSettingsDialog(QDialog):
             self.client_disconnected.emit()
 
         settings_manager.clear_auth()
-        self._update_network_ui()  # also refreshes the account status label
         QMessageBox.information(self, tr("logout"), tr("logged_out_msg"))
+
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.instance().quit()
 
     def _on_advanced_toggled(self, checked: bool):
         """Show/hide the manual address field + discovery button."""

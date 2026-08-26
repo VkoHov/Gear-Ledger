@@ -2001,8 +2001,8 @@ TRANSLATIONS = {
         "ru": "Выйти",
     },
     "logout_confirm": {
-        "en": "Log out of your Gear Ledger account?\n\nYou'll need to log in again the next time you launch the app.",
-        "ru": "Выйти из аккаунта Gear Ledger?\n\nПри следующем запуске приложения потребуется войти снова.",
+        "en": "Log out of your Gear Ledger account?\n\nThis will close the app. You'll need to log in again the next time you launch it.",
+        "ru": "Выйти из аккаунта Gear Ledger?\n\nПриложение закроется. При следующем запуске потребуется войти снова.",
     },
     "logged_out_msg": {
         "en": "You have been logged out.",

@@ -1,4 +1,6 @@
 # Root .gitignore already covers venv/, __pycache__/, *.pyc, .env.
 # Server-specific runtime data not covered there:
 *.db
+*.db-shm
+*.db-wal
 tenant_data/

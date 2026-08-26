@@ -5,7 +5,8 @@ export interface CatalogInfo {
   exists: boolean;
   filename?: string;
   size?: number;
-  modified?: string;
+  /** Unix timestamp (seconds), per gearledger/server.py's `time.time()`. */
+  modified?: number;
 }
 
 export interface CatalogUploadResult {

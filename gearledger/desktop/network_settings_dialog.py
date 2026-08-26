@@ -211,8 +211,8 @@ class NetworkSettingsDialog(QDialog):
         network_layout.addWidget(self.connection_status_label)
 
         # Connect mode radio buttons to update UI
-        self.server_radio.toggled.connect(self._update_network_ui)
-        self.client_radio.toggled.connect(self._update_network_ui)
+        self.server_radio.toggled.connect(self._on_mode_radio_toggled)
+        self.client_radio.toggled.connect(self._on_mode_radio_toggled)
 
         layout.addWidget(network_group)
 
@@ -246,6 +246,70 @@ class NetworkSettingsDialog(QDialog):
             self.server_radio.setChecked(True)
 
         self._update_network_ui()
+
+    def _on_mode_radio_toggled(self, checked: bool):
+        """Selecting a mode radio is a statement of intent — reflect it in
+        the live runtime mode immediately, rather than waiting for a
+        connect attempt to succeed. Without this, the rest of the app
+        (main window layout included) keeps showing the *previous* mode's
+        UI for as long as a connection is pending/slow/retrying, since
+        get_network_mode() only used to flip on a successful connect.
+
+        toggled() fires twice per switch (the button losing the check,
+        then the one gaining it) — only act on the "gained" event.
+
+        Switching away from an actively-in-use mode (sharing running, or
+        connected as a client) would otherwise silently orphan that
+        connection in the background while the UI moves on — confirm with
+        the user and stop/disconnect it first, or revert the selection if
+        they decline.
+        """
+        if not checked:
+            return
+
+        mode = "client" if self.client_radio.isChecked() else "server"
+
+        if mode == "client":
+            from gearledger.server import get_server, stop_server
+
+            server = get_server()
+            if server and server.is_running():
+                reply = QMessageBox.question(
+                    self,
+                    tr("network_configuration"),
+                    tr("switch_to_client_stop_sharing_confirm"),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    self.server_radio.setChecked(True)
+                    return
+                stop_server()
+                self.settings.server_sharing_enabled = False
+                save_settings(self.settings)
+        else:
+            from gearledger.api_client import get_client, disconnect_from_server
+
+            client = get_client()
+            if client and client.is_connected():
+                reply = QMessageBox.question(
+                    self,
+                    tr("network_configuration"),
+                    tr("switch_to_local_disconnect_confirm"),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    self.client_radio.setChecked(True)
+                    return
+                disconnect_from_server()
+                self._client = None
+
+        from gearledger.data_layer import set_runtime_mode
+
+        set_runtime_mode(mode)
+        self._update_network_ui()
+        self.network_mode_changed.emit(mode, "")
 
     def _update_network_ui(self):
         """Update network UI based on selected mode."""

@@ -1827,6 +1827,14 @@ TRANSLATIONS = {
         "en": "Server has been stopped.",
         "ru": "Сервер остановлен.",
     },
+    "switch_to_client_stop_sharing_confirm": {
+        "en": "You're currently sharing on the network. Stop sharing and switch to Client mode?",
+        "ru": "Сейчас включён общий доступ по сети. Остановить его и переключиться в режим Клиент?",
+    },
+    "switch_to_local_disconnect_confirm": {
+        "en": "You're currently connected as a client. Disconnect and switch to Local mode?",
+        "ru": "Сейчас вы подключены как клиент. Отключиться и переключиться в локальный режим?",
+    },
     "server_start_failed": {
         "en": "Failed to start server. Please check the port is not in use.",
         "ru": "Не удалось запустить сервер. Проверьте, что порт не занят.",

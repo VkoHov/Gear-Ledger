@@ -242,8 +242,15 @@ class GearLedgerServer:
                         # Client disconnected immediately, exit silently
                         return
 
-                    # Keep connection alive and send events
-                    while True:
+                    # Keep connection alive and send events - but only while
+                    # the server is actually running. stop() only removes
+                    # this generator's queue from self._sse_clients (so it
+                    # stops receiving new events); without checking
+                    # self._running here too, this loop would keep sending
+                    # keepalives and hold the connection open forever, so an
+                    # already-connected client would look "connected" and
+                    # keep working right through Stop Sharing.
+                    while self._running:
                         try:
                             # Wait for event with timeout to keep connection alive
                             # Use 5 seconds so we detect client disconnect within ~5s (not 20s)
@@ -254,6 +261,8 @@ class GearLedgerServer:
                                 # Client disconnected, exit silently
                                 break
                         except queue.Empty:
+                            if not self._running:
+                                break
                             # Send keepalive ping every 5 seconds to detect disconnect sooner
                             # Also refresh client activity so it's not marked stale
                             self._connected_clients[client_ip] = time.time()

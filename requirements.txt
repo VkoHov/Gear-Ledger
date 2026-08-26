@@ -9,10 +9,18 @@
 # gearledger's pyproject.toml declares no runtime dependencies of its own
 # (it's meant to be installed alongside the desktop app's requirements.txt,
 # which isn't relevant here) — so this repo pins the actual runtime deps
-# gearledger.server needs. Add pandas/openpyxl when Phase 2's invoice/
-# completeness routes (which pull in invoice_generator.py/excel_utils.py)
-# get wired up — not needed for this skeleton.
+# gearledger.server needs.
 flask>=3.0.0
 flask-cors>=4.0.0
+flask-jwt-extended>=4.6.0
+
+# Turns out load-bearing for core Phase 1 routes, not just Phase 2:
+# POST /api/results imports gearledger.result_ledger for catalog-tier
+# lookup, which imports pandas at module level — this isn't an
+# invoice/completeness-only dependency as originally assumed here.
+# openpyxl travels with it since excel_utils.py (catalog upload/parsing)
+# needs it the same way.
+pandas>=2.0.0
+openpyxl>=3.1.0
 
 gunicorn>=21.2.0

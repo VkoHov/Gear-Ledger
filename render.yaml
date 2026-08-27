@@ -1,0 +1,44 @@
+# Render blueprint for the Gear Ledger cloud backend (server/).
+#
+# A persistent Disk is required, not optional: Render's filesystem is
+# ephemeral by default -- every redeploy/restart wipes local files,
+# including SQLite databases. Without this disk, a routine code deploy
+# would erase every customer's accounts and data. The three
+# GEARLEDGER_*_DB_PATH / _DIR env vars below point the app's SQLite
+# files at the mounted disk instead of the (wiped-on-deploy) default
+# paths in server/'s own working directory.
+#
+# Attaching a disk disables zero-downtime deploys (Render's own
+# limitation) -- an accepted tradeoff for this app's size; deploys will
+# have a few seconds of downtime instead of none.
+#
+# Secrets (GEARLEDGER_JWT_SECRET, RESEND_API_KEY, GEARLEDGER_ADMIN_EMAILS)
+# are marked sync: false -- set them in the Render dashboard after the
+# first deploy, never committed here.
+services:
+  - type: web
+    name: gearledger-api
+    runtime: python
+    plan: starter
+    rootDir: server
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    disk:
+      name: gearledger-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GEARLEDGER_JWT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: GEARLEDGER_ADMIN_EMAILS
+        sync: false
+      - key: GEARLEDGER_ACCOUNTS_DB_PATH
+        value: /data/accounts.db
+      - key: GEARLEDGER_CATALOGS_DB_PATH
+        value: /data/catalogs.db
+      - key: GEARLEDGER_TENANT_DATA_DIR
+        value: /data/tenant_data

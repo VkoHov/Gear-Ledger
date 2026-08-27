@@ -107,15 +107,25 @@ Verify current pricing before committing — these change.
 
 ## Access gating
 
-As of 2026-08-27, `app_desktop.py` requires a logged-in account to launch
-at all — no account, no app (see `desktop/cloud-auth`). This is
-**login-gated, not payment-gated**: there is no billing/subscription
-system yet (see the "Billing" row above — still not started), so today
-this only stops someone who never signed up, not someone who signed up
-but doesn't pay. Wiring in Stripe and checking subscription status at the
-same gate point is the natural next step once billing exists — it slots
-into the same check (`app_desktop.py`'s startup token check), it just
-needs something real to check besides "does a token exist."
+`app_desktop.py` requires a logged-in account to launch at all — no
+account, no app (2026-08-27). As of 2026-08-28, that account also has to
+be manually activated: every new tenant defaults to
+`subscription_status = 'inactive'` (`server/accounts.py`), and login/
+signup refuse to issue tokens for an inactive account until someone with
+admin access flips it — see `server/admin.py`'s `/admin` dashboard. This
+is a **manual stand-in for real billing**, not billing itself: there's
+still no Stripe integration (see the "Billing" row above — not started),
+so "activation" today means a person looked at the account and clicked a
+button, not a successful payment. Wiring Stripe in later means the same
+`subscription_status` field gets flipped by a webhook instead of a
+button click — the enforcement plumbing (login/signup blocking,
+per-request 402s) doesn't need to change, only what sets the flag does.
+
+Admin access itself is a global `is_admin` flag on `users`
+(`GEARLEDGER_ADMIN_EMAILS` env var bootstraps the first one) — a
+different, smaller thing than the still-deferred multi-user `memberships`
+table below (that one is roles *within* a customer's company; this one is
+"are you Gear Ledger staff").
 
 ## Auth hardening backlog
 

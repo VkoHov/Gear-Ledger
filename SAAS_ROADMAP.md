@@ -120,42 +120,36 @@ needs something real to check besides "does a token exist."
 ## Auth hardening backlog
 
 The backend brought over from `web-app/installable-core` (now living in
-`server/` on `desktop/cloud-auth`) is a deliberately minimal v1: JWT auth,
-per-tenant SQLite, rate-limited signup/login — enough to build the desktop
-login flow against. It intentionally punted on several things a
-production SaaS auth system should have. None of these block building the
-desktop login screen; they're tracked here so they don't get lost.
+`server/` on `desktop/cloud-auth`) started as a deliberately minimal v1.
+Most of the hardening items originally tracked here are done as of
+2026-08-27:
 
-- **Refresh tokens.** Today there's one 7-day access token, no refresh
-  flow — `server/auth.py` says so explicitly ("revisit if 'log back in
-  every week' turns out to be annoying"). The more standard shape is a
-  short-lived access token (kept in memory on the client) plus a
-  long-lived, revocable refresh token, minted via a new
-  `POST /api/auth/refresh`. Needs a `sessions` table in `accounts.db`
-  (one row per issued refresh token, so a compromised device's session
-  can be revoked without invalidating every other login).
-- **Token storage on the desktop.** Whatever long-lived token exists
-  (today: the 7-day access token; post-refresh-tokens: the refresh token)
-  should live in the OS credential store — Windows Credential
-  Manager/Keychain on macOS — via the `keyring` library, not in plaintext
-  in `settings.json`.
-- **Password hashing.** `server/accounts.py` currently hashes with
-  `pbkdf2:sha256` (werkzeug's default, scrypt, needs OpenSSL built with
-  scrypt support — unavailable under macOS's LibreSSL-backed system
-  Python, hence the pbkdf2 fallback). `argon2-cffi` gets to argon2id
-  without going through OpenSSL at all, so it isn't actually a
-  tradeoff — just a library swap, cheap to do whenever this area is
-  touched next.
+- **Refresh tokens — done.** Access tokens are now 30 minutes, refresh
+  tokens 30 days, individually revocable via a `sessions` table
+  (`accounts.db`) checked on every refresh. `POST /api/auth/refresh`
+  rotates (old refresh token revoked, new pair issued);
+  `POST /api/auth/logout` revokes the current session.
+  `api_client.APIClient` refreshes silently on a 401 — a dead access
+  token no longer interrupts the user at all.
+- **Token storage on the desktop — done.** The refresh token lives in
+  the OS credential store (Keychain/Credential Manager, via `keyring`),
+  not in plaintext `settings.json` — see `settings_manager.py`'s
+  `get_auth_token`/`save_auth`/`clear_auth`. The access token is never
+  persisted at all, kept in memory only.
+- **Password hashing — done.** `server/accounts.py` hashes with
+  argon2id (`argon2-cffi`), not werkzeug's pbkdf2/scrypt defaults.
+- **Password reset — done.** Code-based (not link-based — this is a
+  desktop app, no page for a "click this link" email to open), via
+  Resend (`server/email_sender.py`). A reset revokes every existing
+  session for that user.
+
+Still open:
+
 - **Multi-user tenants.** `accounts.db` has `tenants` + `users` but no
   `memberships`/roles table — today signup makes exactly one
-  user-owns-one-tenant pair. Adding a memberships table with a role
-  (owner/admin/user) is the natural extension whenever "invite a
-  coworker" becomes a real feature; no rearchitecting needed, just a new
-  table and a role check alongside the existing tenant check.
-- **Password reset.** Not built. Needs a transactional email provider
-  (Resend/SendGrid, per the cost table above) plus a short-lived
-  single-use reset token; existing refresh sessions should be invalidated
-  on reset.
+  user-owns-one-tenant pair. Deliberately deferred (2026-08-27): no
+  "invite a coworker" feature exists yet to use it — build the table
+  alongside whenever that becomes a real feature, not before.
 - **Treat the desktop client as untrusted.** Once there's more than one
   role per tenant, permissions currently expressed by hiding a PyQt
   button (if any ever are) must also be enforced server-side — assume the

@@ -28,6 +28,7 @@ from .translations import tr, connection_error_detail
 
 class AuthResult(TypedDict):
     access_token: str
+    refresh_token: str
     tenant_id: str
     email: str
     cloud_server_url: str
@@ -73,12 +74,21 @@ class _AuthWorker(QThread):
             return
 
         access_token = data.get("access_token")
+        refresh_token = data.get("refresh_token")
         tenant_id = data.get("tenant_id")
-        if not access_token or not tenant_id:
-            self.failed.emit("Server response was missing access_token/tenant_id")
+        if not access_token or not refresh_token or not tenant_id:
+            self.failed.emit(
+                "Server response was missing access_token/refresh_token/tenant_id"
+            )
             return
 
-        self.succeeded.emit({"access_token": access_token, "tenant_id": tenant_id})
+        self.succeeded.emit(
+            {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "tenant_id": tenant_id,
+            }
+        )
 
 
 class LoginDialog(QDialog):
@@ -127,6 +137,18 @@ class LoginDialog(QDialog):
         form.addRow(tr("password_label"), self.password_edit)
 
         layout.addLayout(form)
+
+        forgot_row = QHBoxLayout()
+        forgot_row.addStretch(1)
+        self.forgot_password_btn = QPushButton(tr("forgot_password"))
+        self.forgot_password_btn.setStyleSheet(
+            "background-color: transparent; color: #3498db; border: none; "
+            "text-decoration: underline; font-size: 10px; padding: 0;"
+        )
+        self.forgot_password_btn.setAutoDefault(False)
+        self.forgot_password_btn.clicked.connect(self._open_password_reset)
+        forgot_row.addWidget(self.forgot_password_btn)
+        layout.addLayout(forgot_row)
 
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: #e74c3c;")
@@ -187,6 +209,7 @@ class LoginDialog(QDialog):
         email = self.email_edit.text().strip()
         password = self.password_edit.text()
 
+        self.status_label.setStyleSheet("color: #e74c3c;")
         if not server_url:
             self.status_label.setText(tr("cloud_server_required"))
             return
@@ -226,21 +249,45 @@ class LoginDialog(QDialog):
             worker.deleteLater()
 
     def _on_success(self, data: dict, server_url: str, email: str):
+        # Only the refresh token is persisted — the access token is
+        # short-lived (30 min) and kept in memory only by whoever
+        # connects with it (see api_client.APIClient).
         settings_manager.save_auth(
-            token=data["access_token"],
+            token=data["refresh_token"],
             tenant_id=data["tenant_id"],
             email=email,
             cloud_server_url=server_url,
         )
         self.result = {
             "access_token": data["access_token"],
+            "refresh_token": data["refresh_token"],
             "tenant_id": data["tenant_id"],
             "email": email,
             "cloud_server_url": server_url,
         }
         self.accept()
 
+    def _open_password_reset(self):
+        from .password_reset_dialog import PasswordResetDialog
+
+        server_url = self.server_edit.text().strip()
+        email = self.email_edit.text().strip()
+        dlg = PasswordResetDialog(self, server_url=server_url, email=email)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result:
+            # Pre-fill what the user just set, so they don't have to
+            # retype it — one less step between "reset my password" and
+            # actually being logged in.
+            self.email_edit.setText(dlg.result["email"])
+            self.password_edit.setText(dlg.result["new_password"])
+            self._signup_mode = False
+            self._update_mode_ui()
+            self.status_label.setStyleSheet("color: #27ae60;")
+            self.status_label.setText(tr("password_reset_success"))
+
     def _on_failure(self, error: str):
+        # Reset in case a prior successful password reset left this green
+        # (_open_password_reset) — an error message should always read red.
+        self.status_label.setStyleSheet("color: #e74c3c;")
         title = tr("signup_failed") if self._signup_mode else tr("login_failed")
         if error == "NO_NETWORK":
             self.status_label.setText(connection_error_detail("NO_NETWORK"))

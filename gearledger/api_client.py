@@ -33,20 +33,38 @@ def has_network_connection() -> bool:
 class APIClient:
     """Client for connecting to Gear Ledger server."""
 
-    def __init__(self, server_url: str, timeout: int = 10, auth_token: Optional[str] = None):
+    def __init__(
+        self,
+        server_url: str,
+        timeout: int = 10,
+        auth_token: Optional[str] = None,
+        refresh_token: Optional[str] = None,
+    ):
         """
         Initialize API client.
 
         Args:
             server_url: Server URL (e.g., "http://192.168.1.100:8080")
             timeout: Request timeout in seconds
-            auth_token: JWT to send as "Authorization: Bearer <token>" on
-                every request. Only meaningful against the cloud backend
-                (server/) — a plain LAN gearledger.server.GearLedgerServer
-                has no auth and just ignores the header.
+            auth_token: Short-lived (30 min) access JWT to send as
+                "Authorization: Bearer <token>" on every request. In-memory
+                only — never persisted. Only meaningful against the cloud
+                backend (server/) — a plain LAN gearledger.server.GearLedgerServer
+                has no auth and just ignores the header. Optional: if
+                omitted (e.g. reconnecting from a stored refresh token
+                after an app restart, with no access token to hand),
+                the first request 401s and _on_response's silent-refresh
+                path mints one — see there.
+            refresh_token: Long-lived (30 days) token, exchanged at
+                {server_url}/api/auth/refresh for a new access+refresh
+                pair whenever the access token dies. This is the only
+                one of the two actually persisted (settings_manager's
+                keyring storage) — the desktop client never writes an
+                access token to disk.
         """
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
+        self.refresh_token = refresh_token
         self._connected = False
         # Human-readable reason the last check_connection() call failed, if
         # any — check_connection() itself must never raise (callers rely on
@@ -59,11 +77,13 @@ class APIClient:
         # regardless of whether the connection came from a saved address,
         # single-server discovery, or the picker.
         self.server_name: Optional[str] = None
-        # Set by _on_response() the moment any request comes back 401 —
-        # callers (network_settings_dialog) poll this to tell "the cloud
-        # token expired" apart from a generic connection failure, so they
-        # can clear the stored token and re-prompt login instead of just
-        # showing a dead-end error.
+        # Set only when a 401 survives a silent-refresh attempt (or there
+        # was no refresh token to try) — callers (network_settings_dialog)
+        # poll this to tell "the cloud session is actually dead" apart from
+        # a generic connection failure, so they can clear the stored token
+        # and re-prompt login instead of just showing a dead-end error. A
+        # dead *access* token alone (the common case, every 30 min) never
+        # sets this — it's refreshed transparently in _on_response.
         self.needs_reauth = False
 
         self.session = requests.Session()
@@ -72,9 +92,90 @@ class APIClient:
         self.session.hooks["response"].append(self._on_response)
 
     def _on_response(self, response, *args, **kwargs):
-        if response.status_code == 401:
+        if response.status_code != 401:
+            return None
+
+        # Only ever retry once per original request — this flag lives on
+        # the request itself (not self), so it can't block unrelated
+        # concurrent requests from also getting their one retry.
+        if getattr(response.request, "_gearledger_retried", False) or not self.refresh_token:
             self.needs_reauth = True
             self.last_error = "UNAUTHORIZED"
+            return None
+
+        new_access_token = self._try_refresh()
+        if new_access_token is None:
+            self.needs_reauth = True
+            self.last_error = "UNAUTHORIZED"
+            return None
+
+        response.request.headers["Authorization"] = f"Bearer {new_access_token}"
+        response.request._gearledger_retried = True
+        return self.session.send(response.request)
+
+    def _try_refresh(self) -> Optional[str]:
+        """One-shot, synchronous: POST /api/auth/refresh with the stored
+        refresh token. Uses a bare requests.post (not self.session) so
+        this call's own response never re-enters _on_response — a failed
+        refresh should surface as "refresh failed" directly, not recurse
+        through the retry logic meant for ordinary API calls. Returns the
+        new access token on success (and updates self.refresh_token /
+        persists it, since refresh rotates the refresh token too), or
+        None on any failure."""
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/auth/refresh",
+                headers={"Authorization": f"Bearer {self.refresh_token}"},
+                timeout=self.timeout,
+            )
+        except requests.exceptions.RequestException:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            return None
+
+        access_token = data.get("access_token")
+        refresh_token = data.get("refresh_token")
+        if not access_token or not refresh_token:
+            return None
+
+        self.session.headers["Authorization"] = f"Bearer {access_token}"
+        self.refresh_token = refresh_token
+
+        # Persist the rotated refresh token immediately, not just at
+        # connect time — rotation revokes the old one server-side, so if
+        # the app closed before this were saved, the next launch would
+        # try a refresh token the server already knows is dead.
+        from gearledger.desktop import settings_manager
+
+        settings = settings_manager.load_settings()
+        settings_manager.save_auth(
+            refresh_token, settings.auth_tenant_id, settings.auth_email, self.server_url
+        )
+
+        return access_token
+
+    def logout(self) -> None:
+        """Best-effort server-side session revocation. Uses a bare
+        requests.post (not self.session) since this authenticates with
+        the refresh token, not the access token every other call uses —
+        and deliberately swallows failures: local logout (clearing the
+        stored token) should proceed either way, this is just "also tell
+        the server," not something that should block logging out if the
+        server happens to be unreachable."""
+        if not self.refresh_token:
+            return
+        try:
+            requests.post(
+                f"{self.server_url}/api/auth/logout",
+                headers={"Authorization": f"Bearer {self.refresh_token}"},
+                timeout=self.timeout,
+            )
+        except requests.exceptions.RequestException:
+            pass
 
     def check_connection(self) -> bool:
         """Check if server is reachable and register as connected client."""
@@ -322,12 +423,15 @@ def get_last_connect_error() -> Optional[str]:
 
 
 def connect_to_server(
-    server_url: str, timeout: int = 10, auth_token: Optional[str] = None
+    server_url: str,
+    timeout: int = 10,
+    auth_token: Optional[str] = None,
+    refresh_token: Optional[str] = None,
 ) -> Optional[APIClient]:
     """Connect to a server."""
     global _client_instance, _last_connect_error
 
-    client = APIClient(server_url, timeout, auth_token=auth_token)
+    client = APIClient(server_url, timeout, auth_token=auth_token, refresh_token=refresh_token)
     if client.check_connection():
         _client_instance = client
         _last_connect_error = None

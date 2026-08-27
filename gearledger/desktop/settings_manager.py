@@ -236,18 +236,21 @@ def set_piper_binary_path(path: str):
 
 
 # Cloud auth token storage — deliberately not a Settings/settings.json
-# field. A JWT is a bearer credential (anyone holding it can act as this
-# tenant for up to 7 days), so it goes in the OS credential store (Windows
+# field. What's stored here is the refresh token (30 days) — a JWT is a
+# bearer credential, so it goes in the OS credential store (Windows
 # Credential Manager / macOS Keychain via `keyring`) instead of plaintext
-# JSON on disk. Everything *about* the login (email, tenant id, which
-# cloud URL) is non-secret and still lives in Settings as usual.
+# JSON on disk. The short-lived (30 min) access token that pairs with it
+# is never persisted at all — api_client.APIClient keeps it in memory
+# only and re-derives it from this refresh token on demand (see
+# APIClient._try_refresh). Everything *about* the login (email, tenant
+# id, which cloud URL) is non-secret and still lives in Settings as usual.
 _KEYRING_SERVICE = "GearLedger"
 _KEYRING_USERNAME = "cloud_auth_token"
 
 
 def get_auth_token() -> str:
-    """Return the stored JWT, or "" if there isn't one (never logged in,
-    logged out, or the OS keyring is unavailable/inaccessible)."""
+    """Return the stored refresh token, or "" if there isn't one (never
+    logged in, logged out, or the OS keyring is unavailable/inaccessible)."""
     try:
         import keyring
 
@@ -258,8 +261,8 @@ def get_auth_token() -> str:
 
 
 def save_auth(token: str, tenant_id: str, email: str, cloud_server_url: str):
-    """Persist a successful login: token goes to the OS keyring, everything
-    else to settings.json."""
+    """Persist a successful login (or a token refresh's rotation): the
+    refresh token goes to the OS keyring, everything else to settings.json."""
     try:
         import keyring
 

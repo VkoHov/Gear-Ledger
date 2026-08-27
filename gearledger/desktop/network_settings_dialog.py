@@ -488,6 +488,11 @@ class NetworkSettingsDialog(QDialog):
             return
 
         client = get_client()
+        if client:
+            # Best-effort server-side revocation (client.logout() swallows
+            # its own network errors — a server that happens to be
+            # unreachable right now shouldn't block logging out locally).
+            client.logout()
         if client and client.is_connected():
             disconnect_from_server()
             self._client = None
@@ -727,16 +732,21 @@ class NetworkSettingsDialog(QDialog):
         dlg = LoginDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result:
             self._connect_cloud(
-                dlg.result["cloud_server_url"], dlg.result["access_token"]
+                dlg.result["cloud_server_url"],
+                dlg.result["refresh_token"],
+                access_token=dlg.result["access_token"],
             )
 
-    def _connect_cloud(self, address: str, auth_token: str):
-        """Connect to the cloud backend with a token in hand — either just
-        obtained from LoginDialog or reused from a prior session. Mirrors
+    def _connect_cloud(self, address: str, refresh_token: str, access_token: str = None):
+        """Connect to the cloud backend with a refresh token in hand —
+        either just obtained from LoginDialog (which also hands over the
+        access token that came with it, saving one round trip) or reused
+        from a prior session (access_token omitted; the first request
+        401s and APIClient's silent-refresh path mints one). Mirrors
         _connect_to_address()'s shape but never touches LAN discovery, and
-        an UNAUTHORIZED failure here means the token itself is bad (not
-        just "server unreachable"), so it clears it and re-prompts login
-        instead of showing a generic connection error."""
+        an UNAUTHORIZED failure here means the refresh token itself is
+        dead (not just "server unreachable"), so it clears it and
+        re-prompts login instead of showing a generic connection error."""
         from gearledger.api_client import connect_to_server, get_last_connect_error
         from gearledger.data_layer import set_runtime_mode
         from . import settings_manager
@@ -749,7 +759,9 @@ class NetworkSettingsDialog(QDialog):
         self._cloud_login_btn_spinner.start()
 
         try:
-            self._client = connect_to_server(address, auth_token=auth_token)
+            self._client = connect_to_server(
+                address, auth_token=access_token, refresh_token=refresh_token
+            )
         except Exception as e:
             self._client = None
             error_detail = str(e)
@@ -800,7 +812,7 @@ class NetworkSettingsDialog(QDialog):
         self.connect_btn.setText(tr("connecting"))
 
         self._connect_worker = ClientConnectWorker(
-            saved_address, self, auth_token=settings_manager.get_auth_token()
+            saved_address, self, refresh_token=settings_manager.get_auth_token()
         )
         self._connect_worker.connected.connect(self._on_one_touch_connected)
         self._connect_worker.discovery_finished.connect(

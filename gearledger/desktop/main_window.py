@@ -1230,7 +1230,7 @@ class MainWindow(QWidget):
         self.append_logs([tr("log_looking_for_server")])
 
         self._connect_worker = ClientConnectWorker(
-            saved_address, self, auth_token=settings_manager.get_auth_token()
+            saved_address, self, refresh_token=settings_manager.get_auth_token()
         )
         self._connect_worker.connected.connect(self._on_one_touch_connected)
         self._connect_worker.discovery_finished.connect(

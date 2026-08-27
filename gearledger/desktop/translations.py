@@ -1988,6 +1988,62 @@ TRANSLATIONS = {
         "en": "An account is required to use Gear Ledger. Please log in or sign up to continue.",
         "ru": "Для использования Gear Ledger требуется аккаунт. Пожалуйста, войдите или зарегистрируйтесь, чтобы продолжить.",
     },
+    "forgot_password": {
+        "en": "Forgot password?",
+        "ru": "Забыли пароль?",
+    },
+    "password_reset_title": {
+        "en": "Reset Password",
+        "ru": "Сброс пароля",
+    },
+    "password_reset_intro": {
+        "en": "Enter your email and we'll send you a reset code.",
+        "ru": "Введите свой email, и мы отправим вам код для сброса пароля.",
+    },
+    "password_reset_code_label": {
+        "en": "Reset code:",
+        "ru": "Код сброса:",
+    },
+    "password_reset_code_placeholder": {
+        "en": "8-character code from your email",
+        "ru": "8-значный код из письма",
+    },
+    "password_reset_new_password_label": {
+        "en": "New password:",
+        "ru": "Новый пароль:",
+    },
+    "password_reset_send_code": {
+        "en": "Send Code",
+        "ru": "Отправить код",
+    },
+    "password_reset_submit": {
+        "en": "Reset Password",
+        "ru": "Сбросить пароль",
+    },
+    "password_reset_sending": {
+        "en": "Sending...",
+        "ru": "Отправка...",
+    },
+    "password_reset_resetting": {
+        "en": "Resetting...",
+        "ru": "Сброс...",
+    },
+    "password_reset_code_sent": {
+        "en": "Code sent — check your email, then enter it below.",
+        "ru": "Код отправлен — проверьте почту и введите его ниже.",
+    },
+    "password_reset_code_and_password_required": {
+        "en": "Code and new password are required.",
+        "ru": "Требуются код и новый пароль.",
+    },
+    "password_too_short": {
+        "en": "Password must be at least 8 characters.",
+        "ru": "Пароль должен содержать не менее 8 символов.",
+    },
+    "password_reset_success": {
+        "en": "Password reset — you can now log in.",
+        "ru": "Пароль сброшен — теперь вы можете войти.",
+    },
     "logged_in_as": {
         "en": "Logged in as {email}",
         "ru": "Вы вошли как {email}",

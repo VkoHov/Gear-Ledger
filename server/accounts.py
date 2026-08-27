@@ -9,8 +9,11 @@ per tenant. This module holds the small, shared table of who's allowed to
 log in and which tenant they belong to — a different lifecycle, a different
 file, queried on every request instead of per-tenant.
 """
+import datetime
 import os
+import secrets
 import sqlite3
+import string
 import threading
 import uuid
 from pathlib import Path
@@ -18,6 +21,13 @@ from typing import Optional, TypedDict
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+
+# Password-reset codes: 8 chars, uppercase + digits, ambiguous characters
+# (0/O, 1/I/L) excluded — this is typed back in by hand from an email, so
+# it needs to survive a human copying it without transcription errors.
+_RESET_CODE_ALPHABET = "".join(
+    c for c in string.ascii_uppercase + string.digits if c not in "0O1IL"
+)
 
 
 class User(TypedDict):
@@ -77,6 +87,33 @@ class AccountsStore:
             )
             """
         )
+        # One row per issued refresh token. What makes revocation
+        # (logout, a password reset, a future "sign out this device")
+        # actually mean something — a stateless-only JWT refresh token is
+        # valid until it expires no matter what the server "thinks"
+        # happened to it.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                jti TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT NOT NULL,
+                revoked INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS password_resets (
+                code TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
         conn.commit()
 
     def create_tenant_and_user(self, email: str, password: str) -> User:
@@ -119,6 +156,101 @@ class AccountsStore:
         except VerifyMismatchError:
             return None
         return {"id": row["id"], "email": row["email"], "tenant_id": row["tenant_id"]}
+
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT id, email, tenant_id FROM users WHERE email = ?",
+            (email.strip().lower(),),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "email": row["email"], "tenant_id": row["tenant_id"]}
+
+    # ------------------------------------------------------------------
+    # Sessions (refresh token revocation)
+    # ------------------------------------------------------------------
+
+    def create_session(self, jti: str, user_id: str, expires_at: str) -> None:
+        conn = self._get_connection()
+        conn.execute(
+            "INSERT INTO sessions (jti, user_id, expires_at) VALUES (?, ?, ?)",
+            (jti, user_id, expires_at),
+        )
+        conn.commit()
+
+    def revoke_session(self, jti: str) -> None:
+        conn = self._get_connection()
+        conn.execute("UPDATE sessions SET revoked = 1 WHERE jti = ?", (jti,))
+        conn.commit()
+
+    def revoke_all_sessions_for_user(self, user_id: str) -> None:
+        """Called on password reset — any refresh token issued before the
+        reset should stop working, since the credential that vouched for
+        the account holder just changed."""
+        conn = self._get_connection()
+        conn.execute("UPDATE sessions SET revoked = 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+    def is_session_revoked(self, jti: str) -> bool:
+        """True if this refresh token's session is revoked, or was never
+        recorded at all. The latter shouldn't happen for a token this
+        server actually issued, but treating an unrecognized jti as
+        revoked (rather than valid) is the safe default."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT revoked FROM sessions WHERE jti = ?", (jti,)
+        ).fetchone()
+        if row is None:
+            return True
+        return bool(row["revoked"])
+
+    # ------------------------------------------------------------------
+    # Password reset
+    # ------------------------------------------------------------------
+
+    def create_password_reset(self, user_id: str, ttl_minutes: int = 15) -> str:
+        conn = self._get_connection()
+        code = "".join(secrets.choice(_RESET_CODE_ALPHABET) for _ in range(8))
+        expires_at = (
+            datetime.datetime.utcnow() + datetime.timedelta(minutes=ttl_minutes)
+        ).isoformat()
+        conn.execute(
+            "INSERT INTO password_resets (code, user_id, expires_at) VALUES (?, ?, ?)",
+            (code, user_id, expires_at),
+        )
+        conn.commit()
+        return code
+
+    def consume_password_reset(self, code: str, new_password: str) -> Optional[str]:
+        """Validates the code (exists, unused, unexpired), marks it used,
+        and updates the user's password hash — all as one method so a
+        code can't be raced into being consumed twice by two concurrent
+        requests. Takes the plain new password (not a pre-hashed value)
+        and hashes it internally, matching create_tenant_and_user's
+        pattern of keeping hashing entirely inside this class. Returns
+        the user_id on success, None on any validation failure (caller
+        doesn't need to know *why* — a wrong, expired, or reused code all
+        just mean "try again")."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT user_id, expires_at, used FROM password_resets WHERE code = ?",
+            (code,),
+        ).fetchone()
+        if row is None or row["used"]:
+            return None
+        if datetime.datetime.fromisoformat(row["expires_at"]) < datetime.datetime.utcnow():
+            return None
+
+        user_id = row["user_id"]
+        password_hash = _hasher.hash(new_password)
+        conn.execute("UPDATE password_resets SET used = 1 WHERE code = ?", (code,))
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (password_hash, user_id),
+        )
+        conn.commit()
+        return user_id
 
 
 _store: Optional[AccountsStore] = None

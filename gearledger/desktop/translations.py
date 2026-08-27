@@ -1988,6 +1988,14 @@ TRANSLATIONS = {
         "en": "Your account is pending activation. Contact us to get started.",
         "ru": "Ваш аккаунт ожидает активации. Свяжитесь с нами, чтобы начать работу.",
     },
+    "no_network_launch_message": {
+        "en": "No internet connection. Gear Ledger needs to verify your account online before it can start.",
+        "ru": "Нет подключения к интернету. Gear Ledger должен проверить ваш аккаунт онлайн перед запуском.",
+    },
+    "server_unreachable_launch_message": {
+        "en": "Couldn't reach the Gear Ledger server. Please check your connection and try again.",
+        "ru": "Не удалось связаться с сервером Gear Ledger. Проверьте подключение и попробуйте снова.",
+    },
     "account_required_message": {
         "en": "An account is required to use Gear Ledger. Please log in or sign up to continue.",
         "ru": "Для использования Gear Ledger требуется аккаунт. Пожалуйста, войдите или зарегистрируйтесь, чтобы продолжить.",

@@ -120,28 +120,77 @@ def main():
     # Set application icon if available
     _set_application_icon(app)
 
-    # Require a cloud account before the app can be used at all. Gated on
-    # local token *presence* only, not a live validity check against the
-    # server — a login from a previous session still works offline, since
-    # requiring network connectivity just to launch would break the
-    # explicit offline-fallback goal in SAAS_ROADMAP.md. An actually-dead
-    # token gets caught the moment any real network call 401s (see
-    # api_client.APIClient.needs_reauth / NetworkSettingsDialog's handling
-    # of it) — this is only about blocking someone who never signed up.
+    # Require a cloud account before the app can be used at all -- and, as
+    # of 2026-08-28, require it to be verified *live* on every launch, not
+    # just present locally. Earlier this gate only checked token
+    # presence, deliberately, so the app stayed usable offline; that left
+    # a real loophole (a deactivated account could keep using the app
+    # forever just by never reconnecting), and the explicit product
+    # decision was to close it even at the cost of the offline-friendly
+    # launch: a genuine network outage (the user's or the server's) now
+    # blocks launch entirely too. This is a real tradeoff, not a free
+    # win -- see SAAS_ROADMAP.md's "how much offline fallback matters"
+    # open question, which this resolves in favor of strict enforcement.
     from gearledger.desktop import settings_manager as _sm
     from gearledger.desktop.login_dialog import LoginDialog
+    from gearledger.desktop.translations import tr
 
-    def _require_login_or_exit():
-        """Show the blocking login gate if there's no stored token;
-        declining it (Cancel or closing the window) exits the whole
-        process instead of returning. Reused both for the initial launch
-        and — via the main-window loop below — after a Logout."""
-        if not _sm.get_auth_token():
-            login_dlg = LoginDialog(required=True)
-            if login_dlg.exec() != QDialog.DialogCode.Accepted or not login_dlg.result:
+    def _require_active_online_account_or_exit():
+        """Blocks until there's a stored token AND a live connection
+        proves it's both valid and active, or the user gives up (Close).
+        Declining login, or closing on a Retry/Close prompt, exits the
+        whole process. Reused both for the initial launch and — via the
+        main-window loop below — after a Logout."""
+        from gearledger.api_client import (
+            connect_to_server,
+            get_last_connect_error,
+            disconnect_from_server,
+        )
+
+        while True:
+            token = _sm.get_auth_token()
+            current_settings = _sm.load_settings()
+
+            if not token or not current_settings.cloud_server_url:
+                login_dlg = LoginDialog(required=True)
+                if login_dlg.exec() != QDialog.DialogCode.Accepted or not login_dlg.result:
+                    sys.exit(0)
+                continue  # re-check now that login just saved a token
+
+            client = connect_to_server(
+                current_settings.cloud_server_url, refresh_token=token
+            )
+            if client:
+                # Just a validation probe -- MainWindow's own connection
+                # logic handles the real connect-for-actual-use from a
+                # clean slate, based on the user's chosen network_mode.
+                disconnect_from_server()
+                return
+
+            detail = get_last_connect_error()
+            if detail == "UNAUTHORIZED":
+                _sm.clear_auth()
+                continue  # loop back -> no token now -> re-prompt login
+
+            if detail == "ACCOUNT_INACTIVE":
+                message = tr("account_inactive_message")
+            elif detail == "NO_NETWORK":
+                message = tr("no_network_launch_message")
+            else:
+                message = tr("server_unreachable_launch_message")
+
+            reply = QMessageBox.question(
+                None,
+                tr("cloud_login_title"),
+                message,
+                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Close,
+                QMessageBox.StandardButton.Retry,
+            )
+            if reply == QMessageBox.StandardButton.Close:
                 sys.exit(0)
+            # else Retry -> loop and try again
 
-    _require_login_or_exit()
+    _require_active_online_account_or_exit()
 
     # Validate API key if OpenAI backend is selected (after QApplication is created)
     if settings.vision_backend == "openai" and settings.openai_api_key:
@@ -243,7 +292,7 @@ def main():
         if not getattr(win, "_logout_requested", False):
             sys.exit(exit_code)
 
-        _require_login_or_exit()
+        _require_active_online_account_or_exit()
 
 
 if __name__ == "__main__":

@@ -135,24 +135,41 @@ def main():
     from gearledger.desktop.login_dialog import LoginDialog
     from gearledger.desktop.translations import tr
 
-    def _require_active_online_account_or_exit():
+    def _require_active_online_account_or_exit(initial_message=None):
         """Blocks until there's a stored token AND a live connection
-        proves it's both valid and active, or the user gives up (Close).
-        Declining login, or closing on a Retry/Close prompt, exits the
-        whole process. Reused both for the initial launch and — via the
-        main-window loop below — after a Logout."""
+        proves it's both valid and active, or the user gives up. Reused
+        both for the initial launch and — via the main-window loop below
+        — after a Logout or a forced relogin (MainWindow._force_relogin,
+        e.g. the account got deactivated mid-session).
+
+        initial_message, when given, overrides LoginDialog's default
+        "an account is required" banner for the *first* login prompt this
+        call shows — used to explain *why* login is needed again (session
+        expired, account deactivated) rather than just implying the user
+        never signed in. Only shown once per call, not repeated on a
+        failed login attempt.
+
+        UNAUTHORIZED/ACCOUNT_INACTIVE both clear the token and loop back
+        to a fresh LoginDialog — the token or the account is the actual
+        problem, and dropping to a real login screen lets the user try a
+        different account instead of being stuck. NO_NETWORK/unreachable
+        get Retry/Close instead: logging in again can't fix a
+        connectivity problem, and LoginDialog would just fail the same
+        way trying."""
         from gearledger.api_client import (
             connect_to_server,
             get_last_connect_error,
             disconnect_from_server,
         )
 
+        pending_message = initial_message
         while True:
             token = _sm.get_auth_token()
             current_settings = _sm.load_settings()
 
             if not token or not current_settings.cloud_server_url:
-                login_dlg = LoginDialog(required=True)
+                login_dlg = LoginDialog(required=True, message=pending_message)
+                pending_message = None  # show the specific explanation only once
                 if login_dlg.exec() != QDialog.DialogCode.Accepted or not login_dlg.result:
                     sys.exit(0)
                 continue  # re-check now that login just saved a token
@@ -170,15 +187,18 @@ def main():
             detail = get_last_connect_error()
             if detail == "UNAUTHORIZED":
                 _sm.clear_auth()
-                continue  # loop back -> no token now -> re-prompt login
-
+                pending_message = tr("session_expired")
+                continue
             if detail == "ACCOUNT_INACTIVE":
-                message = tr("account_inactive_message")
-            elif detail == "NO_NETWORK":
-                message = tr("no_network_launch_message")
-            else:
-                message = tr("server_unreachable_launch_message")
+                _sm.clear_auth()
+                pending_message = tr("account_deactivated_relogin_message")
+                continue
 
+            message = (
+                tr("no_network_launch_message")
+                if detail == "NO_NETWORK"
+                else tr("server_unreachable_launch_message")
+            )
             reply = QMessageBox.question(
                 None,
                 tr("cloud_login_title"),
@@ -274,12 +294,15 @@ def main():
         if settings.openai_api_key:
             os.environ["OPENAI_API_KEY"] = settings.openai_api_key
 
-    # Normally runs once. Logging out (Network Settings -> Logout) closes
-    # MainWindow the same way any normal close does, but sets
-    # win._logout_requested first (see MainWindow._on_logout_requested) --
-    # that's the signal to drop back to the login gate and rebuild the
-    # window in-process instead of exiting, so logging out doesn't force a
-    # full manual relaunch to log back in.
+    # Normally runs once. Logging out (Network Settings -> Logout), or a
+    # forced relogin the app itself triggers (MainWindow._force_relogin --
+    # e.g. the account got deactivated mid-session), both close MainWindow
+    # the same way any normal close does, but set win._logout_requested
+    # first -- that's the signal to drop back to the login gate and
+    # rebuild the window in-process instead of exiting, so neither case
+    # forces a full manual relaunch to log back in. win._relogin_message,
+    # when a forced relogin set one, explains why on the login screen
+    # that follows rather than just implying "you were never signed in".
     while True:
         win = MainWindow()
         win.show()
@@ -292,7 +315,9 @@ def main():
         if not getattr(win, "_logout_requested", False):
             sys.exit(exit_code)
 
-        _require_active_online_account_or_exit()
+        relogin_message = getattr(win, "_relogin_message", None)
+
+        _require_active_online_account_or_exit(initial_message=relogin_message)
 
 
 if __name__ == "__main__":

@@ -92,11 +92,16 @@ class _AuthWorker(QThread):
 
 
 class LoginDialog(QDialog):
-    def __init__(self, parent=None, required: bool = False):
+    def __init__(self, parent=None, required: bool = False, message: str = None):
         """required=True is the app-launch gate (app_desktop.py): closing
         without a successful login exits the app instead of just closing a
         dialog, so this shows an explanatory banner making that clear up
-        front rather than surprising the user."""
+        front rather than surprising the user.
+
+        message overrides the default "an account is required" banner
+        text — used when the app got here for a specific reason worth
+        explaining (session expired, account deactivated) rather than
+        just "you've never signed in". Ignored unless required=True."""
         super().__init__(parent)
         # Applied directly rather than relying on inheriting it from a
         # parent: the app-launch gate shows this dialog with parent=None
@@ -119,7 +124,7 @@ class LoginDialog(QDialog):
         layout.setSpacing(12)
 
         if required:
-            required_label = QLabel(tr("account_required_message"))
+            required_label = QLabel(message or tr("account_required_message"))
             required_label.setWordWrap(True)
             required_label.setStyleSheet("color: #2c3e50; font-weight: bold;")
             layout.addWidget(required_label)

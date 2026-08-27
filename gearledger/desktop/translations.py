@@ -1988,6 +1988,10 @@ TRANSLATIONS = {
         "en": "Your account is pending activation. Contact us to get started.",
         "ru": "Ваш аккаунт ожидает активации. Свяжитесь с нами, чтобы начать работу.",
     },
+    "account_deactivated_relogin_message": {
+        "en": "Your account was deactivated, so you've been logged out. Log in with a different account, or contact us to reactivate this one.",
+        "ru": "Ваш аккаунт был деактивирован, поэтому вы вышли из системы. Войдите с другим аккаунтом или свяжитесь с нами для повторной активации.",
+    },
     "no_network_launch_message": {
         "en": "No internet connection. Gear Ledger needs to verify your account online before it can start.",
         "ru": "Нет подключения к интернету. Gear Ledger должен проверить ваш аккаунт онлайн перед запуском.",

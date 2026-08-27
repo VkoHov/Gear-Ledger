@@ -1351,6 +1351,21 @@ class MainWindow(QWidget):
         self._logout_requested = True
         self.close()
 
+    def _force_relogin(self, message: str):
+        """Like _on_logout_requested, but for cases the *app itself*
+        detects (account deactivated, session dead) rather than the user
+        clicking Logout. Clears the stored token and closes the same way
+        -- app_desktop.py's loop reopens LoginDialog(required=True), this
+        time with `message` explaining why, so the user can log in with a
+        different account instead of just being hard-quit with no
+        explanation beyond a native popup."""
+        from gearledger.desktop import settings_manager
+
+        settings_manager.clear_auth()
+        self._logout_requested = True
+        self._relogin_message = message
+        self.close()
+
     def _open_network_settings(self):
         """Open the network settings dialog."""
         from .network_settings_dialog import NetworkSettingsDialog
@@ -1693,17 +1708,19 @@ class MainWindow(QWidget):
         -- this timer is the only thing that runs continuously regardless
         of whether Network Settings happens to be open, so it's the right
         place for this, not just network_settings_dialog.py's own (dialog-
-        only) equivalent check for needs_reauth.
+        only) equivalent check for needs_reauth. Reacts immediately (the
+        next regular API call after deactivation), faster than waiting
+        for _verify_account_still_active()'s 2-minute cycle -- that one
+        is still what catches Local mode, where there's no API call to
+        react to in the first place.
 
-        Deliberately does NOT clear the stored token or force the app back
-        to the login gate: the token is fine. Only disconnects the cloud
-        session and says why -- _verify_account_still_active() below is
-        the one that actually closes the app (this method reacts to a
-        402 an active Client-mode connection already hit; that method
-        proactively checks regardless of mode, including Local, where
-        there's no connection to hit a 402 on in the first place)."""
-        from gearledger.api_client import get_client, disconnect_from_server
-        from PyQt6.QtWidgets import QMessageBox
+        Routes through _force_relogin() (self.close() -> the
+        logout_requested loop in app_desktop.py) rather than just
+        disconnecting -- same reasoning as _verify_account_still_active()
+        below: leaving the user "disconnected but still logged into a
+        dead account" is a dead end, whereas dropping to LoginDialog lets
+        them try a different account."""
+        from gearledger.api_client import get_client
 
         client = get_client()
         if not client or not getattr(client, "account_inactive", False):
@@ -1712,11 +1729,7 @@ class MainWindow(QWidget):
             return
         self._account_inactive_prompt_active = True
         try:
-            disconnect_from_server()
-            self._handle_client_disconnected()
-            QMessageBox.information(
-                self, tr("cloud_login_title"), tr("account_inactive_message")
-            )
+            self._force_relogin(tr("account_deactivated_relogin_message"))
         finally:
             self._account_inactive_prompt_active = False
 
@@ -1731,18 +1744,16 @@ class MainWindow(QWidget):
 
         Reuses the exact same live-verification connect_to_server() call
         as app_desktop.py's launch gate -- this is that same check,
-        repeated periodically instead of once. On failure, offers
-        Retry/Close exactly like the launch gate; Close actually closes
-        the window (via self.close(), not QApplication.quit(), so
-        MainWindow's normal closeEvent cleanup still runs -- skipping
-        that is what caused the QThread-destroyed-while-running abort
-        fixed earlier this session for logout)."""
+        repeated periodically instead of once. Two different outcomes on
+        failure, matching whether logging in again could possibly help:
+        UNAUTHORIZED/ACCOUNT_INACTIVE route through _force_relogin() (the
+        token or the account is the actual problem -- drop to LoginDialog
+        with an explanation, let the user try a different account).
+        NO_NETWORK/unreachable get Retry/Close instead -- logging in
+        again wouldn't fix a connectivity problem, and LoginDialog itself
+        would just fail the same way."""
         from gearledger.desktop import settings_manager
-        from gearledger.api_client import (
-            connect_to_server,
-            get_last_connect_error,
-            disconnect_from_server,
-        )
+        from gearledger.api_client import connect_to_server, get_last_connect_error, disconnect_from_server
         from PyQt6.QtWidgets import QMessageBox
 
         if getattr(self, "_license_check_active", False):
@@ -1762,15 +1773,17 @@ class MainWindow(QWidget):
 
                 detail = get_last_connect_error()
                 if detail == "UNAUTHORIZED":
-                    settings_manager.clear_auth()
-                    message = tr("session_expired")
-                elif detail == "ACCOUNT_INACTIVE":
-                    message = tr("account_inactive_message")
-                elif detail == "NO_NETWORK":
-                    message = tr("no_network_launch_message")
-                else:
-                    message = tr("server_unreachable_launch_message")
+                    self._force_relogin(tr("session_expired"))
+                    return
+                if detail == "ACCOUNT_INACTIVE":
+                    self._force_relogin(tr("account_deactivated_relogin_message"))
+                    return
 
+                message = (
+                    tr("no_network_launch_message")
+                    if detail == "NO_NETWORK"
+                    else tr("server_unreachable_launch_message")
+                )
                 reply = QMessageBox.question(
                     self,
                     tr("cloud_login_title"),

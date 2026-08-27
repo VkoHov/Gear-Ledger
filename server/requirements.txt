@@ -14,6 +14,12 @@ flask-jwt-extended>=4.6.0
 flask-limiter>=3.5.0
 argon2-cffi>=23.1.0
 
+# email_sender.py calls Resend's HTTP API directly. Worked locally
+# without this line by accident (already installed in the shared dev
+# venv from unrelated testing) -- a clean environment (Render's build)
+# doesn't have it unless it's declared here.
+requests>=2.31.0
+
 # Turns out load-bearing for core Phase 1 routes, not just Phase 2:
 # POST /api/results imports gearledger.result_ledger for catalog-tier
 # lookup, which imports pandas at module level — this isn't an

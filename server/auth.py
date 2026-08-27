@@ -44,7 +44,16 @@ _PUBLIC_PATHS = {
     "/api/auth/password-reset/request",
     "/api/auth/password-reset/confirm",
     "/api/status",
+    "/admin",  # the static admin page shell — the API calls under it aren't public
 }
+
+# Admin routes (server/admin.py) still need a valid access token — they're
+# not in _PUBLIC_PATHS — but they check flask.g.user_id's is_admin flag
+# themselves rather than the tenant subscription check every other route
+# gets below. An admin's own tenant may well be 'inactive' (being staff
+# doesn't make you a paying customer), so gating admin routes on tenant
+# status would lock admins out of the tool that's supposed to fix that.
+_ADMIN_PATH_PREFIX = "/api/admin/"
 
 _MIN_SECRET_BYTES = 32  # matches HS256's recommended minimum key length
 
@@ -136,6 +145,19 @@ def init_auth(app: flask.Flask) -> Limiter:
         claims = get_jwt()
         flask.g.user_id = get_jwt_identity()
         flask.g.tenant_id = claims["tenant_id"]
+
+        if not request.path.startswith(_ADMIN_PATH_PREFIX):
+            status = get_accounts_store().get_tenant_subscription_status(flask.g.tenant_id)
+            if status != "active":
+                return (
+                    jsonify(
+                        {
+                            "error": "account_inactive",
+                            "detail": "Your account is not active. Contact us to get started.",
+                        }
+                    ),
+                    402,
+                )
         return None
 
     @app.route("/api/auth/signup", methods=["POST"])
@@ -150,9 +172,19 @@ def init_auth(app: flask.Flask) -> Limiter:
             return jsonify({"error": "password must be at least 8 characters"}), 400
 
         try:
-            user = get_accounts_store().create_tenant_and_user(email, password)
+            created = get_accounts_store().create_tenant_and_user(email, password)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 409
+
+        store = get_accounts_store()
+        store.promote_to_admin_if_listed(created["id"], created["email"])
+        user = store.get_user_by_id(created["id"])
+
+        if not user["is_admin"] and user["subscription_status"] != "active":
+            return (
+                jsonify({"error": "Your account is pending activation. Contact us to get started."}),
+                403,
+            )
 
         tokens = _issue_tokens(user["id"], user["tenant_id"])
         return jsonify(tokens), 201
@@ -166,9 +198,19 @@ def init_auth(app: flask.Flask) -> Limiter:
         if not email or not password:
             return jsonify({"error": "email and password are required"}), 400
 
-        user = get_accounts_store().verify_login(email, password)
+        store = get_accounts_store()
+        user = store.verify_login(email, password)
         if user is None:
             return jsonify({"error": "invalid email or password"}), 401
+
+        store.promote_to_admin_if_listed(user["id"], user["email"])
+        user = store.get_user_by_id(user["id"])
+
+        if not user["is_admin"] and user["subscription_status"] != "active":
+            return (
+                jsonify({"error": "Your account is pending activation. Contact us to get started."}),
+                403,
+            )
 
         tokens = _issue_tokens(user["id"], user["tenant_id"])
         return jsonify(tokens), 200

@@ -34,6 +34,15 @@ class User(TypedDict):
     id: str
     email: str
     tenant_id: str
+    is_admin: bool
+    subscription_status: str
+
+
+class Account(TypedDict):
+    tenant_id: str
+    email: str
+    created_at: str
+    subscription_status: str
 
 
 def _default_db_path() -> str:
@@ -115,6 +124,25 @@ class AccountsStore:
             """
         )
         conn.commit()
+        self._migrate_add_columns(conn)
+
+    def _migrate_add_columns(self, conn: sqlite3.Connection) -> None:
+        """CREATE TABLE IF NOT EXISTS (above) only creates tables that
+        don't exist yet — it never adds a column to a table this class
+        already shipped without one. Idempotent, safe on every boot."""
+        users_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        if "is_admin" not in users_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+
+        tenants_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tenants)")}
+        if "subscription_status" not in tenants_columns:
+            # 'inactive' by default: a signup alone doesn't grant access —
+            # this is the actual manual-activation gate, until Stripe
+            # exists to set it automatically.
+            conn.execute(
+                "ALTER TABLE tenants ADD COLUMN subscription_status TEXT NOT NULL DEFAULT 'inactive'"
+            )
+        conn.commit()
 
     def create_tenant_and_user(self, email: str, password: str) -> User:
         """Sign up a brand-new account: one tenant, one user, that user
@@ -140,13 +168,38 @@ class AccountsStore:
             (user_id, email, password_hash, tenant_id),
         )
         conn.commit()
-        return {"id": user_id, "email": email, "tenant_id": tenant_id}
+        return {
+            "id": user_id,
+            "email": email,
+            "tenant_id": tenant_id,
+            "is_admin": False,
+            "subscription_status": "inactive",
+        }
+
+    # Shared by verify_login/get_user_by_email/promote_to_admin_if_listed —
+    # every caller that resolves "a user" needs is_admin and the tenant's
+    # subscription_status alongside it, so this is the one place that JOIN
+    # lives instead of four slightly-different copies of it.
+    _USER_SELECT = (
+        "SELECT users.id, users.email, users.tenant_id, users.password_hash, "
+        "users.is_admin, tenants.subscription_status "
+        "FROM users JOIN tenants ON users.tenant_id = tenants.id "
+    )
+
+    def _row_to_user(self, row: sqlite3.Row) -> User:
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "tenant_id": row["tenant_id"],
+            "is_admin": bool(row["is_admin"]),
+            "subscription_status": row["subscription_status"],
+        }
 
     def verify_login(self, email: str, password: str) -> Optional[User]:
         """Returns the User dict on success, None on bad email/password."""
         conn = self._get_connection()
         row = conn.execute(
-            "SELECT id, email, password_hash, tenant_id FROM users WHERE email = ?",
+            self._USER_SELECT + "WHERE users.email = ?",
             (email.strip().lower(),),
         ).fetchone()
         if row is None:
@@ -155,17 +208,85 @@ class AccountsStore:
             _hasher.verify(row["password_hash"], password)
         except VerifyMismatchError:
             return None
-        return {"id": row["id"], "email": row["email"], "tenant_id": row["tenant_id"]}
+        return self._row_to_user(row)
 
     def get_user_by_email(self, email: str) -> Optional[User]:
         conn = self._get_connection()
         row = conn.execute(
-            "SELECT id, email, tenant_id FROM users WHERE email = ?",
+            self._USER_SELECT + "WHERE users.email = ?",
             (email.strip().lower(),),
         ).fetchone()
         if row is None:
             return None
-        return {"id": row["id"], "email": row["email"], "tenant_id": row["tenant_id"]}
+        return self._row_to_user(row)
+
+    def get_user_by_id(self, user_id: str) -> Optional[User]:
+        conn = self._get_connection()
+        row = conn.execute(
+            self._USER_SELECT + "WHERE users.id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_user(row)
+
+    def promote_to_admin_if_listed(self, user_id: str, email: str) -> None:
+        """Bootstraps admin access: if `email` appears in the
+        GEARLEDGER_ADMIN_EMAILS env var (comma-separated, case-
+        insensitive), grants is_admin. Idempotent — cheap to call on
+        every login. This is the only way to become an admin; there's no
+        UI path that grants it, deliberately (an admin dashboard that
+        could create more admins through itself would be its own
+        privilege-escalation surface)."""
+        admin_emails = {
+            e.strip().lower()
+            for e in os.getenv("GEARLEDGER_ADMIN_EMAILS", "").split(",")
+            if e.strip()
+        }
+        if email.strip().lower() not in admin_emails:
+            return
+        conn = self._get_connection()
+        conn.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user_id,))
+        conn.commit()
+
+    # ------------------------------------------------------------------
+    # Admin: account listing + subscription status
+    # ------------------------------------------------------------------
+
+    def list_accounts_with_status(self) -> list:
+        conn = self._get_connection()
+        rows = conn.execute(
+            "SELECT tenants.id AS tenant_id, users.email, tenants.created_at, "
+            "tenants.subscription_status "
+            "FROM tenants JOIN users ON users.tenant_id = tenants.id "
+            "ORDER BY tenants.created_at DESC"
+        ).fetchall()
+        return [
+            {
+                "tenant_id": row["tenant_id"],
+                "email": row["email"],
+                "created_at": row["created_at"],
+                "subscription_status": row["subscription_status"],
+            }
+            for row in rows
+        ]
+
+    def get_tenant_subscription_status(self, tenant_id: str) -> Optional[str]:
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT subscription_status FROM tenants WHERE id = ?", (tenant_id,)
+        ).fetchone()
+        return row["subscription_status"] if row else None
+
+    def set_subscription_status(self, tenant_id: str, status: str) -> bool:
+        """Returns False if tenant_id doesn't exist, True on success."""
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "UPDATE tenants SET subscription_status = ? WHERE id = ?",
+            (status, tenant_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
     # Sessions (refresh token revocation)

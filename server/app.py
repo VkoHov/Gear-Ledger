@@ -14,6 +14,7 @@ before_request guard and tenant_server.py for how "which tenant" turns into
 """
 import os
 
+from admin import init_admin
 from auth import init_auth
 from routes import init_routes
 from tenant_server import TenantScopedServer
@@ -23,6 +24,7 @@ app = _server.app
 app.config["MAX_CONTENT_LENGTH"] = 15 * 1024 * 1024  # 15 MB: catalog/image uploads
 _limiter = init_auth(app)
 init_routes(app, _server, _limiter)
+init_admin(app, _limiter)
 
 if __name__ == "__main__":
     # Local dev only — gunicorn (via requirements.txt) is the real entrypoint.

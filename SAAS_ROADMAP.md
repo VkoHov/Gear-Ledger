@@ -121,6 +121,21 @@ button, not a successful payment. Wiring Stripe in later means the same
 button click — the enforcement plumbing (login/signup blocking,
 per-request 402s) doesn't need to change, only what sets the flag does.
 
+**The launch gate requires live verification, not just a stored token**
+(2026-08-28, explicit decision). Every launch calls the cloud backend to
+confirm the token is valid *and* the account is active — a deactivated
+account, or a machine with no internet, now blocks launch entirely. This
+deliberately reverses the offline-friendliness the gate originally had
+(token presence alone was enough, specifically so a dropped connection
+mid-shift didn't stop work) in favor of closing the loophole it left: a
+deactivated account could otherwise keep using the app forever just by
+staying offline. Also resolves the "how much offline fallback matters"
+open question below — in favor of strict enforcement, at the accepted
+cost that a genuine outage (the customer's internet, or the backend
+itself) now stops the app from opening, not just from syncing. Worth
+revisiting if real customers with unreliable connectivity turn out to
+make that cost too high in practice.
+
 Admin access itself is a global `is_admin` flag on `users`
 (`GEARLEDGER_ADMIN_EMAILS` env var bootstraps the first one) — a
 different, smaller thing than the still-deferred multi-user `memberships`
@@ -168,9 +183,6 @@ Still open:
 ## Open questions (not yet decided)
 
 - Pricing model specifics (per-seat vs per-location vs flat tiers).
-- How much offline fallback matters for target customers (some may have
-  unreliable internet — worth understanding before assuming pure-cloud
-  is acceptable for everyone).
 - Whether to keep LAN server-mode available at all (e.g. as a
   self-hosted/on-prem option for customers who want it) or retire it
   entirely once cloud mode exists.

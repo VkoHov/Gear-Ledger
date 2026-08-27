@@ -203,8 +203,10 @@ class APIClient:
             # This also doubles as the auth check: /api/status is
             # deliberately public (auth.py's _PUBLIC_PATHS), so it alone
             # would report "connected" even with a dead/expired cloud
-            # token — /api/sync/version isn't public, so a 401 here is
-            # what actually catches that case.
+            # token, or an account that's a valid admin login but not an
+            # active tenant — /api/sync/version isn't public and isn't
+            # exempted from the subscription check, so its status code is
+            # what actually catches both cases.
             try:
                 sync_response = self.session.get(
                     f"{self.server_url}/api/sync/version",
@@ -213,6 +215,15 @@ class APIClient:
                 if sync_response.status_code == 401:
                     self._connected = False
                     self.last_error = "UNAUTHORIZED"
+                    return False
+                if sync_response.status_code == 402:
+                    # Distinct from UNAUTHORIZED: the token itself is
+                    # fine (this login succeeded) -- the account just
+                    # isn't an active tenant yet. Re-login/re-auth
+                    # wouldn't fix this; only an admin activating the
+                    # account would.
+                    self._connected = False
+                    self.last_error = "ACCOUNT_INACTIVE"
                     return False
             except Exception:
                 pass  # network hiccup on this secondary call — status check already succeeded

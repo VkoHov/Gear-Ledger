@@ -787,6 +787,16 @@ class NetworkSettingsDialog(QDialog):
             self._open_cloud_login()
             return
 
+        if error_detail == "ACCOUNT_INACTIVE":
+            # Deliberately not clear_auth()/re-prompt here: the token
+            # itself is fine (login succeeded) -- re-authenticating
+            # wouldn't change anything. Only an admin activating the
+            # account fixes this.
+            QMessageBox.information(
+                self, tr("cloud_login_title"), tr("account_inactive_message")
+            )
+            return
+
         print(f"[NETWORK_SETTINGS] Cloud connect to {address} failed: {error_detail}")
         if error_detail == "NO_NETWORK":
             msg = connection_error_detail(error_detail)

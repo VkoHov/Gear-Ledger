@@ -1984,6 +1984,10 @@ TRANSLATIONS = {
         "en": "Your cloud session has expired. Please log in again.",
         "ru": "Срок действия облачной сессии истёк. Пожалуйста, войдите снова.",
     },
+    "account_inactive_message": {
+        "en": "Your account is pending activation. Contact us to get started.",
+        "ru": "Ваш аккаунт ожидает активации. Свяжитесь с нами, чтобы начать работу.",
+    },
     "account_required_message": {
         "en": "An account is required to use Gear Ledger. Please log in or sign up to continue.",
         "ru": "Для использования Gear Ledger требуется аккаунт. Пожалуйста, войдите или зарегистрируйтесь, чтобы продолжить.",

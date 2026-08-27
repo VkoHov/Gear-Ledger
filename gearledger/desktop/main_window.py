@@ -752,6 +752,19 @@ class MainWindow(QWidget):
         self._network_status_timer.timeout.connect(self._refresh_network_status_if_client)
         self._network_status_timer.start(3000)  # Every 3 seconds
 
+        # Runs regardless of network_mode -- unlike the timer above, which
+        # only matters in Client mode. Explicit product decision
+        # (2026-08-28): no usage without a verified active account, not
+        # even in Local/Server mode, not even mid-session after a launch
+        # that was fine at the time. 2 minutes, not something tighter --
+        # frequent enough to close the "deactivate someone and they keep
+        # working in Local mode forever" loophole, not so tight that a
+        # momentary WiFi blip interrupts real work on every hiccup (Retry
+        # is offered either way).
+        self._license_check_timer = QTimer(self)
+        self._license_check_timer.timeout.connect(self._verify_account_still_active)
+        self._license_check_timer.start(120000)
+
         # Sync version tracking for catalog sync in client mode
         self._sync_version = 0
         # SSE client for real-time event notifications (replaces polling timer)
@@ -1683,10 +1696,12 @@ class MainWindow(QWidget):
         only) equivalent check for needs_reauth.
 
         Deliberately does NOT clear the stored token or force the app back
-        to the login gate: the token is fine, and forcing a full re-login
-        would also block the independent local/Server mode, which
-        shouldn't be affected by a cloud account's activation status. This
-        only disconnects the cloud session and says why."""
+        to the login gate: the token is fine. Only disconnects the cloud
+        session and says why -- _verify_account_still_active() below is
+        the one that actually closes the app (this method reacts to a
+        402 an active Client-mode connection already hit; that method
+        proactively checks regardless of mode, including Local, where
+        there's no connection to hit a 402 on in the first place)."""
         from gearledger.api_client import get_client, disconnect_from_server
         from PyQt6.QtWidgets import QMessageBox
 
@@ -1704,6 +1719,71 @@ class MainWindow(QWidget):
             )
         finally:
             self._account_inactive_prompt_active = False
+
+    def _verify_account_still_active(self):
+        """Runs every 2 minutes regardless of network_mode (see the timer
+        setup in __init__) -- explicit product decision (2026-08-28): no
+        usage without a verified active account, not even in Local/Server
+        mode, not even mid-session after a launch that was fine at the
+        time. Closes the loophole _check_account_inactive() above can't:
+        Local mode never makes a request that could hit a 402, so nothing
+        would ever notice a deactivation there without this.
+
+        Reuses the exact same live-verification connect_to_server() call
+        as app_desktop.py's launch gate -- this is that same check,
+        repeated periodically instead of once. On failure, offers
+        Retry/Close exactly like the launch gate; Close actually closes
+        the window (via self.close(), not QApplication.quit(), so
+        MainWindow's normal closeEvent cleanup still runs -- skipping
+        that is what caused the QThread-destroyed-while-running abort
+        fixed earlier this session for logout)."""
+        from gearledger.desktop import settings_manager
+        from gearledger.api_client import (
+            connect_to_server,
+            get_last_connect_error,
+            disconnect_from_server,
+        )
+        from PyQt6.QtWidgets import QMessageBox
+
+        if getattr(self, "_license_check_active", False):
+            return  # a previous check's Retry loop is still on screen
+        self._license_check_active = True
+        try:
+            while True:
+                token = settings_manager.get_auth_token()
+                settings = settings_manager.load_settings()
+                if not token or not settings.cloud_server_url:
+                    return  # shouldn't happen -- the launch gate already required this
+
+                client = connect_to_server(settings.cloud_server_url, refresh_token=token)
+                if client:
+                    disconnect_from_server()
+                    return
+
+                detail = get_last_connect_error()
+                if detail == "UNAUTHORIZED":
+                    settings_manager.clear_auth()
+                    message = tr("session_expired")
+                elif detail == "ACCOUNT_INACTIVE":
+                    message = tr("account_inactive_message")
+                elif detail == "NO_NETWORK":
+                    message = tr("no_network_launch_message")
+                else:
+                    message = tr("server_unreachable_launch_message")
+
+                reply = QMessageBox.question(
+                    self,
+                    tr("cloud_login_title"),
+                    message,
+                    QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Close,
+                    QMessageBox.StandardButton.Retry,
+                )
+                if reply == QMessageBox.StandardButton.Close:
+                    self.close()
+                    return
+                # else Retry -> loop and check again immediately
+        finally:
+            self._license_check_active = False
 
     def _update_sse_connection(self):
         """

@@ -1672,7 +1672,38 @@ class MainWindow(QWidget):
         from gearledger.data_layer import get_network_mode
 
         if get_network_mode() == "client":
+            self._check_account_inactive()
             self._update_network_status()
+
+    def _check_account_inactive(self):
+        """Catches an account being deactivated *while already connected*
+        -- this timer is the only thing that runs continuously regardless
+        of whether Network Settings happens to be open, so it's the right
+        place for this, not just network_settings_dialog.py's own (dialog-
+        only) equivalent check for needs_reauth.
+
+        Deliberately does NOT clear the stored token or force the app back
+        to the login gate: the token is fine, and forcing a full re-login
+        would also block the independent local/Server mode, which
+        shouldn't be affected by a cloud account's activation status. This
+        only disconnects the cloud session and says why."""
+        from gearledger.api_client import get_client, disconnect_from_server
+        from PyQt6.QtWidgets import QMessageBox
+
+        client = get_client()
+        if not client or not getattr(client, "account_inactive", False):
+            return
+        if getattr(self, "_account_inactive_prompt_active", False):
+            return
+        self._account_inactive_prompt_active = True
+        try:
+            disconnect_from_server()
+            self._handle_client_disconnected()
+            QMessageBox.information(
+                self, tr("cloud_login_title"), tr("account_inactive_message")
+            )
+        finally:
+            self._account_inactive_prompt_active = False
 
     def _update_sse_connection(self):
         """

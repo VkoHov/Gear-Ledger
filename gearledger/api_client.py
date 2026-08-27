@@ -85,6 +85,14 @@ class APIClient:
         # dead *access* token alone (the common case, every 30 min) never
         # sets this — it's refreshed transparently in _on_response.
         self.needs_reauth = False
+        # Set on any 402 from any request, not just check_connection()'s
+        # initial probe — a session that was active when it connected can
+        # be deactivated by an admin at any later point. Callers poll this
+        # the same way as needs_reauth, but the correct response is
+        # different: disconnect and inform, never clear the token or
+        # re-prompt login (the token's fine; only reactivation fixes this,
+        # and login would just fail the same way again in the meantime).
+        self.account_inactive = False
 
         self.session = requests.Session()
         if auth_token:
@@ -92,6 +100,15 @@ class APIClient:
         self.session.hooks["response"].append(self._on_response)
 
     def _on_response(self, response, *args, **kwargs):
+        if response.status_code == 402:
+            # Not an auth problem -- the token's valid, the account just
+            # isn't an active tenant (right now, or anymore). No retry
+            # logic applies here the way it does for 401; this just
+            # records it for the caller to notice and react to.
+            self.account_inactive = True
+            self.last_error = "ACCOUNT_INACTIVE"
+            return None
+
         if response.status_code != 401:
             return None
 
@@ -206,24 +223,21 @@ class APIClient:
             # token, or an account that's a valid admin login but not an
             # active tenant — /api/sync/version isn't public and isn't
             # exempted from the subscription check, so its status code is
-            # what actually catches both cases.
+            # what actually catches both cases. 401/402 handling itself
+            # lives in _on_response (it fires for every request, not just
+            # this one) — checked here via the flags it sets rather than
+            # re-inspecting sync_response.status_code, so there's one
+            # source of truth instead of two copies that could drift.
             try:
-                sync_response = self.session.get(
+                self.session.get(
                     f"{self.server_url}/api/sync/version",
                     timeout=self.timeout,
                 )
-                if sync_response.status_code == 401:
+                if self.needs_reauth:
                     self._connected = False
-                    self.last_error = "UNAUTHORIZED"
                     return False
-                if sync_response.status_code == 402:
-                    # Distinct from UNAUTHORIZED: the token itself is
-                    # fine (this login succeeded) -- the account just
-                    # isn't an active tenant yet. Re-login/re-auth
-                    # wouldn't fix this; only an admin activating the
-                    # account would.
+                if self.account_inactive:
                     self._connected = False
-                    self.last_error = "ACCOUNT_INACTIVE"
                     return False
             except Exception:
                 pass  # network hiccup on this secondary call — status check already succeeded

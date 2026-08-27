@@ -230,6 +230,21 @@ class AccountsStore:
             return None
         return self._row_to_user(row)
 
+    def get_user_by_tenant_id(self, tenant_id: str) -> Optional[User]:
+        """Today it's always exactly one user per tenant (see
+        create_tenant_and_user), so "the tenant's user" is unambiguous —
+        used by the admin dashboard's manual reset-code action, which
+        only has a tenant_id (from list_accounts_with_status) to work
+        from. Revisit if/when multi-user tenants exist."""
+        conn = self._get_connection()
+        row = conn.execute(
+            self._USER_SELECT + "WHERE users.tenant_id = ?",
+            (tenant_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_user(row)
+
     def promote_to_admin_if_listed(self, user_id: str, email: str) -> None:
         """Bootstraps admin access: if `email` appears in the
         GEARLEDGER_ADMIN_EMAILS env var (comma-separated, case-

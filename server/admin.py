@@ -65,6 +65,25 @@ def init_admin(app: flask.Flask, limiter) -> None:
             return jsonify({"error": "tenant not found"}), 404
         return jsonify({"ok": True}), 200
 
+    @app.route("/api/admin/accounts/<tenant_id>/generate-reset-code", methods=["POST"])
+    @limiter.limit("30 per minute")
+    def admin_generate_reset_code(tenant_id):
+        """Manual alternative to the emailed reset code -- for a small
+        number of personally-known customers, relaying a code yourself
+        (phone, chat, in person) is a reasonable substitute for having
+        Resend's domain verification set up. Same underlying code and
+        /api/auth/password-reset/confirm endpoint as the emailed flow;
+        this just skips the email step and hands the code to the admin
+        instead."""
+        error = _require_admin()
+        if error:
+            return error
+        user = get_accounts_store().get_user_by_tenant_id(tenant_id)
+        if user is None:
+            return jsonify({"error": "tenant not found"}), 404
+        code = get_accounts_store().create_password_reset(user["id"])
+        return jsonify({"ok": True, "code": code, "email": user["email"]}), 200
+
 
 _ADMIN_HTML = """<!doctype html>
 <html lang="en">
@@ -158,7 +177,7 @@ _ADMIN_HTML = """<!doctype html>
   .pill-inactive { background: var(--surface-2); color: var(--text-muted); }
   .pill-inactive .pill-dot { background: var(--text-muted); }
 
-  .row-actions { display: flex; justify-content: flex-end; }
+  .row-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .btn-toggle { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 7px;
     padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; min-width: 92px; }
   .btn-toggle.is-active { color: var(--danger); border-color: var(--danger-soft); }
@@ -166,9 +185,23 @@ _ADMIN_HTML = """<!doctype html>
   .btn-toggle.is-inactive { color: var(--success); border-color: var(--success-soft); }
   .btn-toggle.is-inactive:hover { background: var(--success-soft); }
   .btn-toggle:disabled { opacity: 0.5; cursor: default; }
+  .btn-secondary { border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    border-radius: 7px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .btn-secondary:hover { color: var(--text); border-color: var(--text-muted); }
 
   .empty-state { padding: 40px 18px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
   .foot-note { margin-top: 18px; font-size: 12px; color: var(--text-muted); line-height: 1.6; max-width: 62ch; }
+
+  .modal-overlay { position: fixed; inset: 0; background: rgba(15,20,25,0.45); display: flex;
+    align-items: center; justify-content: center; padding: 24px; z-index: 10; }
+  .modal-overlay.hidden { display: none; }
+  .modal-card { width: 100%; max-width: 360px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; box-shadow: 0 8px 24px rgba(28,39,51,0.15); padding: 24px; }
+  .modal-card h2 { font-size: 16px; font-weight: 600; margin: 0 0 6px; }
+  .modal-card p { font-size: 13px; color: var(--text-muted); margin: 0 0 16px; line-height: 1.5; }
+  .modal-code { font-family: ui-monospace, monospace; font-size: 26px; font-weight: 600; letter-spacing: 3px;
+    text-align: center; background: var(--surface-2); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>
 </head>
 <body>
@@ -225,6 +258,19 @@ _ADMIN_HTML = """<!doctype html>
     </div>
     <p class="foot-note" id="footNote"></p>
   </main>
+</div>
+
+<div class="modal-overlay hidden" id="resetCodeModal">
+  <div class="modal-card">
+    <h2>Password reset code</h2>
+    <p id="resetCodeEmail"></p>
+    <div class="modal-code" id="resetCodeValue"></div>
+    <p>Relay this to the customer yourself (phone, chat, in person) — it expires in 15 minutes. They enter it in the desktop app's "Reset Password" screen.</p>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="resetCodeCopyBtn">Copy</button>
+      <button class="btn-toggle is-inactive" id="resetCodeCloseBtn">Done</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -318,6 +364,37 @@ _ADMIN_HTML = """<!doctype html>
       .catch(function () {});
   }
   window.__toggleAccount = toggleAccount;
+
+  var resetCodeModal = document.getElementById("resetCodeModal");
+  var resetCodeEmail = document.getElementById("resetCodeEmail");
+  var resetCodeValue = document.getElementById("resetCodeValue");
+
+  function generateResetCode(tenantId) {
+    // Manual alternative to the emailed reset flow -- looks up the email
+    // from the already-loaded accounts list rather than passing it
+    // through the onclick attribute, so there's no need to worry about
+    // escaping arbitrary email text into inline JS.
+    var account = accounts.filter(function (a) { return a.tenant_id === tenantId; })[0];
+    apiFetch("/api/admin/accounts/" + tenantId + "/generate-reset-code", { method: "POST" })
+      .then(function (result) {
+        resetCodeEmail.textContent = "For " + (account ? account.email : result.data.email);
+        resetCodeValue.textContent = result.data.code;
+        resetCodeModal.classList.remove("hidden");
+      })
+      .catch(function () {});
+  }
+  window.__generateResetCode = generateResetCode;
+
+  document.getElementById("resetCodeCloseBtn").addEventListener("click", function () {
+    resetCodeModal.classList.add("hidden");
+  });
+  document.getElementById("resetCodeCopyBtn").addEventListener("click", function () {
+    var btn = document.getElementById("resetCodeCopyBtn");
+    navigator.clipboard.writeText(resetCodeValue.textContent).then(function () {
+      btn.textContent = "Copied!";
+      setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+    });
+  });
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {

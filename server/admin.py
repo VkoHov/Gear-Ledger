@@ -65,24 +65,55 @@ def init_admin(app: flask.Flask, limiter) -> None:
             return jsonify({"error": "tenant not found"}), 404
         return jsonify({"ok": True}), 200
 
-    @app.route("/api/admin/accounts/<tenant_id>/generate-reset-code", methods=["POST"])
+    @app.route("/api/admin/users/<user_id>/generate-reset-code", methods=["POST"])
     @limiter.limit("30 per minute")
-    def admin_generate_reset_code(tenant_id):
+    def admin_generate_reset_code(user_id):
         """Manual alternative to the emailed reset code -- for a small
         number of personally-known customers, relaying a code yourself
         (phone, chat, in person) is a reasonable substitute for having
         Resend's domain verification set up. Same underlying code and
         /api/auth/password-reset/confirm endpoint as the emailed flow;
         this just skips the email step and hands the code to the admin
-        instead."""
+        instead.
+
+        Keyed by user_id, not tenant_id: since add_user_to_tenant, a
+        tenant can have more than one login, so "the tenant's user" is no
+        longer unambiguous -- the admin page picks which member to reset
+        directly."""
         error = _require_admin()
         if error:
             return error
-        user = get_accounts_store().get_user_by_tenant_id(tenant_id)
+        user = get_accounts_store().get_user_by_id(user_id)
         if user is None:
-            return jsonify({"error": "tenant not found"}), 404
+            return jsonify({"error": "user not found"}), 404
         code = get_accounts_store().create_password_reset(user["id"])
         return jsonify({"ok": True, "code": code, "email": user["email"]}), 200
+
+    @app.route("/api/admin/accounts/<tenant_id>/add-user", methods=["POST"])
+    @limiter.limit("30 per minute")
+    def admin_add_user(tenant_id):
+        """Adds a teammate to an existing tenant/warehouse -- the
+        admin-driven multi-user path (no self-serve invite flow exists).
+        Immediately issues a reset code too, same shape as
+        generate-reset-code, so the admin can relay login credentials to
+        the new teammate in one step instead of two."""
+        error = _require_admin()
+        if error:
+            return error
+        body = flask.request.get_json(silent=True) or {}
+        email = (body.get("email") or "").strip()
+        if not email:
+            return jsonify({"error": "email required"}), 400
+        try:
+            user = get_accounts_store().add_user_to_tenant(tenant_id, email)
+        except ValueError as exc:
+            status = 404 if str(exc) == "tenant not found" else 409
+            return jsonify({"error": str(exc)}), status
+        code = get_accounts_store().create_password_reset(user["id"])
+        return (
+            jsonify({"ok": True, "user_id": user["id"], "email": user["email"], "code": code}),
+            200,
+        )
 
 
 _ADMIN_HTML = """<!doctype html>
@@ -178,6 +209,10 @@ _ADMIN_HTML = """<!doctype html>
   .pill-inactive .pill-dot { background: var(--text-muted); }
 
   .row-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .member-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 0; }
+  .btn-link { appearance: none; border: none; background: none; padding: 0; margin-top: 4px;
+    font-size: 12px; color: var(--accent); cursor: pointer; }
+  .btn-link:hover { text-decoration: underline; }
   .btn-toggle { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 7px;
     padding: 6px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; min-width: 92px; }
   .btn-toggle.is-active { color: var(--danger); border-color: var(--danger-soft); }
@@ -251,7 +286,7 @@ _ADMIN_HTML = """<!doctype html>
       </div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Email</th><th>Signed up</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>
+          <thead><tr><th>Team</th><th>Signed up</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>
           <tbody id="tableBody"></tbody>
         </table>
       </div>
@@ -269,6 +304,20 @@ _ADMIN_HTML = """<!doctype html>
     <div class="modal-actions">
       <button class="btn-secondary" id="resetCodeCopyBtn">Copy</button>
       <button class="btn-toggle is-inactive" id="resetCodeCloseBtn">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="addTeammateModal">
+  <div class="modal-card">
+    <h2>Add teammate</h2>
+    <p>Gives someone else their own login into this same warehouse — not a new tenant, they'll see the same data.</p>
+    <label class="field-label" for="addTeammateEmail">Email</label>
+    <input class="field-input" id="addTeammateEmail" type="email" autocomplete="off">
+    <div class="form-error" id="addTeammateError"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="addTeammateCancelBtn">Cancel</button>
+      <button class="btn-toggle is-inactive" id="addTeammateSubmitBtn">Add</button>
     </div>
   </div>
 </div>
@@ -369,15 +418,19 @@ _ADMIN_HTML = """<!doctype html>
   var resetCodeEmail = document.getElementById("resetCodeEmail");
   var resetCodeValue = document.getElementById("resetCodeValue");
 
-  function generateResetCode(tenantId) {
+  function generateResetCode(userId) {
     // Manual alternative to the emailed reset flow -- looks up the email
     // from the already-loaded accounts list rather than passing it
     // through the onclick attribute, so there's no need to worry about
     // escaping arbitrary email text into inline JS.
-    var account = accounts.filter(function (a) { return a.tenant_id === tenantId; })[0];
-    apiFetch("/api/admin/accounts/" + tenantId + "/generate-reset-code", { method: "POST" })
+    var email = "";
+    for (var i = 0; i < accounts.length; i++) {
+      var match = accounts[i].users.filter(function (u) { return u.id === userId; })[0];
+      if (match) { email = match.email; break; }
+    }
+    apiFetch("/api/admin/users/" + userId + "/generate-reset-code", { method: "POST" })
       .then(function (result) {
-        resetCodeEmail.textContent = "For " + (account ? account.email : result.data.email);
+        resetCodeEmail.textContent = "For " + (email || result.data.email);
         resetCodeValue.textContent = result.data.code;
         resetCodeModal.classList.remove("hidden");
       })
@@ -396,6 +449,47 @@ _ADMIN_HTML = """<!doctype html>
     });
   });
 
+  var addTeammateModal = document.getElementById("addTeammateModal");
+  var addTeammateEmail = document.getElementById("addTeammateEmail");
+  var addTeammateError = document.getElementById("addTeammateError");
+  var addTeammateTenantId = null;
+
+  function openAddTeammate(tenantId) {
+    addTeammateTenantId = tenantId;
+    addTeammateEmail.value = "";
+    addTeammateError.textContent = "";
+    addTeammateModal.classList.remove("hidden");
+    addTeammateEmail.focus();
+  }
+  window.__openAddTeammate = openAddTeammate;
+
+  document.getElementById("addTeammateCancelBtn").addEventListener("click", function () {
+    addTeammateModal.classList.add("hidden");
+  });
+  document.getElementById("addTeammateSubmitBtn").addEventListener("click", function () {
+    var email = addTeammateEmail.value.trim();
+    if (!email) {
+      addTeammateError.textContent = "Email required.";
+      return;
+    }
+    apiFetch("/api/admin/accounts/" + addTeammateTenantId + "/add-user", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email }),
+    }).then(function (result) {
+      if (result.status >= 400) {
+        addTeammateError.textContent = (result.data && result.data.error) || "Failed to add teammate.";
+        return;
+      }
+      addTeammateModal.classList.add("hidden");
+      loadAccounts().then(function () {
+        resetCodeEmail.textContent = "For " + result.data.email;
+        resetCodeValue.textContent = result.data.code;
+        resetCodeModal.classList.remove("hidden");
+      });
+    }).catch(function () {});
+  });
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -404,16 +498,28 @@ _ADMIN_HTML = """<!doctype html>
 
   function render() {
     var query = searchInput.value.trim().toLowerCase();
-    var filtered = accounts.filter(function (a) { return a.email.toLowerCase().indexOf(query) !== -1; });
+    var filtered = accounts.filter(function (a) {
+      return a.users.some(function (u) { return u.email.toLowerCase().indexOf(query) !== -1; });
+    });
 
     if (filtered.length === 0) {
       tableBody.innerHTML = '<tr><td colspan="4"><div class="empty-state">No accounts match.</div></td></tr>';
     } else {
       tableBody.innerHTML = filtered.map(function (a) {
         var active = a.subscription_status === "active";
+        var teamHtml = a.users.map(function (u) {
+          return (
+            '<div class="member-row">' +
+            '<span class="cell-email">' + escapeHtml(u.email) + '</span>' +
+            '<button class="btn-link" onclick="window.__generateResetCode(\\'' + u.id + '\\')">Reset</button>' +
+            '</div>'
+          );
+        }).join("");
         return (
           '<tr>' +
-          '<td class="cell-email">' + escapeHtml(a.email) + '</td>' +
+          '<td>' + teamHtml +
+            '<button class="btn-link" onclick="window.__openAddTeammate(\\'' + a.tenant_id + '\\')">+ Add teammate</button>' +
+          '</td>' +
           '<td class="cell-muted">' + escapeHtml((a.created_at || "").split(" ")[0]) + '</td>' +
           '<td><span class="pill ' + (active ? "pill-active" : "pill-inactive") + '">' +
             '<span class="pill-dot"></span>' + (active ? "Active" : "Inactive") + '</span></td>' +

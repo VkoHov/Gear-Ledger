@@ -176,6 +176,38 @@ class AccountsStore:
             "subscription_status": "inactive",
         }
 
+    def add_user_to_tenant(self, tenant_id: str, email: str) -> User:
+        """Adds a teammate to an *existing* tenant/warehouse instead of
+        create_tenant_and_user's always-mint-a-new-tenant behavior — the
+        admin-driven multi-user path (no self-serve invite flow exists
+        yet). The new user gets an unusable random password_hash; the
+        caller is expected to immediately issue a password-reset code
+        (create_password_reset) so they can set a real one, the same way
+        any other reset works. Raises ValueError if the tenant doesn't
+        exist or the email is already registered (to anyone, any tenant —
+        email is globally unique)."""
+        conn = self._get_connection()
+        email = email.strip().lower()
+        if not conn.execute(
+            "SELECT 1 FROM tenants WHERE id = ?", (tenant_id,)
+        ).fetchone():
+            raise ValueError("tenant not found")
+        if conn.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            raise ValueError("email already registered")
+
+        user_id = uuid.uuid4().hex
+        # Never meant to be logged in with directly -- the plaintext half
+        # (a random uuid4) is never given to anyone, so verify_login
+        # always fails against it. The reset-code flow is the only way in.
+        password_hash = _hasher.hash(uuid.uuid4().hex)
+
+        conn.execute(
+            "INSERT INTO users (id, email, password_hash, tenant_id) VALUES (?, ?, ?, ?)",
+            (user_id, email, password_hash, tenant_id),
+        )
+        conn.commit()
+        return self.get_user_by_id(user_id)
+
     # Shared by verify_login/get_user_by_email/promote_to_admin_if_listed —
     # every caller that resolves "a user" needs is_admin and the tenant's
     # subscription_status alongside it, so this is the one place that JOIN
@@ -230,21 +262,6 @@ class AccountsStore:
             return None
         return self._row_to_user(row)
 
-    def get_user_by_tenant_id(self, tenant_id: str) -> Optional[User]:
-        """Today it's always exactly one user per tenant (see
-        create_tenant_and_user), so "the tenant's user" is unambiguous —
-        used by the admin dashboard's manual reset-code action, which
-        only has a tenant_id (from list_accounts_with_status) to work
-        from. Revisit if/when multi-user tenants exist."""
-        conn = self._get_connection()
-        row = conn.execute(
-            self._USER_SELECT + "WHERE users.tenant_id = ?",
-            (tenant_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_user(row)
-
     def promote_to_admin_if_listed(self, user_id: str, email: str) -> None:
         """Bootstraps admin access: if `email` appears in the
         GEARLEDGER_ADMIN_EMAILS env var (comma-separated, case-
@@ -269,21 +286,31 @@ class AccountsStore:
     # ------------------------------------------------------------------
 
     def list_accounts_with_status(self) -> list:
+        """One entry per tenant (warehouse), each carrying every user that
+        logs into it — since add_user_to_tenant, that's no longer always
+        exactly one, so this can't be the single tenants-JOIN-users query
+        it used to be (that would repeat a tenant row once per member)."""
         conn = self._get_connection()
-        rows = conn.execute(
-            "SELECT tenants.id AS tenant_id, users.email, tenants.created_at, "
-            "tenants.subscription_status "
-            "FROM tenants JOIN users ON users.tenant_id = tenants.id "
-            "ORDER BY tenants.created_at DESC"
+        tenant_rows = conn.execute(
+            "SELECT id AS tenant_id, created_at, subscription_status "
+            "FROM tenants ORDER BY created_at DESC"
         ).fetchall()
+        user_rows = conn.execute(
+            "SELECT id, email, tenant_id FROM users ORDER BY created_at ASC"
+        ).fetchall()
+        users_by_tenant: dict = {}
+        for u in user_rows:
+            users_by_tenant.setdefault(u["tenant_id"], []).append(
+                {"id": u["id"], "email": u["email"]}
+            )
         return [
             {
                 "tenant_id": row["tenant_id"],
-                "email": row["email"],
                 "created_at": row["created_at"],
                 "subscription_status": row["subscription_status"],
+                "users": users_by_tenant.get(row["tenant_id"], []),
             }
-            for row in rows
+            for row in tenant_rows
         ]
 
     def get_tenant_subscription_status(self, tenant_id: str) -> Optional[str]:

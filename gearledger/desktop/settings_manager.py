@@ -17,6 +17,12 @@ else:  # macOS/Linux
 
 CFG_PATH = os.path.join(APP_DIR, "settings.json")
 
+# The one real cloud backend every customer logs into — not a per-customer
+# address like LAN client/server mode's, so there's nothing for a user to
+# choose or type here (see LoginDialog, which no longer shows a server
+# field at all and just uses this directly).
+DEFAULT_CLOUD_SERVER_URL = "https://gearledger-api.onrender.com"
+
 
 @dataclass
 class Settings:

@@ -130,10 +130,6 @@ class LoginDialog(QDialog):
             layout.addWidget(required_label)
 
         form = QFormLayout()
-        self.server_edit = QLineEdit(settings.cloud_server_url)
-        self.server_edit.setPlaceholderText("http://localhost:8081")
-        form.addRow(tr("cloud_server_label"), self.server_edit)
-
         self.email_edit = QLineEdit(settings.auth_email)
         form.addRow(tr("email_label"), self.email_edit)
 
@@ -210,19 +206,14 @@ class LoginDialog(QDialog):
         self.submit_btn.setText(tr("sign_up") if self._signup_mode else tr("log_in"))
 
     def _submit(self):
-        server_url = self.server_edit.text().strip().rstrip("/")
+        server_url = settings_manager.DEFAULT_CLOUD_SERVER_URL
         email = self.email_edit.text().strip()
         password = self.password_edit.text()
 
         self.status_label.setStyleSheet("color: #e74c3c;")
-        if not server_url:
-            self.status_label.setText(tr("cloud_server_required"))
-            return
         if not email or not password:
             self.status_label.setText(tr("email_password_required"))
             return
-        if not server_url.startswith("http://") and not server_url.startswith("https://"):
-            server_url = f"http://{server_url}"
 
         self.status_label.setText("")
         self.submit_btn.setEnabled(False)
@@ -275,7 +266,7 @@ class LoginDialog(QDialog):
     def _open_password_reset(self):
         from .password_reset_dialog import PasswordResetDialog
 
-        server_url = self.server_edit.text().strip()
+        server_url = settings_manager.DEFAULT_CLOUD_SERVER_URL
         email = self.email_edit.text().strip()
         dlg = PasswordResetDialog(self, server_url=server_url, email=email)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result:
@@ -298,7 +289,7 @@ class LoginDialog(QDialog):
             self.status_label.setText(connection_error_detail("NO_NETWORK"))
         elif error == "SERVER_UNREACHABLE":
             self.status_label.setText(
-                tr("connection_failed", address=self.server_edit.text().strip())
+                tr("connection_failed", address=settings_manager.DEFAULT_CLOUD_SERVER_URL)
             )
         else:
             self.status_label.setText(f"{title}: {error}")
